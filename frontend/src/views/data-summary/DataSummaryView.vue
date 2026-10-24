@@ -35,25 +35,26 @@
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item command="export-excel" :disabled="sortedRows.length + visibleRefundRows.length === 0">Export Excel</el-dropdown-item>
+              <el-dropdown-item command="archive-scope">{{ archiveScope === 'CURRENT' ? 'View archived courses' : 'View current courses' }}</el-dropdown-item>
               <el-dropdown-item command="print-roster" :disabled="rosterPrintClassGroups.length === 0">Print class roster</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
       </div>
       <div v-if="studentFindOpen" class="student-find" role="search" aria-label="Find student in Data Summary">
-        <el-input
+        <input
           ref="studentFindInputRef"
           v-model="studentFindQuery"
           class="student-find__input"
-          size="small"
-          clearable
+          type="text"
           placeholder="Student name"
           aria-label="Find student name"
+          autocomplete="off"
           @keydown.enter.prevent="stepStudentFind($event.shiftKey ? -1 : 1)"
           @keydown.esc.stop.prevent="closeStudentFind"
         />
-        <span class="student-find__count" aria-live="polite">
-          {{ studentFindQuery.trim() ? `${studentFindMatches.length ? studentFindIndex + 1 : 0} / ${studentFindMatches.length}` : '0 matches' }}
+        <span v-if="studentFindQuery.trim()" class="student-find__count" aria-live="polite">
+          {{ `${studentFindMatches.length ? studentFindIndex + 1 : 0} / ${studentFindMatches.length}` }}
         </span>
         <el-button-group class="student-find__navigation">
           <el-button size="small" :disabled="!studentFindMatches.length" aria-label="Previous match" title="Previous match (Shift+Enter)" @click="stepStudentFind(-1)">
@@ -86,6 +87,16 @@
         </span>
       </div>
       <div v-if="!isMobileViewport" class="workbook-toolbar__export">
+        <el-select
+          :model-value="archiveScope"
+          class="archive-scope-select"
+          size="small"
+          aria-label="Course archive scope"
+          @change="setArchiveScope"
+        >
+          <el-option label="Current courses" value="CURRENT" />
+          <el-option label="Archived courses" value="ARCHIVED" />
+        </el-select>
         <el-button
           size="small"
           :disabled="rosterPrintClassGroups.length === 0"
@@ -568,7 +579,6 @@
       </button>
     </div>
 
-
   </div>
 </template>
 
@@ -808,6 +818,7 @@ const logicalCoursePeriods = ref(new Map<string, {
 }>());
 const products = ref<CourseProductItem[]>([]);
 const activeTabId = ref<string>('');
+const archiveScope = ref<'CURRENT' | 'ARCHIVED'>('CURRENT');
 const rosterPrintDialogVisible = ref(false);
 const rosterPrintRef = ref<HTMLElement | null>(null);
 const selectedRosterPrintClassKey = ref('');
@@ -816,7 +827,7 @@ const selectedMonth = ref<string>('ALL');
 const studentFindOpen = ref(false);
 const studentFindQuery = ref('');
 const studentFindIndex = ref(0);
-const studentFindInputRef = ref<{ focus: () => void } | null>(null);
+const studentFindInputRef = ref<HTMLInputElement | null>(null);
 const sortState = reactive<SortState>({
   key: null,
   direction: 'asc',
@@ -855,21 +866,24 @@ function isAssignedRow(row: DataSummaryRow) {
 }
 
 const productTabs = computed<ProductTab[]>(() =>
-  products.value.map((product) => ({
+  products.value
+    .filter((product) => archiveScope.value === 'ARCHIVED' ? Boolean(product.archivedAt) : !product.archivedAt)
+    .map((product) => ({
     id: String(product.id),
     label: product.productName,
     privateLesson: product.teachingMode?.toUpperCase() === 'ONE_ON_ONE',
-  })),
+    })),
 );
 
 const activeProduct = computed(() =>
-  products.value.find((product) => String(product.id) === activeTabId.value),
+  products.value.find((product) => String(product.id) === activeTabId.value
+    && (archiveScope.value === 'ARCHIVED' ? Boolean(product.archivedAt) : !product.archivedAt)),
 );
 
 const hasUnassignedRows = computed(() => rows.value.some((row) => !isAssignedRow(row)));
 
 const tabs = computed<ProductTab[]>(() => {
-  const courseTabs = hasUnassignedRows.value
+  const courseTabs = archiveScope.value === 'CURRENT' && hasUnassignedRows.value
     ? [...productTabs.value, { id: UNASSIGNED_TAB_ID, label: 'Unassigned', unassigned: true }]
     : productTabs.value;
   // All Data 保留内部兼容逻辑，但不再作为用户可见页签；默认直接进入课程产品页签。
@@ -878,7 +892,11 @@ const tabs = computed<ProductTab[]>(() => {
 
 /** 无产品可用时（如产品接口失败且无未分配行）回退为全量展示，保证页面可用。 */
 const productRows = computed(() => {
-  if (!activeTabId.value || activeTabId.value === ALL_TAB_ID || !tabs.value.some((tab) => tab.id === activeTabId.value)) {
+  if (!activeTabId.value) {
+    return archiveScope.value === 'CURRENT' && products.value.length === 0 ? rows.value : [];
+  }
+  if (activeTabId.value === ALL_TAB_ID || !tabs.value.some((tab) => tab.id === activeTabId.value)) {
+    if (archiveScope.value === 'ARCHIVED') return [];
     return rows.value;
   }
   if (activeTabId.value === UNASSIGNED_TAB_ID) {
@@ -1330,6 +1348,9 @@ function confirmPrintClassRoster() {
 const hasAnyFilter = computed(() => columns.some((column) => hasColumnFilter(column.key)));
 
 const emptyMessage = computed(() => {
+  if (archiveScope.value === 'ARCHIVED' && !productTabs.value.length) {
+    return 'No archived courses.';
+  }
   if (activeTabId.value && activeTabId.value !== ALL_TAB_ID) {
     return 'No matching records for this course.';
   }
@@ -1441,6 +1462,18 @@ function selectTab(tabId: string) {
   }
   activeTabId.value = tabId;
   restoreState(tabStates.get(tabId) ?? createDefaultState());
+}
+
+/** 切換歸檔範圍時保存當前課程視圖，並選中新範圍內的首個有效頁籤。 */
+function setArchiveScope(value: 'CURRENT' | 'ARCHIVED') {
+  if (value === archiveScope.value) return;
+  if (activeTabId.value) tabStates.set(activeTabId.value, snapshotCurrentState());
+  archiveScope.value = value;
+  const nextTab = value === 'ARCHIVED'
+    ? products.value.find((product) => Boolean(product.archivedAt))
+    : products.value.find((product) => !product.archivedAt);
+  activeTabId.value = nextTab ? String(nextTab.id) : '';
+  if (activeTabId.value) restoreState(tabStates.get(activeTabId.value) ?? createDefaultState());
 }
 
 function openStudentContextMenu(event: MouseEvent, row: DataSummaryDisplayRow) {
@@ -1559,7 +1592,14 @@ function scrollToCurrentStudentFindMatch() {
   const key = rowKey(row);
   const target = [...container.querySelectorAll<HTMLElement>('[data-student-find-key]')]
     .find((element) => element.dataset.studentFindKey === key);
-  target?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+  if (!target) return;
+  // 只滚动表格容器，避免输入时连带移动工具栏，影响搜索框焦点。
+  const targetRect = target.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  container.scrollBy({
+    top: targetRect.top - containerRect.top - (container.clientHeight - targetRect.height) / 2,
+    behavior: 'smooth',
+  });
 }
 
 function handleStudentContextMenuKeydown(event: KeyboardEvent) {
@@ -2227,6 +2267,7 @@ function setMobileTableScale(scale: number) {
 function handleMobileOverflowCommand(command: string) {
   if (command === 'export-excel') exportExcel();
   if (command === 'print-roster') printClassRoster();
+  if (command === 'archive-scope') setArchiveScope(archiveScope.value === 'CURRENT' ? 'ARCHIVED' : 'CURRENT');
 }
 
 function naturalCompare(left: string, right: string) {
@@ -2308,11 +2349,12 @@ onMounted(() => {
 .student-find {
   display: flex;
   align-items: center;
-  flex: 0 1 340px;
-  width: min(340px, 100%);
-  min-width: 300px;
-  gap: 5px;
-  padding: 4px 6px;
+  order: 1;
+  flex: 1 0 100%;
+  width: 100%;
+  min-width: 0;
+  gap: 8px;
+  padding: 4px 8px;
   border: 1px solid #c5d4cc;
   border-radius: 8px;
   background: #fff;
@@ -2325,20 +2367,21 @@ onMounted(() => {
 }
 
 .student-find__input {
-  flex: 1 1 120px;
-  width: auto;
-  min-width: 120px;
+  flex: 1 1 0;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 6px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #263b44;
+  font: inherit;
+  font-size: 13px;
 }
 
-.student-find__input :deep(.el-input__wrapper) {
-  height: 30px;
-  min-height: 30px;
-  padding: 0 7px;
-  box-shadow: none;
-}
-
-.student-find__input :deep(.el-input__inner) {
-  font-size: 12px;
+.student-find__input::placeholder {
+  color: #7b8c82;
 }
 
 .student-find__count {
@@ -2398,6 +2441,8 @@ onMounted(() => {
   flex-wrap: wrap;
   gap: 12px;
 }
+
+.archive-scope-select { width: 150px; }
 
 .roster-print {
   display: none;
@@ -2993,9 +3038,8 @@ th.workbook-column--studentName {
   }
 
   .data-summary-page .student-find__input {
-    flex: 1 1 120px;
-    width: auto;
-    min-width: 80px;
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   .data-summary-page .student-find__count {
@@ -3007,11 +3051,6 @@ th.workbook-column--studentName {
 
   .data-summary-page .workbook-toolbar__stats {
     order: 2;
-  }
-
-  .data-summary-page .student-find :deep(.el-input__wrapper) {
-    height: 30px;
-    min-height: 30px;
   }
 
   .data-summary-page .student-find__navigation :deep(.el-button) {

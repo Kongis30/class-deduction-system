@@ -60,6 +60,14 @@ test.describe('mobile responsive workspace', () => {
     await expect(page.locator('.mobile-tab-bar')).toBeVisible();
     await expect(page.locator('.mobile-registration-progress__copy strong')).toHaveText('Student');
     await page.screenshot({ path: testInfo.outputPath('registration-student-step.png') });
+    const registrationScrollRegion = page.locator('.app-shell__content--registration');
+    await registrationScrollRegion.evaluate(element => { element.scrollTop = element.scrollHeight; });
+    const signupDateVisibility = await page.evaluate(() => ({
+      fieldBottom: document.querySelector('.student-lines .line-date')?.getBoundingClientRect().bottom ?? 0,
+      actionsTop: document.querySelector('.mobile-registration-actions')?.getBoundingClientRect().top ?? 0,
+    }));
+    expect(signupDateVisibility.fieldBottom, 'The last student field should remain above the fixed action bar').toBeLessThan(signupDateVisibility.actionsTop);
+    await registrationScrollRegion.evaluate(element => { element.scrollTop = 0; });
 
     const steps = ['Course', 'Fees', 'Payment', 'Review'];
     for (const title of steps) {
@@ -75,6 +83,14 @@ test.describe('mobile responsive workspace', () => {
 
     await page.screenshot({ path: testInfo.outputPath('registration-review-step.png') });
     await expect(page.locator('.mobile-registration-review')).toBeVisible();
+    await expect(page.locator('.registration-page .paper-form')).toHaveCSS('overflow-y', 'visible');
+    const registrationContent = page.locator('.app-shell__content--registration');
+    await expect(registrationContent).toHaveCSS('overflow-y', 'auto');
+    const scrollTop = await registrationContent.evaluate(element => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    });
+    expect(scrollTop, 'The registration page content should scroll as one page').toBeGreaterThan(0);
   });
 
   test('mobile navigation mirrors sidebar links and scrolls horizontally', async ({ page }) => {
@@ -133,11 +149,102 @@ test.describe('mobile responsive workspace', () => {
 
   test('course packages use readable rows and reachable actions on mobile', async ({ page }, testInfo) => {
     await page.goto('/enrollment/packages');
-    await expect(page.locator('.mobile-package-list').first()).toBeVisible();
+    await expect(page.locator('.package-group__toggle').first()).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('.mobile-package-list')).toHaveCount(0);
+    await page.locator('.package-group__toggle').first().click();
     await expect(page.locator('.mobile-package-row').first()).toBeVisible();
     await expect(page.locator('.package-group .product-table')).toHaveCount(0);
-    await expect(page.locator('.mobile-package-row__actions').first().getByRole('button', { name: 'Renew' })).toBeVisible();
+    await expect(page.locator('.mobile-package-row__actions').first().getByRole('button', { name: /More actions for/ })).toBeVisible();
+    const listOverflow = await page.locator('.mobile-package-list').first().evaluate(element => element.scrollWidth > element.clientWidth);
+    expect(listOverflow, 'Package information should fit without horizontal scrolling on a phone').toBe(false);
     await page.screenshot({ path: testInfo.outputPath('course-packages-mobile.png') });
+  });
+
+  test('enrollment group class page can scroll vertically on mobile', async ({ page }, testInfo) => {
+    await page.goto('/enrollment/orders');
+    const content = page.locator('.app-shell__content--enrollment');
+    await expect(content).toHaveCSS('overflow-y', 'auto');
+
+    const actionRow = await Promise.all([
+      page.getByRole('button', { name: 'Register' }).boundingBox(),
+      page.getByRole('button', { name: 'More enrollment actions' }).boundingBox(),
+      page.getByRole('button', { name: 'Show search filters' }).boundingBox(),
+    ]);
+    expect(actionRow.every(Boolean)).toBe(true);
+    expect(Math.max(...actionRow.map(box => box?.y ?? 0)) - Math.min(...actionRow.map(box => box?.y ?? 0))).toBeLessThan(4);
+
+    const oneOnOneTable = content.locator('.product-table:not(.group-table)');
+    const courseHeader = oneOnOneTable.locator('.el-table__header-wrapper th').first().locator('.cell');
+    const headerAlignment = await courseHeader.evaluate(element => {
+      const titleText = [...element.childNodes].find(node => node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
+      const titleRange = document.createRange();
+      if (titleText) titleRange.selectNode(titleText);
+      const title = titleText ? titleRange.getBoundingClientRect() : null;
+      const sort = element.querySelector('.el-table__column-sort-button')?.getBoundingClientRect();
+      return { titleCenter: title ? title.top + title.height / 2 : 0, sortCenter: sort ? sort.top + sort.height / 2 : 0 };
+    });
+    expect(Math.abs(headerAlignment.titleCenter - headerAlignment.sortCenter), 'Sort controls should stay on the same line as the column name').toBeLessThan(4);
+    expect(await oneOnOneTable.evaluate(element => element.getBoundingClientRect().width)).toBeLessThanOrEqual(720);
+    expect(await oneOnOneTable.evaluate(element => getComputedStyle(element).zoom)).toBe('0.9');
+    await expect(oneOnOneTable.locator('.el-table__body-wrapper td .cell').first()).toHaveCSS('font-size', '11px');
+    await expect(oneOnOneTable.locator('.el-table__body-wrapper td .cell').first()).toHaveCSS('text-align', 'center');
+    const visibleColumnCount = await content.locator('.enrollment-table-scroll').first().evaluate(region => {
+      const rightEdge = region.getBoundingClientRect().right;
+      return [...region.querySelectorAll('.product-table:not(.group-table) .el-table__header-wrapper th')]
+        .filter(column => column.getBoundingClientRect().right <= rightEdge + 1).length;
+    });
+    expect(visibleColumnCount, 'A phone should show several complete columns before horizontal scrolling').toBeGreaterThanOrEqual(4);
+    await page.screenshot({ path: testInfo.outputPath('enrollment-orders-mobile-table.png') });
+
+    const scrollTop = await content.evaluate(element => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    });
+    expect(scrollTop, 'Expanded group class content should scroll above the fixed bottom navigation').toBeGreaterThan(0);
+  });
+
+  test('schedule package loading reports failures and retries on mobile', async ({ page }) => {
+    await page.goto('/schedule/recurring');
+    const scheduledGroup = page.locator('.schedule-student-group__toggle').filter({ hasText: '22' }).first();
+    await expect(scheduledGroup).toBeVisible();
+    await scheduledGroup.click();
+    await expect(scheduledGroup).toHaveAttribute('aria-expanded', 'true');
+    const firstCourse = page.locator('.schedule-student-group__students .col-item:visible').first();
+    await expect(firstCourse).toBeVisible();
+
+    let packageRequestCount = 0;
+    await page.route('**/v1/enrollment/packages*', async route => {
+      packageRequestCount += 1;
+      await route.fulfill({
+        status: 400,
+        contentType: 'application/json',
+        body: JSON.stringify({ message: 'Test package request failure' }),
+      });
+    });
+
+    await firstCourse.click();
+    await expect(page.getByText(/Could not load course packages/)).toBeVisible();
+    await expect.poll(() => packageRequestCount).toBe(1);
+    await page.getByRole('button', { name: 'Retry' }).click();
+    await expect(page.getByText(/Could not load course packages/)).toBeVisible();
+    await expect.poll(() => packageRequestCount).toBe(2);
+    await expect(page.getByText('Loading packages...')).toHaveCount(0);
+  });
+
+  test('schedule mobile package selection renders without runtime errors', async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on('pageerror', error => pageErrors.push(error.message));
+    await page.goto('/schedule/recurring');
+    const scheduledGroup = page.locator('.schedule-student-group__toggle').filter({ hasText: '22' }).first();
+    await expect(scheduledGroup).toBeVisible();
+    await scheduledGroup.click();
+    const firstCourse = page.locator('.schedule-student-group__students .col-item:visible').first();
+    await expect(firstCourse).toBeVisible();
+    await firstCourse.click();
+    const selectedPackageSummary = page.locator('.col-packages > .mobile-selection-summary');
+    await expect(selectedPackageSummary).toBeVisible({ timeout: 20000 });
+    await expect(selectedPackageSummary).toContainText('remaining');
+    expect(pageErrors).toEqual([]);
   });
 
   test('high-use inventory and receipt pages replace desktop tables with mobile cards', async ({ page }) => {
@@ -174,6 +281,62 @@ test.describe('mobile responsive workspace', () => {
         await page.screenshot({ path: testInfo.outputPath(fileName) });
       }
     }
+
+  });
+
+  test('room calendar shows the full week and uses page scrolling on mobile', async ({ page }, testInfo) => {
+    await page.goto('/calendar?tab=room');
+    const calendarTabContainer = page.locator('.calendar-tabs .el-tabs__header');
+    await expect(calendarTabContainer).toHaveCSS('border-top-width', '1px');
+    await expect(calendarTabContainer).toHaveCSS('border-top-style', 'solid');
+    await expect(calendarTabContainer).toHaveCSS('background-color', 'rgb(229, 237, 245)');
+    await expect(page.locator('.classroom-mobile-select')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Manage rooms' })).toBeVisible();
+    await expect(page.locator('.calendar-controls__label')).toBeVisible();
+    await expect(page.locator('.calendar-controls__count')).toBeVisible();
+    await expect(page.locator('.wts-header__cell')).toHaveCount(7);
+    await expect(page.locator('.wts-grid-scroll')).toHaveCSS('max-height', 'none');
+    await expect(page.locator('.wts-grid-scroll')).toHaveCSS('overflow-y', 'hidden');
+    const mobileGrid = await page.locator('.wts-grid-scroll').evaluate(element => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      dayWidth: element.querySelector('.wts-header__cell')?.getBoundingClientRect().width ?? 0,
+    }));
+    expect(mobileGrid.scrollWidth).toBeGreaterThan(mobileGrid.clientWidth);
+    expect(mobileGrid.dayWidth).toBeGreaterThanOrEqual(58);
+
+    const datePicker = page.locator('.calendar-date-picker');
+    const datePickerSize = await datePicker.evaluate(element => {
+      const { width, height } = element.getBoundingClientRect();
+      return { width, height };
+    });
+    expect(datePickerSize.width).toBeLessThanOrEqual(44);
+    expect(datePickerSize.height).toBeLessThanOrEqual(44);
+    await datePicker.click();
+    await expect(page.locator('.el-picker-panel:visible')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await page.locator('.calendar-controls__count').click();
+    await expect(page.locator('.wts-mobile-zoom-controls')).toHaveCount(0);
+
+    const calendarPageScroll = page.locator('.app-shell__content--calendar');
+    await expect(calendarPageScroll).toHaveCSS('overflow-y', 'auto');
+    const pageScrollTop = await calendarPageScroll.evaluate(element => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    });
+    expect(pageScrollTop, 'The full-week calendar should be reachable by scrolling the page').toBeGreaterThan(0);
+    await calendarPageScroll.evaluate(element => { element.scrollTop = 0; });
+
+    const calendarWidths = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      document: document.documentElement.scrollWidth,
+    }));
+    expect(calendarWidths.document, 'The mobile Calendar page should fit the phone width').toBeLessThanOrEqual(calendarWidths.viewport + 1);
+    await page.screenshot({ path: testInfo.outputPath('calendar-room-week-mobile.png') });
+
+    const firstDayOfWeek = await page.locator('.wts-header__date').first().textContent();
+    await page.getByRole('button', { name: 'Next week' }).click();
+    await expect(page.locator('.wts-header__date').first()).not.toHaveText(firstDayOfWeek ?? '');
   });
 
   test('lesson confirmation uses a full-width student list before showing lesson details', async ({ page }) => {

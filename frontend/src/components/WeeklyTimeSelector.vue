@@ -1,12 +1,5 @@
 <template>
   <div class="weekly-time-selector">
-    <div v-if="pinchZoomEnabled" class="wts-mobile-zoom-controls" aria-label="Calendar zoom controls">
-      <span>Pinch to zoom</span>
-      <button type="button" aria-label="Zoom out" :disabled="mobileZoom <= MIN_MOBILE_ZOOM" @click="adjustMobileZoom(-ZOOM_STEP)">−</button>
-      <output>{{ Math.round(mobileZoom * 100) }}%</output>
-      <button type="button" aria-label="Zoom in" :disabled="mobileZoom >= MAX_MOBILE_ZOOM" @click="adjustMobileZoom(ZOOM_STEP)">+</button>
-      <button v-if="mobileZoom !== 1" type="button" class="wts-mobile-zoom-controls__reset" @click="mobileZoom = 1">Reset</button>
-    </div>
     <div
       ref="gridScroll"
       class="wts-grid-scroll"
@@ -196,7 +189,6 @@ const emit = defineEmits<{
 
 const MIN_MOBILE_ZOOM = 0.8;
 const MAX_MOBILE_ZOOM = 2.5;
-const ZOOM_STEP = 0.15;
 const mobileZoom = ref(1);
 const gridScroll = ref<HTMLElement | null>(null);
 let pinchStartDistance = 0;
@@ -205,19 +197,15 @@ let pinchAnchorX = 0;
 let pinchAnchorY = 0;
 
 const mobileZoomStyle = computed(() => ({
-  '--wts-mobile-grid-width': `${(38 + 7 * 31) * mobileZoom.value}px`,
-  '--wts-mobile-time-width': `${38 * mobileZoom.value}px`,
-  '--wts-mobile-day-width': `${31 * mobileZoom.value}px`,
+  '--wts-mobile-grid-width': `${(42 + 7 * 58) * mobileZoom.value}px`,
+  '--wts-mobile-time-width': `${42 * mobileZoom.value}px`,
+  '--wts-mobile-day-width': `${58 * mobileZoom.value}px`,
   '--wts-mobile-row-height': `${26 * mobileZoom.value}px`,
-  '--wts-mobile-font-small': `${10 * mobileZoom.value}px`,
-  '--wts-mobile-font-medium': `${11 * mobileZoom.value}px`,
-  '--wts-mobile-font-large': `${12 * mobileZoom.value}px`,
+  '--wts-mobile-font-small': `${11 * mobileZoom.value}px`,
+  '--wts-mobile-font-medium': `${12 * mobileZoom.value}px`,
+  '--wts-mobile-font-large': `${13 * mobileZoom.value}px`,
   '--wts-mobile-padding': `${4 * mobileZoom.value}px`,
 }) as Record<string, string>);
-
-function adjustMobileZoom(delta: number) {
-  mobileZoom.value = clampMobileZoom(mobileZoom.value + delta);
-}
 
 function clampMobileZoom(value: number) {
   return Math.min(MAX_MOBILE_ZOOM, Math.max(MIN_MOBILE_ZOOM, value));
@@ -616,35 +604,6 @@ function weekdayName(d: number) {
   width: 100%;
 }
 
-.wts-mobile-zoom-controls {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 7px;
-  min-height: 34px;
-  margin-bottom: 6px;
-  color: #64748b;
-  font-size: 11px;
-}
-
-.wts-mobile-zoom-controls button {
-  display: grid;
-  place-items: center;
-  min-width: 30px;
-  height: 28px;
-  padding: 0 7px;
-  border: 1px solid #d7e0ea;
-  border-radius: 6px;
-  background: #fff;
-  color: #334155;
-  font: inherit;
-  font-size: 15px;
-}
-
-.wts-mobile-zoom-controls button:disabled { color: #b7c0cb; }
-.wts-mobile-zoom-controls output { min-width: 38px; color: #334155; font-variant-numeric: tabular-nums; text-align: center; }
-.wts-mobile-zoom-controls .wts-mobile-zoom-controls__reset { min-width: 46px; font-size: 11px; }
-
 .wts-grid-scroll {
   max-height: min(85vh, 900px);
   overflow-x: hidden;
@@ -653,9 +612,9 @@ function weekdayName(d: number) {
 }
 
 .wts-grid-scroll--pinch {
-  max-height: min(62vh, 620px);
+  max-height: none;
   overflow-x: auto;
-  overflow-y: auto;
+  overflow-y: hidden;
   overscroll-behavior: contain;
   touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
@@ -668,6 +627,14 @@ function weekdayName(d: number) {
 }
 
 .wts-grid-scroll--pinch .wts-header { z-index: 20; }
+.wts-grid-scroll--pinch .wts-header__spacer,
+.wts-grid-scroll--pinch .wts-row__label {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  background: #f8fafc;
+}
+.wts-grid-scroll--pinch .wts-header__spacer { z-index: 5; }
 .wts-grid-scroll--pinch .wts-body { min-width: var(--wts-mobile-grid-width); }
 .wts-grid-scroll--pinch .wts-row,
 .wts-grid-scroll--pinch .wts-row__label,

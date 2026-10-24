@@ -1,0 +1,12 @@
+remaining_legacy_formula_rows
+0
+remaining_verified_program_cap_rows
+0
+student_name	class_name	enrollment_id	enrollment_date	expiry_date	purchased_quantity	status	version
+Ethan Tang	G1	2110453050981814274	2026-09-10	2026-10-31	2	ACTIVE	1
+Harry Lin	G8	2108689674270269441	2026-10-09	2026-11-30	2	ACTIVE	1
+kevin Chen	G4	2107210630940864513	2026-10-05	2027-06-28	9	ACTIVE	1
+Scarlett Li	G2	2113019019742765057	2026-11-02	2026-12-31	2	ACTIVE	1
+Wenhao Ma	G8	2102540260594016257	2026-10-01	2026-11-30	2	ACTIVE	3
+student_name	enrollment_no	order_item_quantity	plan_quantity	entitlement_quantity	expiry_date	program_end_date	status	version
+kevin Chen	EO202610050003	10.00	10.00	9	2027-06-28	2027-06-28	ACTIVE	1

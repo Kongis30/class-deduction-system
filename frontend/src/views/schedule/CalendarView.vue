@@ -162,9 +162,43 @@ const description = computed(() => {
 }
 
 @media (max-width: 640px) {
-  .calendar-home { min-height: 0; height: auto; overflow: visible; gap: 6px; }
+  .calendar-home { min-height: 0; height: auto; overflow: visible; gap: 4px; }
   .calendar-hero { display: none; }
-  .calendar-tabs { min-height: 0; padding: 6px 8px; border-radius: 12px; }
+  .calendar-tabs { min-height: 0; padding: 0; border-radius: 0; background: transparent; box-shadow: none; }
+  .calendar-tabs :deep(.el-tabs__header) {
+    margin: 0 0 8px;
+    padding: 4px;
+    border-radius: 12px;
+    background: #eaf0f6;
+  }
+  .calendar-tabs :deep(.el-tabs__nav-wrap::after) { display: none; }
+  .calendar-tabs :deep(.el-tabs__nav) {
+    display: flex;
+    width: 100%;
+    border: 0;
+  }
+  .calendar-tabs :deep(.el-tabs__active-bar) { display: none; }
+  .calendar-tabs :deep(.el-tabs__item) {
+    display: flex;
+    flex: 1 1 0;
+    justify-content: center;
+    min-width: 0;
+    height: 44px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 9px;
+    color: #52647c;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .calendar-tabs :deep(.el-tabs__item.is-active) {
+    background: #fff;
+    color: #2563eb;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+  }
+  .calendar-tabs :deep(.el-tabs__content) { height: auto; overflow: visible; }
+  .calendar-tabs :deep(.el-tab-pane),
+  .calendar-tabs :deep(.page-stack) { height: auto; min-height: 0; overflow: visible; }
   .calendar-tab-label--desktop { display: none; }
   .calendar-tab-label--mobile { display: inline; }
   .calendar-tabs :deep(.teacher-calendar__header),

@@ -342,11 +342,20 @@
                   </el-button>
                 </template>
               </el-table-column>
-              <el-table-column label="Sessions" min-width="130">
+              <el-table-column label="Balance" min-width="145">
                 <template #default="{ row }">
                   <div class="session-balance">
                     <strong>{{ formatClassSessionBalance(row) }}</strong>
                     <span>{{ classSessionBalanceHint(row) }}</span>
+                    <el-popover v-if="row.purchaseSegments?.length > 1" trigger="click" :width="270">
+                      <div v-for="segment in row.purchaseSegments" :key="segment.classEnrollmentId" class="course-purchase-segment">
+                        <span>{{ formatDateShort(segment.enrollmentDate) }}–{{ formatDateShort(segment.expiryDate) }}</span>
+                        <strong>{{ segment.purchasedQuantity }} {{ row.billingType === 'MONTHLY' ? 'months' : 'sessions' }}</strong>
+                      </div>
+                      <template #reference>
+                        <el-button link size="small">{{ row.purchaseSegments.length }} purchases</el-button>
+                      </template>
+                    </el-popover>
                   </div>
                 </template>
               </el-table-column>
@@ -1281,7 +1290,7 @@ function openStudentProfile(row: ClassEnrolledStudentItem) {
 
 function formatClassSessionBalance(row: ClassEnrolledStudentItem): string {
   if (row.billingType === 'MONTHLY') {
-    return 'Monthly';
+    return row.expiryDate ? `Until ${formatDateShort(row.expiryDate)}` : '—';
   }
   if (row.billingType !== 'PER_SESSION' || row.remainingSessions == null || row.purchasedQuantity == null) {
     return '—';
@@ -1291,7 +1300,8 @@ function formatClassSessionBalance(row: ClassEnrolledStudentItem): string {
 
 function classSessionBalanceHint(row: ClassEnrolledStudentItem): string {
   if (row.billingType === 'MONTHLY') {
-    return row.purchasedQuantity ? `${row.purchasedQuantity} month(s)` : 'No session cap';
+    const daysLeft = row.expiryDate ? Math.max(0, dayjs(row.expiryDate).diff(dayjs(), 'day')) : 0;
+    return `${daysLeft} day(s) left · ${row.purchasedQuantity ?? 0} month(s) purchased`;
   }
   if (row.billingType !== 'PER_SESSION' || row.usedSessions == null) {
     return 'Not tracked';
@@ -2557,6 +2567,16 @@ onMounted(async () => {
 .session-balance span {
   color: #909399;
   font-size: 12px;
+}
+.course-purchase-segment {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 12px;
+}
+.course-purchase-segment + .course-purchase-segment {
+  border-top: 1px solid #edf0f4;
 }
 .class-empty {
   padding: 32px;

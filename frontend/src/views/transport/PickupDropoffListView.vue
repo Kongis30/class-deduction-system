@@ -11,6 +11,8 @@
                 <button type="button" class="mobile-search-trigger" aria-label="More transport actions"><el-icon><MoreFilled /></el-icon></button>
                 <template #dropdown>
                   <el-dropdown-menu>
+                    <el-dropdown-item command="archive-scope">{{ archiveScope === 'CURRENT' ? 'View archived courses' : 'View current courses' }}</el-dropdown-item>
+                    <el-dropdown-item command="toggle-driver-edit">{{ driverAssignmentsEditable ? 'Done editing drivers' : 'Edit drivers' }}</el-dropdown-item>
                     <el-dropdown-item command="drivers">Manage drivers</el-dropdown-item>
                     <el-dropdown-item command="export" :disabled="!selectedCourse">Export Excel</el-dropdown-item>
                   </el-dropdown-menu>
@@ -49,7 +51,17 @@
         <span class="workbook-toolbar__stat"><em>Pickup</em><strong>{{ selectedCourse?.pickupRows.length ?? 0 }}</strong></span>
         <span class="workbook-toolbar__stat"><em>Drop-off</em><strong>{{ selectedCourse?.dropoffRows.length ?? 0 }}</strong></span>
       </div>
-      <div class="workbook-toolbar__export">
+      <div v-if="!appStore.isMobileViewport" class="workbook-toolbar__export">
+        <el-select
+          :model-value="archiveScope"
+          class="archive-scope-select"
+          size="small"
+          aria-label="Course archive scope"
+          @change="setArchiveScope"
+        >
+          <el-option label="Current courses" value="CURRENT" />
+          <el-option label="Archived courses" value="ARCHIVED" />
+        </el-select>
         <el-button size="small" :type="driverAssignmentsEditable ? 'primary' : 'default'" @click="driverAssignmentsEditable = !driverAssignmentsEditable">
           {{ driverAssignmentsEditable ? 'Done' : 'Edit drivers' }}
         </el-button>
@@ -146,23 +158,6 @@
           <tbody v-if="selectedCourse.pickupRows.length && !filteredPickupRows.length"><tr class="workbook-empty-row"><td :colspan="tableColumns('pickup').length">No pickup students match these filters.</td></tr></tbody>
           </table>
         </div>
-        <div v-if="appStore.isMobileViewport" class="transport-mobile-list" aria-label="Pickup students">
-          <article v-for="row in filteredPickupRows" :key="`pickup-mobile-${rowKey(row)}`" class="transport-mobile-card">
-            <div class="transport-mobile-card__header">
-              <div>
-                <strong>{{ transportCellValue(row, 'student', 'pickup') }}</strong>
-                <span>{{ transportCellValue(row, 'class', 'pickup') }} · {{ transportCellValue(row, 'campus', 'pickup') }}</span>
-              </div>
-              <span class="transport-mobile-card__period">{{ periodLabel(row) }}</span>
-            </div>
-            <dl class="transport-mobile-card__details">
-              <div><dt>Driver</dt><dd v-if="!driverAssignmentsEditable">{{ driverNameForRow(row, 'pickup') }}</dd><dd v-else><el-select :model-value="driverIdForRow(row, 'pickup')" size="small" clearable filterable placeholder="Unassigned" @change="handleDriverChange(row, 'pickup', $event)"><el-option v-for="driver in drivers" :key="String(driver.id)" :label="driver.driverName" :value="String(driver.id)" /></el-select></dd></div>
-              <div><dt>Phone</dt><dd>{{ transportCellValue(row, 'phone', 'pickup') }}</dd></div>
-              <div class="transport-mobile-card__details--wide"><dt>Pickup address</dt><dd>{{ transportCellValue(row, 'pickupAddress', 'pickup') }}</dd></div>
-            </dl>
-          </article>
-          <div v-if="!filteredPickupRows.length" class="transport-mobile-empty">No pickup students match these filters.</div>
-        </div>
       </section>
 
       <section class="transport-roster-section transport-roster-section--dropoff">
@@ -251,23 +246,6 @@
           <tbody v-else><tr class="workbook-empty-row"><td :colspan="tableColumns('dropoff').length">No drop-off students for this course.</td></tr></tbody>
           <tbody v-if="selectedCourse.dropoffRows.length && !filteredDropoffRows.length"><tr class="workbook-empty-row"><td :colspan="tableColumns('dropoff').length">No drop-off students match these filters.</td></tr></tbody>
           </table>
-        </div>
-        <div v-if="appStore.isMobileViewport" class="transport-mobile-list" aria-label="Drop-off students">
-          <article v-for="row in filteredDropoffRows" :key="`dropoff-mobile-${rowKey(row)}`" class="transport-mobile-card">
-            <div class="transport-mobile-card__header">
-              <div>
-                <strong>{{ transportCellValue(row, 'student', 'dropoff') }}</strong>
-                <span>{{ transportCellValue(row, 'class', 'dropoff') }} · {{ transportCellValue(row, 'campus', 'dropoff') }}</span>
-              </div>
-              <span class="transport-mobile-card__period">{{ periodLabel(row) }}</span>
-            </div>
-            <dl class="transport-mobile-card__details">
-              <div><dt>Driver</dt><dd v-if="!driverAssignmentsEditable">{{ driverNameForRow(row, 'dropoff') }}</dd><dd v-else><el-select :model-value="driverIdForRow(row, 'dropoff')" size="small" clearable filterable placeholder="Unassigned" @change="handleDriverChange(row, 'dropoff', $event)"><el-option v-for="driver in drivers" :key="String(driver.id)" :label="driver.driverName" :value="String(driver.id)" /></el-select></dd></div>
-              <div><dt>Phone</dt><dd>{{ transportCellValue(row, 'phone', 'dropoff') }}</dd></div>
-              <div class="transport-mobile-card__details--wide"><dt>Drop-off address</dt><dd>{{ transportCellValue(row, 'dropoffAddress', 'dropoff') }}</dd></div>
-            </dl>
-          </article>
-          <div v-if="!filteredDropoffRows.length" class="transport-mobile-empty">No drop-off students match these filters.</div>
         </div>
       </section>
     </div>
@@ -388,6 +366,7 @@ const drivers = ref<TransportDriver[]>([]);
 const driverAssignments = reactive<Record<string, string>>({});
 const keyword = ref('');
 const classFilter = ref('');
+const archiveScope = ref<'CURRENT' | 'ARCHIVED'>('CURRENT');
 const appStore = useAppStore();
 const mobileSearchExpanded = ref(false);
 const pickupScrollRef = ref<HTMLElement | null>(null);
@@ -446,6 +425,7 @@ let orderSaveTimer: number | undefined;
 let savedOrderProducts: CourseProductItem[] = [];
 
 const driverNameById = computed(() => new Map(drivers.value.map((driver) => [String(driver.id), driver.driverName])));
+const productsById = computed(() => new Map(products.value.map((product) => [String(product.id), product])));
 const courseLabel = (row: DataSummaryRow) => row.courseProductName || row.detail || row.registerClass || '—';
 const classLabel = (row: DataSummaryRow) => row.className || row.registerClass || '—';
 const isOneOnOneRow = (row: DataSummaryRow) => row.courseType?.toUpperCase() === 'ONE_ON_ONE';
@@ -457,6 +437,8 @@ const courseTabs = computed<TransportCourseTab[]>(() => {
   const grouped = new Map<string, TransportCourseTab>();
   const rowKeysByCourse = new Map<string, Set<string>>();
   for (const row of transportRows.value) {
+    const product = row.courseProductId == null ? undefined : productsById.value.get(String(row.courseProductId));
+    if (archiveScope.value === 'ARCHIVED' ? !product?.archivedAt : Boolean(product?.archivedAt)) continue;
     const course = courseLabel(row);
     const className = classLabel(row);
     if (classFilter.value && className !== classFilter.value) continue;
@@ -573,8 +555,19 @@ function exportExcel() {
 }
 
 function handleMobileAction(command: string) {
+  if (command === 'archive-scope') setArchiveScope(archiveScope.value === 'CURRENT' ? 'ARCHIVED' : 'CURRENT');
+  if (command === 'toggle-driver-edit') driverAssignmentsEditable.value = !driverAssignmentsEditable.value;
   if (command === 'drivers') openDriverDialog();
   if (command === 'export') exportExcel();
+}
+
+/** 按归档范围收纳交通页签，并恢复该范围内已保存的选中课程筛选。 */
+function setArchiveScope(value: 'CURRENT' | 'ARCHIVED') {
+  if (value === archiveScope.value) return;
+  if (activeCourseKey.value) tabStates.set(activeCourseKey.value, { filters: snapshotTransportFilters() });
+  archiveScope.value = value;
+  activeCourseKey.value = '';
+  ensureActiveCourse();
 }
 
 function ensureActiveCourse() {
@@ -934,7 +927,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .transport-tab-bar { margin: 0 0 12px; }
-.transport-scroll { padding: 0 0 18px; }
+.transport-scroll { min-width: 0; padding: 0 0 18px; }
 .transport-roster-section__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; color: #263b44; font-size: 13px; font-weight: 700; }
 .transport-roster-section__heading span { color: #667780; font-size: 11px; font-weight: 500; }
 .transport-roster-section { margin-top: 12px; overflow: hidden; border: 1px solid #b8c5cb; border-radius: 6px; background: #fff; }
@@ -950,6 +943,7 @@ onBeforeUnmount(() => {
 .transport-page .transport-detail-table th { border-color: #87949b; background: #e7e7e7; color: #1f2b31; }
 .transport-page .transport-detail-table td { border-color: #c5cdd2; background: #fff; color: #1f2b31; }
 .transport-page .transport-driver-select { width: 160px; }
+.transport-page .archive-scope-select { width: 150px; }
 .transport-page .transport-driver-select :deep(.el-input__wrapper) { box-shadow: none; background: transparent; }
 .driver-editor { display: flex; align-items: center; gap: 8px; }
 .driver-editor .el-input { flex: 1; }
@@ -1000,38 +994,31 @@ onBeforeUnmount(() => {
 .transport-page .transport-detail-table .workbook-data-row:hover td { background: #fff; }
 .transport-page .transport-detail-table td:last-child { white-space: normal; line-height: 1.4; }
 .transport-empty { margin-top: 12px; padding: 40px; border: 1px solid #b8c5cb; border-radius: 6px; color: #52636c; text-align: center; }
-.transport-mobile-list { display: none; }
-
-@media (max-width: 640px) {
-  .transport-page { min-height: 0; }
-  .transport-scroll { padding-bottom: 12px; }
+@media (max-width: 920px) {
+  .transport-page { display: flex; height: 100%; min-height: 0; flex: 1 1 0; flex-direction: column; overflow: hidden; }
+  .transport-page .workbook-toolbar { flex: 0 0 auto; gap: 6px; padding: 6px 8px; }
+  .transport-scroll { min-height: 0; flex: 1 1 0; overflow: auto; padding-bottom: 8px; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
   .transport-roster-section { min-width: 0; }
-  .transport-roster-section__heading { align-items: flex-start; flex-direction: column; gap: 2px; }
-  .transport-table-scroll { border-radius: 4px; }
+  .transport-roster-section__heading { gap: 4px 8px; padding: 6px 8px; font-size: 11px; }
+  .transport-roster-section__heading span { font-size: 9px; }
+  .transport-roster-section--dropoff { margin-top: 10px; }
+  .transport-table-scroll { max-height: 55vh; overflow: auto; border-radius: 0; overscroll-behavior: contain; }
   .mobile-pinch-scroll { touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
   .mobile-toolbar-actions { display: inline-flex; align-items: center; gap: 8px; }
   .mobile-search-panel .workbook-toolbar__stats { display: flex; flex-wrap: wrap; gap: 12px 18px; margin-top: 12px; }
-  .transport-detail-table { min-width: 760px; }
-  .transport-page .transport-table-scroll { display: none; }
-  .transport-page .workbook-toolbar__export { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; width: 100%; }
-  .transport-page .workbook-toolbar__export .el-button { width: 100%; margin: 0; }
-  .transport-page .workbook-toolbar__export .el-button:last-child { grid-column: 1 / -1; }
-  .transport-mobile-list { display: grid; gap: 8px; padding: 10px; background: #f8fafb; }
-  .transport-mobile-card { display: grid; gap: 11px; padding: 12px; border: 1px solid #c9d9e2; border-radius: 10px; background: #fff; box-shadow: 0 2px 8px rgb(38 59 68 / 6%); }
-  .transport-mobile-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-  .transport-mobile-card__header > div:first-child { display: grid; min-width: 0; gap: 3px; }
-  .transport-mobile-card__header strong { overflow: hidden; color: #1f3f36; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
-  .transport-mobile-card__header span { overflow: hidden; color: #71808a; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-  .transport-mobile-card__period { flex: 0 0 auto; max-width: 112px; color: #52636c !important; font-size: 10px !important; line-height: 1.3; text-align: right; white-space: normal !important; }
-  .transport-mobile-card__details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin: 0; padding-top: 10px; border-top: 1px solid #e8eef1; }
-  .transport-mobile-card__details--wide { grid-column: 1 / -1; }
-  .transport-mobile-card__details dt { margin-bottom: 2px; color: #87949b; font-size: 10px; }
-  .transport-mobile-card__details dd { overflow: hidden; margin: 0; color: #40535d; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-  .transport-mobile-card__details dd :deep(.el-select) { width: 100%; }
-  .transport-mobile-empty { padding: 20px 10px; color: #667780; font-size: 12px; text-align: center; }
-  .transport-page > .transport-tab-bar { position: sticky; bottom: 0; z-index: 20; margin: 0; padding-top: 5px; padding-bottom: 5px; border-top: 1px solid #9eafa7; background: rgb(220 232 226 / 96%); box-shadow: 0 -4px 12px rgb(38 59 68 / 8%); }
+  .transport-detail-table { width: max-content; min-width: 100%; margin: 0; border-collapse: separate; border-spacing: 0; table-layout: fixed; color: #263b44; font-size: 11px; }
+  .transport-detail-table th,
+  .transport-detail-table td { height: 34px; padding: 6px 7px; overflow: hidden; border-color: #c3d3df; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+  .transport-detail-table td { background: #dcebf8 !important; }
+  .transport-detail-table .workbook-data-row:hover td { background: #d1e5f6 !important; }
+  .transport-detail-table th { position: sticky; top: 0; z-index: 4; height: 38px; padding: 0; border-color: #517768; background: #376451 !important; color: #fff !important; font-size: 11px; }
+  .transport-page .workbook-header-button { gap: 5px; padding: 0 6px; }
+  .transport-page .workbook-header-button > span:first-child { white-space: nowrap; }
+  .transport-detail-table td:last-child { white-space: nowrap; }
+  .transport-page .workbook-toolbar__export { display: none; }
+  .transport-tab-bar { position: static; z-index: auto; flex: 0 0 auto; min-height: 44px; margin: 0; padding: 5px 0; border-top: 1px solid #9eafa7; background: rgb(220 232 226 / 96%); box-shadow: 0 -4px 12px rgb(38 59 68 / 8%); }
   .transport-page > .transport-tab-bar .product-tab { min-height: 34px; }
   .transport-page .transport-driver-select { width: 150px; }
-  .transport-empty { padding: 24px 14px; }
+  .transport-empty { margin: 8px; padding: 24px 14px; }
 }
 </style>

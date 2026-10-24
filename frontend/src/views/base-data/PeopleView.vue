@@ -186,4 +186,13 @@ async function syncTabAndRender(tab: PeopleTab) {
   }
 
 }
+
+@media (max-width: 920px) {
+  .people-page .people-tabs.el-tabs :deep(.el-tabs__header) {
+    border: 1px solid #cbd8e6;
+    border-radius: 10px;
+    background: #e5edf5;
+    box-shadow: 0 1px 2px rgb(29 50 79 / 6%);
+  }
+}
 </style>

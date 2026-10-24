@@ -194,6 +194,8 @@ export interface CourseProductItem {
   teachingMode: string;
   sortOrder?: number;
   status: string;
+  archivedAt?: string | null;
+  archivedBy?: EntityId | null;
   notes?: string;
   referenced?: boolean;
   referenceCount?: number;
@@ -707,6 +709,7 @@ export interface ClassGroupItem {
 export interface ClassEnrolledStudentItem {
   studentId: EntityId;
   studentName: string;
+  logicalCourseId?: EntityId;
   enrollmentDate: string;
   expiryDate: string;
   billingType?: 'PER_SESSION' | 'MONTHLY' | string;
@@ -715,6 +718,13 @@ export interface ClassEnrolledStudentItem {
   remainingSessions?: number;
   enrollmentStatus: string;
   expiryStatus: 'EXPIRED' | 'EXPIRING_SOON' | 'NORMAL';
+  purchaseSegments?: Array<{
+    classEnrollmentId: EntityId;
+    classId: EntityId;
+    enrollmentDate?: string;
+    expiryDate?: string;
+    purchasedQuantity: number;
+  }>;
 }
 
 export interface ClassOccurrenceItem {

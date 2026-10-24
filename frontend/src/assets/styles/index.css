@@ -960,6 +960,7 @@ a {
   }
 
   .app-header {
+    flex: 0 0 auto;
     flex-wrap: wrap;
     align-items: center;
   }
@@ -999,7 +1000,16 @@ a {
     overflow-x: hidden;
   }
 
+  /* Bound the mobile app to the viewport so nested spreadsheet scrolling can size reliably. */
+  .app-shell--mobile {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
   .app-shell__main {
+    height: 100%;
+    min-height: 0;
     width: 100%;
   }
 
@@ -1008,11 +1018,65 @@ a {
     padding: 14px 12px calc(78px + env(safe-area-inset-bottom));
   }
 
+  .app-shell__content--course-packages {
+    height: 0;
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
+
+  .app-shell__content--enrollment {
+    height: 0;
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .app-shell__content--calendar {
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .app-shell__content--data-summary {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+    padding-bottom: calc(60px + env(safe-area-inset-bottom));
+  }
+
   .app-shell__content--one-on-one {
     display: flex;
     min-height: 0;
     flex-direction: column;
     overflow: hidden;
+  }
+
+  .app-shell__content--mobile-workbook {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+    padding-bottom: calc(60px + env(safe-area-inset-bottom));
+  }
+
+  .app-shell__content--registration {
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(220px + env(safe-area-inset-bottom));
   }
 
   .app-header {
@@ -1225,6 +1289,12 @@ body.app-desktop-override {
     border: 0;
     border-radius: 10px;
     background: #edf2f7;
+  }
+
+  .app-shell__content .calendar-tabs.el-tabs .el-tabs__header {
+    border: 1px solid #cbd8e6;
+    background: #e5edf5;
+    box-shadow: 0 1px 2px rgb(29 50 79 / 6%);
   }
 
   .app-shell__content .el-tabs:not(.enrollment-tabs) .el-tabs__nav-wrap::after {

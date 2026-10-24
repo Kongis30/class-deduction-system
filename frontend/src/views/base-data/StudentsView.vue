@@ -75,16 +75,18 @@
         </div>
       </div>
 
-      <p v-if="appStore.isMobileViewport" class="mobile-table-hint">Tap a student to open details. Use More for account and registration actions.</p>
-      <el-table
-        v-loading="loading"
-        :data="tableData"
-        row-key="id"
-        class="product-table people-main-table"
-        :show-empty="true"
-        @row-click="openStudentDetail"
-      >
-        <el-table-column label="Student" min-width="190">
+      <p v-if="appStore.isMobileViewport" class="mobile-table-hint">Swipe to view more fields. Tap a student for details; use More for actions.</p>
+      <div ref="peopleTableScrollRef" class="people-table-zoom-scroll mobile-pinch-scroll">
+        <el-table
+          v-loading="loading"
+          :data="tableData"
+          row-key="id"
+          class="product-table people-main-table"
+          :style="{ zoom: appStore.isMobileViewport ? mobileTableScale : undefined }"
+          :show-empty="true"
+          @row-click="openStudentDetail"
+        >
+        <el-table-column label="Student" :min-width="appStore.isMobileViewport ? 150 : 190" fixed="left">
           <template #default="{ row }">
             <div class="cell-stack">
               <strong>{{ row.studentName }}</strong>
@@ -92,7 +94,10 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="Guardian contact" min-width="180">
+        <el-table-column v-if="appStore.isMobileViewport" label="Phone" width="128">
+          <template #default="{ row }">{{ formatUsPhoneDisplay(row.guardianPhone || row.phone) || '-' }}</template>
+        </el-table-column>
+        <el-table-column v-else label="Guardian contact" min-width="180">
           <template #default="{ row }">
             <div class="cell-stack">
               <strong>{{ row.guardianName || '-' }}</strong>
@@ -100,31 +105,32 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="Registrations" min-width="150">
+        <el-table-column label="Orders" :width="appStore.isMobileViewport ? 82 : undefined" :min-width="appStore.isMobileViewport ? undefined : 150">
           <template #default="{ row }">
             <div class="cell-stack">
               <strong>{{ row.enrollmentCount ?? 0 }} order{{ (row.enrollmentCount ?? 0) === 1 ? '' : 's' }}</strong>
-              <span>Latest {{ formatDate(row.latestSignupDate) }}</span>
+              <span v-if="!appStore.isMobileViewport">Latest {{ formatDate(row.latestSignupDate) }}</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="Payment follow-up" min-width="180">
+        <el-table-column label="Balance" :min-width="appStore.isMobileViewport ? 104 : 180">
           <template #default="{ row }">
             <div class="cell-stack">
               <strong :class="{ 'balance-due': numeric(row.enrollmentBalanceAmount) > 0 }">
                 {{ numeric(row.enrollmentBalanceAmount) > 0 ? `${formatMoney(row.enrollmentBalanceAmount)} due` : 'No balance' }}
               </strong>
-              <el-tag size="small" :type="paymentStatusType(row.aggregatePaymentStatus)">
+              <el-tag v-if="!appStore.isMobileViewport" size="small" :type="paymentStatusType(row.aggregatePaymentStatus)">
                 {{ paymentStatusLabel(row.aggregatePaymentStatus) }}
               </el-tag>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="Login access" min-width="170">
+        <el-table-column label="Login" :min-width="appStore.isMobileViewport ? 132 : 170">
           <template #default="{ row }">
             <div class="cell-stack">
               <strong>{{ accountForStudent(row)?.username || 'No login' }}</strong>
-              <el-tag size="small" :type="accountForStudent(row)?.status === 'ACTIVE' ? 'success' : 'info'">
+              <span v-if="appStore.isMobileViewport">{{ accountForStudent(row) ? accountStatusLabel(accountForStudent(row)!.status) : 'Not enabled' }}</span>
+              <el-tag v-if="!appStore.isMobileViewport" size="small" :type="accountForStudent(row)?.status === 'ACTIVE' ? 'success' : 'info'">
                 {{ accountForStudent(row) ? accountStatusLabel(accountForStudent(row)!.status) : 'Not enabled' }}
               </el-tag>
             </div>
@@ -132,7 +138,7 @@
         </el-table-column>
         <el-table-column
           :label="appStore.isMobileViewport ? 'More' : 'Actions'"
-          :width="appStore.isMobileViewport ? 72 : 320"
+          :width="appStore.isMobileViewport ? 56 : 320"
           fixed="right"
           align="center"
         >
@@ -170,46 +176,7 @@
             </div>
           </template>
         </el-table-column>
-      </el-table>
-
-      <div v-if="appStore.isMobileViewport" class="people-mobile-list">
-        <article v-for="row in tableData" :key="row.id" class="people-mobile-card" @click="openStudentDetail(row)">
-          <div class="people-mobile-card__header">
-            <div class="people-mobile-card__identity">
-              <strong>{{ row.studentName }}</strong>
-              <span>{{ row.studentNo }} · {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}</span>
-            </div>
-            <el-dropdown trigger="click" placement="bottom-end" @click.stop>
-              <el-button text circle aria-label="More student actions" @click.stop>
-                <el-icon><MoreFilled /></el-icon>
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item @click="openStudentDetail(row)">Student details</el-dropdown-item>
-                  <el-dropdown-item @click="startRegistrationForStudent(row)">Register</el-dropdown-item>
-                  <el-dropdown-item @click="openStudentAccountDialog(row)">
-                    {{ accountForStudent(row) ? 'Edit login' : 'Create login' }}
-                  </el-dropdown-item>
-                  <el-dropdown-item @click="openStudentDialog(row)">Edit student</el-dropdown-item>
-                  <el-dropdown-item divided @click="handleDeleteStudent(row)">Delete student</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </div>
-          <div class="people-mobile-card__grid">
-            <div><span>Guardian</span><strong>{{ row.guardianName || '-' }}</strong></div>
-            <div><span>Phone</span><strong>{{ formatUsPhoneDisplay(row.guardianPhone || row.phone) || '-' }}</strong></div>
-            <div><span>Registrations</span><strong>{{ row.enrollmentCount ?? 0 }} order{{ (row.enrollmentCount ?? 0) === 1 ? '' : 's' }}</strong></div>
-            <div><span>Latest signup</span><strong>{{ formatDate(row.latestSignupDate) }}</strong></div>
-            <div><span>Payment</span><strong :class="{ 'balance-due': numeric(row.enrollmentBalanceAmount) > 0 }">{{ numeric(row.enrollmentBalanceAmount) > 0 ? `${formatMoney(row.enrollmentBalanceAmount)} due` : 'No balance' }}</strong></div>
-            <div><span>Login access</span><strong>{{ accountForStudent(row)?.username || 'No login' }}</strong></div>
-          </div>
-          <div class="people-mobile-card__footer">
-            <el-tag size="small" :type="paymentStatusType(row.aggregatePaymentStatus)">{{ paymentStatusLabel(row.aggregatePaymentStatus) }}</el-tag>
-            <span>{{ accountForStudent(row) ? accountStatusLabel(accountForStudent(row)!.status) : 'Login not enabled' }}</span>
-          </div>
-        </article>
-        <el-empty v-if="!loading && tableData.length === 0" description="No students found" />
+        </el-table>
       </div>
 
       <div class="table-footer">
@@ -231,6 +198,7 @@
     <el-dialog
       v-model="studentDialogVisible"
       width="760px"
+      :fullscreen="appStore.isMobileViewport"
       :close-on-click-modal="false"
       class="student-dialog"
     >
@@ -359,6 +327,7 @@
     <el-dialog
       v-model="studentAccountDialogVisible"
       width="480px"
+      :fullscreen="appStore.isMobileViewport"
       :close-on-click-modal="false"
       class="student-dialog"
     >
@@ -627,6 +596,7 @@
     <el-dialog
       v-model="paymentDialogVisible"
       width="760px"
+      :fullscreen="appStore.isMobileViewport"
       :close-on-click-modal="false"
       class="student-dialog"
     >
@@ -828,6 +798,8 @@
       v-model="deletedDialogVisible"
       title="Deleted Students"
       width="720px"
+      :fullscreen="appStore.isMobileViewport"
+      class="student-dialog"
     >
       <p class="deleted-hint">These student profiles have been deleted. This view is read-only.</p>
       <el-table v-loading="deletedLoading" :data="deletedRows" row-key="id" class="product-table" max-height="420">
@@ -886,6 +858,7 @@ import { useAppStore } from '@/stores/app';
 import type { CampusItem, EnrollmentOrderDetailItem, EnrollmentOrderItem, PaymentMethodItem, PaymentRecordItem, StudentAccountItem, StudentItem } from '@/types/domain';
 import { DEFAULT_INITIAL_PASSWORD, usernameFromName } from '@/utils/account-credentials';
 import { formatUsPhoneDisplay } from '@/utils/phone-format';
+import { useMobileTablePinchZoom } from '@/composables/useMobileTablePinchZoom';
 
 const loading = ref(false);
 const submitting = ref(false);
@@ -895,6 +868,12 @@ const studentFormRef = ref();
 const router = useRouter();
 const route = useRoute();
 const appStore = useAppStore();
+const peopleTableScrollRef = ref<HTMLElement | null>(null);
+const { scale: mobileTableScale } = useMobileTablePinchZoom(
+  peopleTableScrollRef,
+  computed(() => appStore.isMobileViewport),
+  0.72,
+);
 
 // ─── Campus options for dropdown ────────────────────
 const campusOptions = ref<CampusItem[]>([]);
@@ -1936,34 +1915,21 @@ onBeforeUnmount(() => {
   color: var(--el-color-danger);
 }
 
-.people-mobile-list,
-.people-mobile-card {
-  display: none;
-}
-
-@media (max-width: 640px) {
-  .people-main-table { display: none; }
-  .mobile-table-hint { margin: 0 0 10px; color: #64748b; font-size: 12px; line-height: 1.4; }
-  .people-mobile-list { display: grid; gap: 10px; }
-  .people-mobile-card {
-    display: block;
-    padding: 12px;
-    border: 1px solid #c9d9e2;
-    border-radius: 10px;
-    background: #fff;
-    box-shadow: 0 2px 8px rgba(31, 63, 54, 0.05);
-  }
-  .people-mobile-card__header,
-  .people-mobile-card__footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .people-mobile-card__identity { min-width: 0; display: grid; gap: 3px; }
-  .people-mobile-card__identity strong { color: #1f3f36; font-size: 15px; }
-  .people-mobile-card__identity span,
-  .people-mobile-card__footer span { color: #71808a; font-size: 11px; }
-  .people-mobile-card__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 12px; margin: 12px 0; padding: 10px 0; border-top: 1px solid #edf1f4; border-bottom: 1px solid #edf1f4; }
-  .people-mobile-card__grid > div { min-width: 0; display: grid; gap: 2px; }
-  .people-mobile-card__grid span { color: #87949b; font-size: 11px; }
-  .people-mobile-card__grid strong { overflow: hidden; color: #40535d; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-  .people-mobile-card__footer :deep(.el-tag) { margin: 0; }
+@media (max-width: 920px) {
+  .people-table-zoom-scroll { max-height: max(260px, calc(100dvh - 340px)); overflow: auto; touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
+  .people-main-table { width: max-content; min-width: 100%; }
+  .people-main-table { max-width: none; }
+  .people-main-table :deep(.el-table__header-wrapper),
+  .people-main-table :deep(.el-table__fixed-header-wrapper) { position: sticky; top: 0; z-index: 4; }
+  .people-main-table :deep(.el-table__header th) { height: 36px; padding: 4px 6px; white-space: nowrap; }
+  .people-main-table :deep(.el-table__cell) { padding: 4px 6px; }
+  .people-main-table :deep(.cell) { padding: 0; font-size: 11px; white-space: nowrap; }
+  .people-main-table :deep(.cell-stack) { gap: 1px; }
+  .people-main-table :deep(.cell-stack strong) { font-size: 11px; }
+  .people-main-table :deep(.cell-stack span) { font-size: 10px; }
+  .people-main-table :deep(.el-table__row) { height: 42px; cursor: pointer; }
+  .people-main-table :deep(.el-table__fixed-right) { box-shadow: -4px 0 8px rgb(31 63 54 / 8%); }
+  .people-main-table :deep(.mobile-table-actions .el-button) { width: 36px; height: 36px; }
 }
 
 .student-detail {
@@ -2205,9 +2171,69 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 640px) {
-  .student-form__row,
-  .student-form__row--three {
-    grid-template-columns: 1fr;
+  :global(.el-dialog.student-dialog:not(.is-fullscreen)) {
+    display: flex;
+    width: calc(100vw - 24px) !important;
+    max-width: 560px;
+    max-height: calc(100dvh - 24px);
+    flex-direction: column;
+    margin: 12px auto !important;
   }
+  .student-dialog :deep(.el-dialog__header),
+  .student-dialog :deep(.el-dialog__footer) { flex: 0 0 auto; padding: 9px 12px; }
+  .student-dialog :deep(.el-dialog__body) {
+    min-height: 0;
+    max-height: calc(100dvh - 120px);
+    flex: 1 1 auto;
+    overflow: auto;
+    padding: 10px 12px;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .student-dialog :deep(.dialog-header__title) { font-size: 15px; }
+  .student-dialog :deep(.el-form-item) { margin-bottom: 9px; }
+  .student-dialog :deep(.el-form-item__label) { padding-bottom: 3px; font-size: 11px; line-height: 1.25; }
+  .student-dialog :deep(.el-input__wrapper),
+  .student-dialog :deep(.el-select__wrapper),
+  .student-dialog :deep(.el-textarea__inner) { min-height: 36px; }
+  .student-dialog :deep(.el-input__inner),
+  .student-dialog :deep(.el-select__placeholder),
+  .student-dialog :deep(.el-select__selected-item) { font-size: 12px; }
+  .student-dialog :deep(.el-button:not(.is-text):not(.is-link)) { min-height: 34px; padding: 0 10px; font-size: 12px; }
+  .student-dialog :deep(.el-table__header th),
+  .student-dialog :deep(.el-table__body td) { height: 36px; padding: 4px 5px; }
+  .student-dialog :deep(.el-table .cell) { padding: 0 3px; font-size: 11px; }
+  .student-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 8px; align-content: start; }
+  .student-form__row,
+  .student-form__row--three { display: contents; }
+  .student-form__section-title { grid-column: 1 / -1; }
+  .student-form__half,
+  .student-form__third { grid-column: span 1; min-width: 0; }
+  .student-form__full { grid-column: 1 / -1; min-width: 0; }
+  .student-form :deep(.el-form-item) { min-width: 0; }
+  .student-form__section-title { margin: 12px 0 7px; font-size: 12px; }
+  .student-dialog .payment-detail,
+  .student-dialog .refund-detail,
+  .student-dialog .delete-confirm { gap: 8px; }
+  .student-dialog .metric-grid { gap: 7px; }
+  .student-dialog .delete-warning-text,
+  .student-dialog .refund-warning { padding: 8px 9px; font-size: 11px; }
+  .student-dialog .payment-rows { gap: 5px; }
+  .student-dialog .payment-total { gap: 10px; font-size: 12px; }
+  .student-dialog .dialog-footer { gap: 6px; }
+  :global(.el-dialog.student-dialog.is-fullscreen) { display: flex; width: 100vw !important; height: 100dvh; max-height: 100dvh; flex-direction: column; margin: 0 !important; border-radius: 0; }
+  :global(.el-dialog.student-dialog.is-fullscreen .el-dialog__header),
+  :global(.el-dialog.student-dialog.is-fullscreen .el-dialog__footer) { flex: 0 0 auto; padding: calc(10px + env(safe-area-inset-top)) 14px 10px; }
+  :global(.el-dialog.student-dialog.is-fullscreen .el-dialog__footer) { padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); }
+  :global(.el-dialog.student-dialog.is-fullscreen .el-dialog__body) { flex: 1 1 0; min-height: 0; max-height: none; overflow: auto; padding: 12px 14px; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  :global(.el-drawer.student-detail-drawer) { width: 100vw !important; max-width: 100vw; }
+  .student-detail-drawer :deep(.el-drawer__body) { overflow: auto; padding: 10px; -webkit-overflow-scrolling: touch; }
+  .student-detail { gap: 9px; }
+  .detail-header { align-items: flex-start; gap: 8px; }
+  .detail-header h2 { font-size: 17px; }
+  .detail-header__actions { flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+  .detail-header__actions :deep(.el-button) { min-height: 34px; padding: 0 8px; font-size: 11px; }
+  .detail-card { gap: 8px; padding: 10px; border-radius: 7px; }
+  .detail-card h3 { font-size: 13px; }
 }
 </style>

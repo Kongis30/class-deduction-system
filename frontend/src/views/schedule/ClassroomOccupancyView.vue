@@ -7,7 +7,7 @@
           <p class="classroom-calendar__note">Select a classroom to review its weekly occupancy. Missing rooms can be assigned from the queue below.</p>
         </div>
         <div class="classroom-calendar__actions">
-          <el-button @click="goClassrooms">Manage rooms</el-button>
+          <el-button v-if="!appStore.isMobileViewport" @click="goClassrooms">Manage rooms</el-button>
         </div>
       </div>
 
@@ -63,18 +63,20 @@
 
         <!-- Right: Calendar -->
         <main class="calendar-panel">
-          <el-select
-            v-if="appStore.isMobileViewport"
-            :model-value="selectedClassroomId"
-            class="classroom-mobile-select"
-            placeholder="Select a classroom"
-            filterable
-            @change="onClassroomSelect"
-          >
-            <el-option-group v-for="group in classroomGroups" :key="group.campus" :label="group.campus">
-              <el-option v-for="room in group.rooms" :key="room.id" :label="room.roomName" :value="room.id" />
-            </el-option-group>
-          </el-select>
+          <div v-if="appStore.isMobileViewport" class="classroom-mobile-toolbar">
+            <el-select
+              :model-value="selectedClassroomId"
+              class="classroom-mobile-select"
+              placeholder="Select a classroom"
+              filterable
+              @change="onClassroomSelect"
+            >
+              <el-option-group v-for="group in classroomGroups" :key="group.campus" :label="group.campus">
+                <el-option v-for="room in group.rooms" :key="room.id" :label="room.roomName" :value="room.id" />
+              </el-option-group>
+            </el-select>
+            <el-button class="classroom-mobile-manage" :icon="Setting" aria-label="Manage rooms" @click="goClassrooms">Manage</el-button>
+          </div>
 
           <!-- No classroom selected -->
           <div v-if="!selectedClassroomId" class="calendar-empty">
@@ -92,20 +94,26 @@
           <template v-else>
             <div class="calendar-controls">
               <div class="calendar-controls__nav">
-                <el-button-group>
-                  <el-button :icon="ArrowLeft" @click="prevWeek" />
-                  <el-button :icon="ArrowRight" @click="nextWeek" />
-                </el-button-group>
-                <el-date-picker
-                  v-model="pickerDate"
-                  type="date"
-                  placeholder="Jump to week"
-                  value-format="YYYY-MM-DD"
-                  style="width: 150px;"
-                  @change="jumpToDate"
-                />
-                <span class="calendar-controls__label">{{ weekLabel }}</span>
-                <el-tag size="small" type="info">{{ occupancyItems.length }} lessons this week</el-tag>
+                <el-button class="calendar-week-step" :icon="ArrowLeft" aria-label="Previous week" @click="navigate(-1)" />
+                <div class="calendar-week-current">
+                  <span class="calendar-controls__label" aria-live="polite">{{ weekLabel }}</span>
+                  <span v-if="appStore.isMobileViewport" class="calendar-controls__count" :aria-label="`${occupancyItems.length} lessons this week`">
+                    {{ occupancyItems.length }} lessons
+                  </span>
+                  <el-date-picker
+                    v-model="pickerDate"
+                    type="date"
+                    aria-label="Choose a date"
+                    value-format="YYYY-MM-DD"
+                    format="MMM D, YYYY"
+                    :clearable="false"
+                    :editable="false"
+                    class="calendar-date-picker"
+                    @change="jumpToDate"
+                  />
+                </div>
+                <el-button class="calendar-week-step" :icon="ArrowRight" aria-label="Next week" @click="navigate(1)" />
+                <el-tag v-if="!appStore.isMobileViewport" size="small" type="info">{{ occupancyItems.length }} lessons this week</el-tag>
               </div>
               <span class="calendar-controls__classroom">
                 {{ selectedClassroomName }}
@@ -383,7 +391,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowLeft, ArrowRight, Calendar, Check, Loading, Search } from '@element-plus/icons-vue';
+import { ArrowLeft, ArrowRight, Calendar, Check, Loading, Search, Setting } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -723,7 +731,8 @@ async function savePendingAssignment(row: PendingClassroomAssignmentItem & { row
 
 function onClassroomSelect(id: EntityId) {
   selectedClassroomId.value = id;
-  weekOffset.value = 0;
+  selectedDate.value = dayjs().format('YYYY-MM-DD');
+  pickerDate.value = selectedDate.value;
   router.replace({ path: route.path, query: { ...route.query, classroomId: id } });
   loadData();
 }
@@ -733,13 +742,8 @@ function goClassrooms() {
 }
 
 // ─── Week navigation ───────────────────────────
-const weekOffset = ref(0);
-
-const weekMonday = computed(() => {
-  const now = dayjs().startOf('day');
-  const thisMonday = now.day(1);
-  return thisMonday.add(weekOffset.value * 7, 'day').format('YYYY-MM-DD');
-});
+const selectedDate = ref(dayjs().format('YYYY-MM-DD'));
+const weekMonday = computed(() => dayjs(selectedDate.value).day(1).format('YYYY-MM-DD'));
 
 const weekLabel = computed(() => {
   const monday = dayjs(weekMonday.value);
@@ -747,27 +751,21 @@ const weekLabel = computed(() => {
   return `${monday.format('MMM D')} – ${sunday.format('MMM D, YYYY')}`;
 });
 
-const pickerDate = ref<string | null>(null);
+const pickerDate = ref<string | null>(selectedDate.value);
 
-function prevWeek() {
-  weekOffset.value--;
-  pickerDate.value = weekMonday.value;
-  loadData();
-}
-
-function nextWeek() {
-  weekOffset.value++;
-  pickerDate.value = weekMonday.value;
-  loadData();
+function navigate(direction: -1 | 1) {
+  const oldWeek = weekMonday.value;
+  selectedDate.value = dayjs(selectedDate.value).add(direction * 7, 'day').format('YYYY-MM-DD');
+  pickerDate.value = selectedDate.value;
+  if (weekMonday.value !== oldWeek) loadData();
 }
 
 function jumpToDate(date: string | null) {
   if (!date) return;
-  const pickedMonday = dayjs(date).day(1).format('YYYY-MM-DD');
-  const thisMonday = dayjs().startOf('day').day(1).format('YYYY-MM-DD');
-  weekOffset.value = dayjs(pickedMonday).diff(dayjs(thisMonday), 'day') / 7;
-  pickerDate.value = weekMonday.value;
-  loadData();
+  const oldWeek = weekMonday.value;
+  selectedDate.value = dayjs(date).format('YYYY-MM-DD');
+  pickerDate.value = selectedDate.value;
+  if (weekMonday.value !== oldWeek) loadData();
 }
 
 // ─── Occupancy data ────────────────────────────
@@ -1175,23 +1173,6 @@ function resolveQueryId(value: unknown): EntityId | null {
 .mobile-pending-card__context { display: block; margin-top: 5px; color: #64748b; font-size: 12px; line-height: 1.4; }
 .mobile-pending-card .el-select { width: 100%; margin-top: 10px; }
 .mobile-pending-card__save { width: 100%; margin: 8px 0 0; }
-
-@media (max-width: 920px) {
-  .page-stack { overflow-x: visible; }
-  .classroom-calendar { width: 100%; min-width: 0; min-height: 0; height: auto; overflow: visible; padding: 12px; }
-  .classroom-calendar__header { align-items: flex-start; flex-direction: column; }
-  .classroom-calendar__body { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; overflow: visible; }
-  .classroom-mobile-select { display: block; width: 100%; margin-bottom: 10px; }
-  .calendar-panel { overflow: visible; }
-  .calendar-controls { align-items: stretch; }
-  .calendar-controls__nav { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; }
-  .calendar-controls__nav > .el-date-editor { width: 100% !important; }
-  .calendar-controls__label { grid-column: 1 / -1; }
-  .room-occupancy-scroll { overflow: visible; padding: 0; }
-  .calendar-help { display: none; }
-  .pending-panel__content { padding: 10px; overflow: visible; }
-  .pending-panel__summary { align-items: flex-start; flex-direction: column; padding: 12px; }
-}
 
 .pending-panel__toolbar {
   display: flex;
@@ -1791,28 +1772,42 @@ function resolveQueryId(value: unknown): EntityId | null {
 
 @media (max-width: 920px) {
   .page-stack { overflow-x: visible; }
-  .classroom-calendar { width: 100%; min-width: 0; min-height: 0; height: auto; overflow: visible; padding: 12px; }
+  .classroom-calendar { width: 100%; min-width: 0; min-height: 0; height: auto; gap: 10px; overflow: visible; padding: 0; border: 0; background: transparent; }
+  .classroom-calendar__header { display: none; }
   .classroom-calendar__body { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; overflow: visible; }
   .classroom-list-panel { display: none; }
   .calendar-help { display: none; }
   .calendar-panel { overflow: visible; }
-  .classroom-calendar__actions :deep(.el-button) { height: 34px; padding: 0 10px; font-size: 12px; }
-  .classroom-mobile-select :deep(.el-select__wrapper) { min-height: 36px; padding: 0 10px; }
+  .classroom-mobile-toolbar { display: flex; align-items: center; gap: 8px; min-width: 0; margin-bottom: 8px; }
+  .classroom-mobile-select { flex: 1 1 auto; width: auto; min-width: 0; }
+  .classroom-mobile-manage { flex: 0 0 auto; height: 44px; margin: 0; padding: 0 10px; font-size: 12px; }
+  .classroom-mobile-select :deep(.el-select__wrapper) { min-height: 44px; padding: 0 10px; }
   .classroom-mobile-select :deep(.el-select__placeholder),
   .classroom-mobile-select :deep(.el-select__selected-item) { font-size: 13px; }
-  .calendar-controls__nav { display: grid; width: 100%; min-width: 0; grid-template-columns: max-content minmax(0, 1fr); }
+  .calendar-controls { display: grid; grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 0; margin: 0 0 4px; }
+  .calendar-controls__nav { display: grid; width: 100%; min-width: 0; grid-template-columns: 44px minmax(0, 1fr) 44px; grid-template-rows: 44px; gap: 4px 6px; }
   .calendar-controls__nav > * { min-width: 0; max-width: 100%; }
-  .calendar-controls__nav :deep(.el-button) { height: 34px; padding: 0 8px; font-size: 12px; }
-  .calendar-controls__nav :deep(.el-button-group .el-button) { width: 34px; min-width: 34px; }
-  .calendar-controls__nav :deep(.el-date-editor) { height: 34px; }
-  .calendar-controls__nav :deep(.el-date-editor .el-input__wrapper) { min-height: 34px; padding: 0 8px; }
-  .calendar-controls__nav :deep(.el-date-editor .el-input__inner) { font-size: 12px; }
-  .calendar-controls__nav :deep(.el-tag) { font-size: 11px; }
-  .calendar-controls__nav .el-tag { grid-column: 1 / -1; justify-self: start; }
-  .calendar-controls__nav > .el-date-editor { width: 100% !important; }
-  .calendar-controls__label { grid-column: 1 / -1; font-size: 12px; }
+  .calendar-week-step { width: 44px; height: 44px; min-height: 44px; margin: 0; padding: 0; border-radius: 10px; }
+  .calendar-week-step:first-child { grid-column: 1; grid-row: 1; }
+  .calendar-week-step:nth-child(3) { grid-column: 3; grid-row: 1; }
+  .calendar-week-current { display: flex; align-items: center; justify-content: space-between; gap: 6px; grid-column: 2; grid-row: 1; min-width: 0; padding: 0 4px 0 8px; border: 1px solid #dce5ef; border-radius: 10px; background: #fff; }
+  .calendar-controls__label { flex: 1 1 auto; min-width: 0; overflow: hidden; font-size: 12px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+  .calendar-controls__count { flex: 0 0 auto; padding: 3px 5px; border-radius: 10px; background: #f1f5f9; color: #64748b; font-size: 10px; line-height: 1.2; white-space: nowrap; }
+  .calendar-date-picker { display: inline-flex; flex: 0 0 44px; width: 44px !important; min-width: 44px !important; max-width: 44px; height: 44px; overflow: hidden; }
+  .calendar-controls__nav :deep(.calendar-date-picker.el-date-editor) { display: inline-flex; width: 44px !important; min-width: 44px !important; height: 44px; }
+  .calendar-date-picker :deep(.el-input__wrapper) { position: relative; justify-content: center; width: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 8px; box-shadow: none !important; background: transparent; }
+  .calendar-date-picker :deep(.el-input__prefix) { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin: 0; }
+  .calendar-date-picker :deep(.el-input__prefix-inner) { display: flex; align-items: center; justify-content: center; }
+  .calendar-date-picker :deep(.el-input__inner) { position: absolute; width: 1px; height: 1px; padding: 0; opacity: 0; pointer-events: none; }
+  .calendar-date-picker :deep(.el-input__suffix) { display: none; }
+  .calendar-controls__classroom { display: none; }
   .room-occupancy-scroll { overflow: visible; padding: 0; }
   .room-occupancy-scroll :deep(.weekly-time-selector) { min-width: 0; }
   .pending-panel__content { overflow: visible; }
+  .pending-panel__summary { align-items: flex-start; flex-direction: column; padding: 12px; }
+}
+
+@media (max-width: 360px) {
+  .calendar-controls__count { display: none; }
 }
 </style>

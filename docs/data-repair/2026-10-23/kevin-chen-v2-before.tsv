@@ -1,0 +1,2 @@
+student_name	enrollment_no	order_item_id	start_date	package_unit	item_quantity	coverage_type	plan_quantity	enrollment_id	enrollment_date	expiry_date	billing_type	purchased_quantity	program_end_date	status	version
+kevin Chen	EO202610050003	2107210630622097410	2026-10-05	MONTH	10.00	ROLLING_MONTHS	10.00	2107210630940864513	2026-10-05	2027-06-30	MONTH	9	2027-06-28	ACTIVE	0

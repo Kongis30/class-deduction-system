@@ -1,8 +1,6 @@
 <template>
   <div
-    ref="registrationPageRoot"
     class="registration-page"
-    :class="{ 'registration-page--receipt-preview': isReadOnly && !editingCorrection }"
     :data-mobile-step="appStore.isMobileViewport && (!isReadOnly || editingCorrection) ? mobileRegistrationStep : 'readonly'"
   >
     <el-alert
@@ -96,7 +94,6 @@
         <span>STEP {{ mobileRegistrationStep }} OF 5</span>
         <strong>{{ mobileRegistrationStepTitle }}</strong>
       </div>
-      <p>{{ mobileRegistrationStepDescription }}</p>
     </section>
 
     <section v-if="hasOneOnOneLine" class="private-lesson-switcher no-print" data-mobile-steps="2 5">
@@ -137,8 +134,12 @@
     <section v-if="studentPickerVisible" class="registration-student-picker no-print" data-mobile-steps="1 5">
       <div class="registration-student-picker__heading">
         <strong>{{ activeStudentName || 'Existing student' }}</strong>
-        <span>Select an existing student or search by name. Leave blank for a new student.</span>
-        <span class="student-credit-balance" :class="{ 'student-credit-balance--loading': studentCreditLoading }">
+        <span class="registration-student-picker__hint">Optional · search by name, or leave blank for a new student.</span>
+        <span
+          v-if="activeStudentPickerSelection"
+          class="student-credit-balance"
+          :class="{ 'student-credit-balance--loading': studentCreditLoading }"
+        >
           <small>Student Credit</small>
           <strong>{{ formatMoney(studentCreditBalance) }}</strong>
         </span>
@@ -169,13 +170,8 @@
       </el-select>
     </section>
 
-    <section
-      ref="paperFormRef"
-      class="paper-form"
-      :class="{ 'paper-form--readonly': isReadOnly && !editingCorrection }"
-      :style="receiptPreviewStyle"
-    >
-      <header class="form-header" data-mobile-steps="1 5">
+    <section ref="paperFormRef" class="paper-form" :class="{ 'paper-form--readonly': isReadOnly && !editingCorrection }">
+      <header class="form-header" data-mobile-steps="5">
         <div class="form-title-block">
           <h1>Registration &amp; Receipt</h1>
           <h2>JIN BEST TUTORING · 专业、负责、懂考试</h2>
@@ -1599,20 +1595,16 @@ const paperFormRef = ref<HTMLElement | null>(null);
 const receiptPrinter = createIsolatedPrinter(() => paperFormRef.value);
 const historicalOrderLoading = ref(Boolean(route.query.orderId));
 let historicalOrderLoadSequence = 0;
-const registrationPageRoot = ref<HTMLElement | null>(null);
-const receiptPreviewScale = ref(1);
-let receiptPreviewResizeObserver: ResizeObserver | undefined;
 const { isKeyboardOpen } = useMobileKeyboardState();
 const mobileRegistrationSteps = [
-  { title: 'Student', description: 'Choose an existing student or enter student details.' },
-  { title: 'Course', description: 'Choose course products, schedule options, and class.' },
-  { title: 'Fees', description: 'Add pickup, drop-off, and discount details.' },
-  { title: 'Payment', description: 'Record each payment and review the remaining balance.' },
-  { title: 'Review', description: 'Review the receipt and save the registration.' },
+  { title: 'Student' },
+  { title: 'Course' },
+  { title: 'Fees' },
+  { title: 'Payment' },
+  { title: 'Review' },
 ] as const;
 const mobileRegistrationStep = ref(1);
 const mobileRegistrationStepTitle = computed(() => mobileRegistrationSteps[mobileRegistrationStep.value - 1]?.title ?? 'Student');
-const mobileRegistrationStepDescription = computed(() => mobileRegistrationSteps[mobileRegistrationStep.value - 1]?.description ?? '');
 const today = formatDate(new Date());
 
 const form = reactive<RegistrationForm>({
@@ -2345,18 +2337,6 @@ watch([privateParticipantCount, hasOneOnOneLine], () => {
 
 onMounted(async () => {
   receiptPrinter.attach();
-  if (typeof ResizeObserver !== 'undefined' && registrationPageRoot.value) {
-    const updateReceiptPreviewScale = (width: number) => {
-      const availableWidth = Math.max(0, width - 16);
-      // Desktop receipt canvas is 920px wide; scale the entire canvas as one unit on phones.
-      receiptPreviewScale.value = Math.min(1, availableWidth / 920);
-    };
-    updateReceiptPreviewScale(registrationPageRoot.value.clientWidth);
-    receiptPreviewResizeObserver = new ResizeObserver(([entry]) => {
-      updateReceiptPreviewScale(entry?.contentRect.width ?? window.innerWidth);
-    });
-    receiptPreviewResizeObserver.observe(registrationPageRoot.value);
-  }
   if (isReadOnly.value) {
     await loadHistoricalOrder();
     void loadCourseCategoryLabels();
@@ -2369,8 +2349,6 @@ onMounted(async () => {
   }
 });
 onBeforeUnmount(() => receiptPrinter.detach());
-
-onBeforeUnmount(() => receiptPreviewResizeObserver?.disconnect());
 
 async function loadInitialData() {
   try {
@@ -3035,6 +3013,10 @@ async function loadGroupClassRenewal(enrollmentId: string) {
   line.groupProjectId = sourceItem?.groupProjectId ?? classGroup.groupProjectId;
   const plans = groupPlansForLine(line).filter((plan) => plan.packageUnit === sourceItem?.packageUnit || !sourceItem);
   const plan = plans.find((entry) => String(entry.id) === String(sourceItem?.groupRegistrationPlanId)) ?? plans[0];
+  if (getQueryValue(route.query.samePlanRenewalMonths)
+      && String(plan?.id) !== String(sourceItem?.groupRegistrationPlanId)) {
+    throw new Error('The original registration plan is no longer available. Use Add course to choose a current plan.');
+  }
   line.groupRegistrationPlanId = plan?.id;
   line.classId = classGroup.id;
   line.className = classGroup.className;
@@ -3046,6 +3028,13 @@ async function loadGroupClassRenewal(enrollmentId: string) {
   if (plan) {
     line.startDate = nextRenewalStartDate(expiryDate);
     await loadGroupClassDates(line);
+  }
+  const samePlanMonths = Number(getQueryValue(route.query.samePlanRenewalMonths));
+  if (samePlanMonths > 0 && plan) {
+    if (samePlanMonths > maxGroupMonthsForLine(line)) {
+      throw new Error('The added months extend beyond this class period. Choose a shorter duration.');
+    }
+    line.groupPurchasedMonths = samePlanMonths;
   }
   handleRegistrationDurationChange(line);
   courseLines.value = [line];
@@ -9040,116 +9029,116 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 @media screen and (max-width: 720px) {
-  .registration-page:not(.registration-page--receipt-preview) {
+  .registration-page {
     align-items: stretch;
     gap: 10px;
     padding: 10px 0 calc(24px + env(safe-area-inset-bottom));
     overflow: visible;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .registration-desk{
+  .registration-desk {
     align-items: stretch;
     flex-direction: column;
     padding: 12px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .registration-desk__actions{
+  .registration-desk__actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     justify-content: stretch;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .registration-desk__actions > .el-button{
+  .registration-desk__actions > .el-button {
     min-width: 0;
     min-height: 42px;
     margin: 0;
     white-space: normal;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .registration-flow{
+  .registration-flow {
     grid-template-columns: repeat(5, minmax(94px, 1fr));
     overflow-x: auto;
     padding-bottom: 4px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .registration-flow article{
+  .registration-flow article {
     padding: 8px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .registration-flow small{
+  .registration-flow small {
     display: none;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .registration-student-picker{
+  .registration-student-picker {
     gap: 10px;
     padding: 12px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .paper-form{
+  .paper-form {
     min-height: 0;
     padding: 18px 12px 16px;
     overflow-x: hidden;
     box-shadow: 0 8px 24px rgb(15 23 42 / 10%);
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .form-header{
+  .form-header {
     gap: 10px;
     min-height: 64px;
     padding-right: 62px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .form-header h1{
+  .form-header h1 {
     font-size: 19px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .form-logo{
+  .form-logo {
     top: 18px;
     right: 12px;
     width: 48px;
     height: 48px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .two-col-line{
+  .two-col-line {
     grid-template-columns: minmax(0, 1fr);
     gap: 10px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .two-col-line label,
-  .registration-page:not(.registration-page--receipt-preview) .full-line{
+  .two-col-line label,
+  .full-line {
     align-items: flex-start;
     flex-wrap: wrap;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .full-line > span,
-  .registration-page:not(.registration-page--receipt-preview) .two-col-line label > span:first-child{
+  .full-line > span,
+  .two-col-line label > span:first-child {
     flex: 0 0 100%;
     white-space: normal;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .two-col-line label > .el-input,
-  .registration-page:not(.registration-page--receipt-preview) .two-col-line label > .el-date-editor,
-  .registration-page:not(.registration-page--receipt-preview) .full-line .line-input{
+  .two-col-line label > .el-input,
+  .two-col-line label > .el-date-editor,
+  .full-line .line-input {
     width: 100%;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .payment-line{
+  .payment-line {
     flex-wrap: wrap;
     align-items: flex-start;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .payment-method-block{
+  .payment-method-block {
     min-width: 0;
     flex: 1 1 calc(100% - 90px);
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .submit-bar{
+  .submit-bar {
     position: static;
     flex-wrap: wrap;
     padding: 10px;
     box-shadow: 0 4px 18px rgb(15 23 42 / 18%);
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .submit-bar > .el-button{
+  .submit-bar > .el-button {
     flex: 1 1 100%;
     min-height: 42px;
     margin: 0;
@@ -9157,23 +9146,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 @media screen and (max-width: 920px) {
-  .registration-page:not(.registration-page--receipt-preview){
+  .registration-page {
     padding-bottom: calc(158px + env(safe-area-inset-bottom));
   }
 
-  .registration-page:not(.registration-page--receipt-preview)[data-mobile-step="1"] [data-mobile-steps]:not([data-mobile-steps~="1"]),
-  .registration-page:not(.registration-page--receipt-preview)[data-mobile-step="2"] [data-mobile-steps]:not([data-mobile-steps~="2"]),
-  .registration-page:not(.registration-page--receipt-preview)[data-mobile-step="3"] [data-mobile-steps]:not([data-mobile-steps~="3"]),
-  .registration-page:not(.registration-page--receipt-preview)[data-mobile-step="4"] [data-mobile-steps]:not([data-mobile-steps~="4"]),
-  .registration-page:not(.registration-page--receipt-preview)[data-mobile-step="5"] [data-mobile-steps]:not([data-mobile-steps~="5"]){
+  .registration-page[data-mobile-step="1"] [data-mobile-steps]:not([data-mobile-steps~="1"]),
+  .registration-page[data-mobile-step="2"] [data-mobile-steps]:not([data-mobile-steps~="2"]),
+  .registration-page[data-mobile-step="3"] [data-mobile-steps]:not([data-mobile-steps~="3"]),
+  .registration-page[data-mobile-step="4"] [data-mobile-steps]:not([data-mobile-steps~="4"]),
+  .registration-page[data-mobile-step="5"] [data-mobile-steps]:not([data-mobile-steps~="5"]) {
     display: none !important;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .registration-desk p{
+  .registration-desk p {
     display: none;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-progress{
+  .mobile-registration-progress {
     display: grid;
     gap: 8px;
     padding: 14px 16px;
@@ -9183,14 +9172,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     box-shadow: 0 6px 18px rgb(15 23 42 / 6%);
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-progress__track{
+  .mobile-registration-progress__track {
     height: 4px;
     overflow: hidden;
     border-radius: 99px;
     background: #e8eef6;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-progress__track span{
+  .mobile-registration-progress__track span {
     display: block;
     height: 100%;
     border-radius: inherit;
@@ -9198,34 +9187,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     transition: width 180ms ease;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-progress__copy{
+  .mobile-registration-progress__copy {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
     gap: 10px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-progress__copy span{
+  .mobile-registration-progress__copy span {
     color: #63728a;
     font-size: 12px;
     font-weight: 700;
     letter-spacing: .06em;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-progress__copy strong{
+  .mobile-registration-progress__copy strong {
     color: #18345a;
     font-size: 20px;
     line-height: 1.2;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-progress p{
+  .mobile-registration-progress p {
     margin: 0;
     color: #667085;
     font-size: 14px;
     line-height: 1.45;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .paper-form{
+  .paper-form {
     min-height: 0;
     padding: 18px 14px;
     border: 1px solid #e5eaf1;
@@ -9233,15 +9222,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     box-shadow: 0 6px 20px rgb(15 23 42 / 6%);
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .form-header,
-  .registration-page:not(.registration-page--receipt-preview) .contact-block,
-  .registration-page:not(.registration-page--receipt-preview) .student-lines,
-  .registration-page:not(.registration-page--receipt-preview) .course-table-wrap,
-  .registration-page:not(.registration-page--receipt-preview) .policies{
+  .form-header,
+  .contact-block,
+  .student-lines,
+  .course-table-wrap,
+  .policies {
     margin-bottom: 14px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .contact-block{
+  .contact-block {
     display: grid;
     gap: 8px;
     padding: 12px;
@@ -9249,53 +9238,53 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     background: #f6f8fb;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .contact-block > strong,
-  .registration-page:not(.registration-page--receipt-preview) .contact-block .phone-line,
-  .registration-page:not(.registration-page--receipt-preview) .contact-block .campus-line{
+  .contact-block > strong,
+  .contact-block .phone-line,
+  .contact-block .campus-line {
     font-size: 14px;
     line-height: 1.45;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .contact-block .campus-line input,
-  .registration-page:not(.registration-page--receipt-preview) .service-charge-toggle input{
+  .contact-block .campus-line input,
+  .service-charge-toggle input {
     width: 20px;
     height: 20px;
     flex: 0 0 20px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .student-lines .full-line,
-  .registration-page:not(.registration-page--receipt-preview) .student-lines .two-col-line{
+  .student-lines .full-line,
+  .student-lines .two-col-line {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: 10px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .student-lines .full-line > span,
-  .registration-page:not(.registration-page--receipt-preview) .student-lines .two-col-line label > span:first-child{
+  .student-lines .full-line > span,
+  .student-lines .two-col-line label > span:first-child {
     font-size: 14px;
     font-weight: 600;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .student-name-fields{
+  .student-name-fields {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: 8px;
     width: 100%;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .registration-student-picker__heading{
+  .registration-student-picker__heading {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 4px 8px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .registration-student-picker__heading > span:not(.student-credit-balance){
+  .registration-student-picker__heading > span:not(.student-credit-balance) {
     grid-column: 1 / -1;
     font-size: 13px;
     line-height: 1.4;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-review{
+  .mobile-registration-review {
     display: grid;
     gap: 10px;
     margin: 12px 0 18px;
@@ -9305,49 +9294,49 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     background: #f8fafc;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-review header,
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-review article,
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-review footer{
+  .mobile-registration-review header,
+  .mobile-registration-review article,
+  .mobile-registration-review footer {
     display: grid;
     gap: 5px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-review header span,
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-review article span,
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-review small{
+  .mobile-registration-review header span,
+  .mobile-registration-review article span,
+  .mobile-registration-review small {
     color: #667085;
     font-size: 13px;
     line-height: 1.4;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-review header strong{
+  .mobile-registration-review header strong {
     font-size: 18px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-review article{
+  .mobile-registration-review article {
     grid-template-columns: minmax(0, 1fr) auto;
     padding-top: 9px;
     border-top: 1px solid #e1e7ef;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-review article > div{
+  .mobile-registration-review article > div {
     display: grid;
     gap: 3px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-review footer{
+  .mobile-registration-review footer {
     padding-top: 8px;
     border-top: 1px solid #d8e0ea;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-review footer span{
+  .mobile-registration-review footer span {
     display: flex;
     justify-content: space-between;
     gap: 12px;
     font-size: 14px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-actions{
+  .mobile-registration-actions {
     position: fixed;
     z-index: 850;
     right: 0;
@@ -9362,42 +9351,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     backdrop-filter: blur(14px);
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-actions__amounts{
+  .mobile-registration-actions__amounts {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-actions__amounts span{
+  .mobile-registration-actions__amounts span {
     display: grid;
     gap: 1px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-actions__amounts small{
+  .mobile-registration-actions__amounts small {
     color: #667085;
     font-size: 12px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-actions__amounts strong{
+  .mobile-registration-actions__amounts strong {
     color: #182b49;
     font-size: 16px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-actions__balance.is-due strong{
+  .mobile-registration-actions__balance.is-due strong {
     color: #b54708;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-actions__balance.is-paid strong{
+  .mobile-registration-actions__balance.is-paid strong {
     color: #067647;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-actions__buttons{
+  .mobile-registration-actions__buttons {
     display: flex;
     gap: 8px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-actions__buttons > .el-button{
+  .mobile-registration-actions__buttons > .el-button {
     flex: 1 1 0;
     min-width: 0;
     min-height: 46px;
@@ -9405,8 +9394,391 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     font-size: 15px;
   }
 
-  .registration-page:not(.registration-page--receipt-preview) .mobile-registration-actions__buttons > .el-button:only-child{
+  .mobile-registration-actions__buttons > .el-button:only-child {
     width: 100%;
+  }
+}
+
+@media screen and (max-width: 920px) {
+  .registration-page {
+    gap: 4px;
+    padding-top: 6px;
+    padding-bottom: 12px;
+  }
+
+  .mobile-registration-progress {
+    gap: 5px;
+    padding: 4px 14px 8px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .mobile-registration-progress__copy strong {
+    font-size: 17px;
+  }
+
+  .registration-student-picker {
+    box-sizing: border-box;
+    width: calc(100% - 28px);
+    min-width: 0;
+    gap: 8px;
+    margin: 0 14px;
+    padding: 6px 0 12px;
+    border: 0;
+    border-bottom: 1px solid #dce4ee;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .registration-student-picker__heading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .registration-student-picker__heading > strong {
+    overflow: hidden;
+    color: #263a53;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .registration-student-picker__hint {
+    display: none;
+  }
+
+  .student-credit-balance {
+    flex: 0 0 auto;
+    margin-left: auto;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .student-credit-balance small {
+    font-size: 9px !important;
+  }
+
+  .student-credit-balance strong {
+    font-size: 13px !important;
+  }
+
+  .registration-student-picker__select {
+    min-height: 44px;
+  }
+
+  .registration-page[data-mobile-step="1"] .paper-form,
+  .registration-page[data-mobile-step="2"] .paper-form,
+  .registration-page[data-mobile-step="3"] .paper-form,
+  .registration-page[data-mobile-step="4"] .paper-form {
+    width: calc(100% - 28px);
+    max-width: none;
+    min-height: 0;
+    margin: 0 14px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .registration-page .paper-form {
+    overflow: visible;
+  }
+
+  .registration-page[data-mobile-step="1"] .contact-block {
+    gap: 4px;
+    margin: 0 0 10px;
+    padding: 2px 0 10px;
+    border-bottom: 1px solid #dce4ee;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .registration-page[data-mobile-step="1"] .contact-block > strong,
+  .registration-page[data-mobile-step="1"] .contact-block .phone-line {
+    display: none;
+  }
+
+  .registration-page[data-mobile-step="1"] .contact-block .campus-line {
+    min-height: 36px;
+    padding: 2px 0;
+    color: #24364d;
+    font-size: 14px;
+  }
+
+  .registration-page[data-mobile-step="1"] .contact-block .campus-line input {
+    width: 20px;
+    height: 20px;
+    flex: 0 0 20px;
+    margin: 0 2px 0 0;
+  }
+
+  .registration-page[data-mobile-step="1"] .student-lines {
+    margin: 0;
+    padding: 2px 0 8px;
+    font-size: 15px;
+  }
+
+  .registration-page[data-mobile-step="1"] .student-lines .full-line,
+  .registration-page[data-mobile-step="1"] .student-lines .two-col-line {
+    gap: 10px;
+  }
+
+  .registration-page[data-mobile-step="1"] .student-lines .full-line {
+    padding-bottom: 10px;
+    border-bottom: 1px solid #dce4ee;
+  }
+
+  .registration-page[data-mobile-step="1"] .student-lines .full-line > span,
+  .registration-page[data-mobile-step="1"] .student-lines .two-col-line label > span:first-child {
+    color: #53657c;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+
+  .registration-page[data-mobile-step="1"] .student-lines .two-col-line {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 10px;
+  }
+
+  .registration-page[data-mobile-step="1"] .student-lines .two-col-line label {
+    display: grid;
+    align-content: start;
+    gap: 5px;
+    min-height: 0;
+  }
+
+  .registration-page[data-mobile-step="1"] .student-name-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .registration-page[data-mobile-step="1"] .student-lines :deep(.el-input__wrapper),
+  .registration-page[data-mobile-step="1"] .student-lines :deep(.el-date-editor .el-input__wrapper) {
+    min-height: 44px;
+    padding: 0 10px;
+    border: 1px solid #cfd8e4;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: none;
+  }
+
+  .registration-page[data-mobile-step="1"] .student-lines :deep(.el-input__inner) {
+    min-height: 42px;
+    font-size: 16px;
+  }
+
+  .registration-page[data-mobile-step="1"] .student-credit-inline {
+    display: none;
+  }
+
+  .registration-page[data-mobile-step="2"] .course-table-wrap {
+    margin: 0;
+    overflow: visible;
+  }
+
+  .registration-page[data-mobile-step="2"] .course-table {
+    display: block;
+    border: 0;
+    font-size: 14px;
+  }
+
+  .registration-page[data-mobile-step="2"] .course-table thead {
+    display: none;
+  }
+
+  .registration-page[data-mobile-step="2"] .course-table tbody,
+  .registration-page[data-mobile-step="2"] .course-table .course-entry-row {
+    display: block;
+    width: 100%;
+  }
+
+  .registration-page[data-mobile-step="2"] .course-table .course-entry-row {
+    padding: 8px 0 12px;
+    border-bottom: 1px solid #dce4ee;
+  }
+
+  .registration-page[data-mobile-step="2"] .course-table .course-entry-row td {
+    display: grid;
+    grid-template-columns: 96px minmax(0, 1fr);
+    align-items: start;
+    gap: 8px;
+    width: 100% !important;
+    height: auto;
+    min-height: 0;
+    padding: 6px 0;
+    border: 0;
+  }
+
+  .registration-page[data-mobile-step="2"] .course-table .course-entry-row td::before {
+    color: #53657c;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.4;
+  }
+
+  .registration-page[data-mobile-step="2"] .course-table .course-entry-row td:nth-child(1)::before {
+    content: 'Course';
+  }
+
+  .registration-page[data-mobile-step="2"] .course-table .course-entry-row td:nth-child(2)::before {
+    content: 'Program & details';
+  }
+
+  .registration-page[data-mobile-step="2"] .course-table .course-entry-row td:nth-child(3)::before {
+    content: 'Price';
+  }
+
+  .registration-page[data-mobile-step="2"] .course-table .course-class-cell,
+  .registration-page[data-mobile-step="2"] .course-table .course-detail-cell,
+  .registration-page[data-mobile-step="2"] .course-table .group-v2-registration,
+  .registration-page[data-mobile-step="2"] .course-table .detail-row,
+  .registration-page[data-mobile-step="2"] .course-table .teacher-class-line {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .registration-page[data-mobile-step="2"] .course-table .course-picker-control {
+    width: 100%;
+  }
+
+  .registration-page[data-mobile-step="2"] .course-table .course-control {
+    gap: 4px;
+    width: 100%;
+  }
+
+  .registration-page[data-mobile-step="2"] .course-table .course-control > span {
+    font-size: 11px;
+  }
+
+  .registration-page[data-mobile-step="2"] .course-table :deep(.table-select .el-select__wrapper),
+  .registration-page[data-mobile-step="2"] .course-table :deep(.table-price .el-input__wrapper),
+  .registration-page[data-mobile-step="2"] .course-table :deep(.el-date-editor .el-input__wrapper) {
+    min-height: 44px;
+    border: 1px solid #cfd8e4;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: none;
+  }
+
+  .registration-page[data-mobile-step="2"] .course-table .price-cell {
+    display: grid;
+    grid-template-columns: 96px minmax(0, 1fr);
+    white-space: normal;
+  }
+
+  .registration-page[data-mobile-step="2"] .course-table .price-cell .money-amount-input,
+  .registration-page[data-mobile-step="2"] .course-table .price-cell .table-price {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .registration-page[data-mobile-step="2"] .one-on-one-registration-alert {
+    margin-bottom: 10px;
+  }
+
+  .registration-page[data-mobile-step="3"] .intake-adjustment-panel,
+  .registration-page[data-mobile-step="4"] .intake-adjustment-panel {
+    gap: 14px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .registration-page[data-mobile-step="3"] .adjustment-column,
+  .registration-page[data-mobile-step="4"] .adjustment-column {
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .registration-page[data-mobile-step="3"] .adjustment-column--fees .adjustment-heading > span {
+    display: none;
+  }
+
+  .registration-page[data-mobile-step="3"] .course-adjustment-card,
+  .registration-page[data-mobile-step="4"] .course-adjustment-card {
+    gap: 8px;
+    padding: 10px 0;
+    border: 0;
+    border-top: 1px solid #dce4ee;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .registration-page[data-mobile-step="3"] .course-adjustment-card__header,
+  .registration-page[data-mobile-step="3"] .course-adjustment-card__footer,
+  .registration-page[data-mobile-step="4"] .course-adjustment-card__header,
+  .registration-page[data-mobile-step="4"] .course-adjustment-card__footer {
+    gap: 8px;
+    padding: 0;
+  }
+
+  .registration-page[data-mobile-step="3"] .course-adjustment-card__title strong,
+  .registration-page[data-mobile-step="4"] .course-adjustment-card__title strong {
+    font-size: 13px;
+  }
+
+  .registration-page[data-mobile-step="3"] .adjustment-column :deep(.el-input__wrapper),
+  .registration-page[data-mobile-step="3"] .adjustment-column :deep(.el-select__wrapper),
+  .registration-page[data-mobile-step="4"] .adjustment-column :deep(.el-input__wrapper),
+  .registration-page[data-mobile-step="4"] .adjustment-column :deep(.el-select__wrapper) {
+    min-height: 44px;
+  }
+
+  .registration-page[data-mobile-step="5"] .paper-form {
+    min-height: 0;
+    padding: 16px 12px;
+    border-radius: 12px;
+  }
+
+  .registration-page[data-mobile-step="5"] .contact-block {
+    padding: 10px;
+  }
+
+  .registration-page[data-mobile-step="5"] .form-header {
+    min-height: 60px;
+  }
+
+  .registration-page[data-mobile-step="5"] .form-logo {
+    width: 46px;
+    height: 46px;
+  }
+
+  .registration-page[data-mobile-step="5"] .ein-toggle {
+    top: 72px;
+    right: 12px;
+  }
+
+  .mobile-registration-review {
+    margin: 10px 0 14px;
+    padding: 10px 0;
+    border: 0;
+    border-top: 1px solid #dbe5f1;
+    border-bottom: 1px solid #dbe5f1;
+    border-radius: 0;
+    background: transparent;
+  }
+}
+
+@media screen and (max-width: 380px) {
+  .registration-page[data-mobile-step="1"] .student-name-fields,
+  .registration-page[data-mobile-step="1"] .student-lines .two-col-line {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -9992,50 +10364,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     font-size: 8.5px;
   }
 
-}
-
-
-/* Read-only mobile receipts use the desktop receipt canvas, scaled proportionally as a whole. */
-@media screen and (max-width: 920px) {
-  .registration-page--receipt-preview .registration-desk,
-  .registration-page--receipt-preview .private-lesson-switcher,
-  .registration-page--receipt-preview .mobile-registration-review,
-  .registration-page--receipt-preview .mobile-registration-actions {
-    display: none !important;
-  }
-
-  .registration-page--receipt-preview .paper-form .no-print,
-  .registration-page--receipt-preview .screen-only,
-  .registration-page--receipt-preview .submit-bar,
-  .registration-page--receipt-preview .validation-alert,
-  .registration-page--receipt-preview .paper-form button,
-  .registration-page--receipt-preview .paper-form .el-button,
-  .registration-page--receipt-preview .paper-actions,
-  .registration-page--receipt-preview .remove-row {
-    display: none !important;
-  }
-
-  .registration-page.registration-page--receipt-preview {
-    align-items: center;
-    gap: 0;
-    padding: 8px 0 calc(94px + env(safe-area-inset-bottom));
-    overflow-x: hidden;
-    background: #eef1f5;
-  }
-
-  .registration-page--receipt-preview .paper-form {
-    flex: none;
-    width: 920px;
-    max-width: none;
-    min-height: 1188px;
-    margin: 0;
-    padding: 30px 34px 24px;
-    overflow: visible;
-    border: 0;
-    border-radius: 0;
-    box-shadow: 0 2px 12px rgb(15 23 42 / 14%);
-    zoom: var(--receipt-preview-zoom, 1);
-  }
 }
 </style>
 

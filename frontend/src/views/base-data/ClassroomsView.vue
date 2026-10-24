@@ -40,9 +40,13 @@
         type="info"
         :closable="false"
         show-icon
-        title="Registration does not require room assignment; rooms can be backfilled later."
         description="Use Room calendar to assign pending rooms and verify occupancy in one place."
-      />
+      >
+        <template #title>
+          <span class="workflow-note__desktop">Registration does not require room assignment; rooms can be backfilled later.</span>
+          <span class="workflow-note__mobile">Rooms can be assigned after registration.</span>
+        </template>
+      </el-alert>
 
       <section v-show="!appStore.isMobileViewport || mobileSearchExpanded" class="mobile-search-panel">
       <div v-if="appStore.isMobileViewport" class="mobile-search-panel__header">
@@ -87,12 +91,13 @@
       </el-form>
       </section>
 
+      <p v-if="appStore.isMobileViewport" class="mobile-table-scroll-hint">Swipe horizontally to see all fields. Use ⋯ for room actions.</p>
+      <div class="classroom-table-scroll" role="region" aria-label="Classrooms table" tabindex="0">
       <el-table
-        v-if="!appStore.isMobileViewport"
         v-loading="loading"
         :data="tableData"
         row-key="id"
-        class="product-table"
+        :class="['product-table', { 'mobile-classroom-table': appStore.isMobileViewport }]"
         :show-empty="true"
       >
         <template #empty>
@@ -101,7 +106,7 @@
             <span>{{ filters.keyword || filters.campus || filters.status ? 'Clear filters or add a classroom for future schedule backfill.' : 'Registration can continue without rooms. Add rooms when schedules are ready to backfill.' }}</span>
           </div>
         </template>
-        <el-table-column label="Room name" min-width="180">
+        <el-table-column label="Room name" min-width="150" fixed="left">
           <template #default="{ row }">
             <div class="cell-stack">
               <strong>{{ row.roomName }}</strong>
@@ -109,7 +114,9 @@
           </template>
         </el-table-column>
         <el-table-column label="Campus" min-width="120" prop="campus" />
-        <el-table-column label="Capacity" min-width="90" align="center" prop="capacity" />
+        <el-table-column label="Capacity" min-width="90" align="center" prop="capacity">
+          <template #default="{ row }">{{ row.capacity }} students</template>
+        </el-table-column>
         <el-table-column label="Status" min-width="90" align="center">
           <template #default="{ row }">
             <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">
@@ -117,38 +124,30 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="Actions" min-width="250" fixed="right">
+        <el-table-column label="Actions" :width="appStore.isMobileViewport ? 62 : 250" fixed="right" align="center">
           <template #default="{ row }">
-            <div class="table-actions">
+            <div v-if="!appStore.isMobileViewport" class="table-actions">
               <el-button text type="primary" @click="openRoomCalendar(row)">Calendar</el-button>
               <el-button text type="primary" @click="openBackfillSchedule(row)">Assign room</el-button>
               <el-button text type="primary" @click="openClassroomDialog(row)">Edit</el-button>
               <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
             </div>
+            <el-dropdown v-else trigger="click" placement="bottom-end">
+              <el-button class="mobile-row-actions-trigger" text circle :aria-label="`More actions for ${row.roomName}`">
+                <el-icon><MoreFilled /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="openRoomCalendar(row)">Calendar</el-dropdown-item>
+                  <el-dropdown-item @click="openBackfillSchedule(row)">Assign room</el-dropdown-item>
+                  <el-dropdown-item divided @click="openClassroomDialog(row)">Edit</el-dropdown-item>
+                  <el-dropdown-item divided class="classroom-delete-action" @click="handleDelete(row)">Delete</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
-
-      <div v-else v-loading="loading" class="mobile-classroom-list">
-        <article v-for="room in tableData" :key="room.id" class="mobile-classroom-card">
-          <header class="mobile-classroom-card__heading">
-            <strong>{{ room.roomName }}</strong>
-            <el-tag size="small" :type="room.status === 'ACTIVE' ? 'success' : 'info'">
-              {{ room.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
-            </el-tag>
-          </header>
-          <dl class="mobile-classroom-card__details">
-            <div><dt>Campus</dt><dd>{{ room.campus }}</dd></div>
-            <div><dt>Capacity</dt><dd>{{ room.capacity }} students</dd></div>
-          </dl>
-          <div class="mobile-classroom-card__actions">
-            <el-button @click="openRoomCalendar(room)">Calendar</el-button>
-            <el-button type="primary" plain @click="openBackfillSchedule(room)">Assign room</el-button>
-            <el-button @click="openClassroomDialog(room)">Edit</el-button>
-            <el-button text type="danger" @click="handleDelete(room)">Delete</el-button>
-          </div>
-        </article>
-        <el-empty v-if="!loading && tableData.length === 0" :description="filters.keyword || filters.campus || filters.status ? 'No classrooms match the current filters.' : 'No classrooms yet.'" />
       </div>
 
       <div class="table-footer">
@@ -507,22 +506,10 @@ loadData();
   color: #909399;
 }
 
-.mobile-classroom-list { display: grid; gap: 10px; }
-.mobile-classroom-card {
-  min-width: 0;
-  padding: 14px;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  background: #fff;
-}
-.mobile-classroom-card__heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.mobile-classroom-card__heading strong { overflow-wrap: anywhere; color: #26384c; font-size: 15px; }
-.mobile-classroom-card__details { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0 0; }
-.mobile-classroom-card__details > div { display: grid; gap: 4px; }
-.mobile-classroom-card__details dt { color: #718096; font-size: 12px; }
-.mobile-classroom-card__details dd { margin: 0; color: #334155; font-size: 14px; }
-.mobile-classroom-card__actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
-.mobile-classroom-card__actions .el-button { margin: 0; }
+.classroom-table-scroll { width: 100%; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+.mobile-table-scroll-hint { display: none; }
+.workflow-note__mobile { display: none; }
+.mobile-row-actions-trigger { width: 32px; height: 32px; margin: 0; }
 
 .dialog-footer {
   display: flex;
@@ -554,9 +541,30 @@ loadData();
   .panel-header__title { display: none; }
   .panel-header__actions { margin-left: auto; gap: 6px; }
   .panel-header__actions > .el-dropdown > .el-button { width: 36px; height: 36px; min-height: 36px; padding: 0; }
+  .workflow-note { margin-bottom: 8px; }
+  .workflow-note :deep(.el-alert) { align-items: center; padding: 7px 9px; }
+  .workflow-note :deep(.el-alert__icon) { margin-right: 7px; font-size: 15px; }
+  .workflow-note :deep(.el-alert__title) { font-size: 11px; line-height: 1.3; }
   .workflow-note :deep(.el-alert__description) { display: none; }
+  .workflow-note__desktop { display: none; }
+  .workflow-note__mobile { display: inline; }
   .filters { display: grid; grid-template-columns: 1fr; gap: 4px; }
-  .filters__item, .filters__item :deep(.el-input), .filters__item :deep(.el-select) { width: 100% !important; }
+  .filters__item { display: flex; flex-direction: column; align-items: stretch; margin: 0; }
+  .filters__item :deep(.el-form-item__label) { height: auto; margin: 0 0 3px; padding: 0; font-size: 11px; line-height: 1.25; }
+  .filters__item :deep(.el-form-item__content),
+  .filters__item :deep(.el-input),
+  .filters__item :deep(.el-select) { width: 100% !important; min-width: 0; }
+  .filters__item :deep(.el-input__wrapper), .filters__item :deep(.el-select__wrapper) { min-height: 34px; }
+  .mobile-table-scroll-hint { display: block; margin: 0 0 4px; color: #7b8797; font-size: 10px; }
+  .mobile-classroom-table { width: 100%; min-width: 480px; font-size: 11px; }
+  .mobile-classroom-table :deep(.el-table__header-wrapper th),
+  .mobile-classroom-table :deep(.el-table__body-wrapper td) { padding: 5px 6px; }
+  .mobile-classroom-table :deep(.cell) { padding: 0 4px; line-height: 1.25; }
+  .mobile-classroom-table :deep(.el-tag) { height: 20px; padding: 0 5px; font-size: 10px; line-height: 18px; }
+  .mobile-classroom-table :deep(.el-table-fixed-column--left),
+  .mobile-classroom-table :deep(.el-table-fixed-column--right) { background: #fff; }
+  .mobile-classroom-table :deep(.el-table__header-wrapper .el-table-fixed-column--left),
+  .mobile-classroom-table :deep(.el-table__header-wrapper .el-table-fixed-column--right) { background: #f5f7fa; }
   .table-footer { align-items: stretch; flex-direction: column; gap: 8px; }
   .table-footer :deep(.el-pagination) { width: 100%; min-width: 0; }
   .classroom-dialog :deep(.el-dialog__header),

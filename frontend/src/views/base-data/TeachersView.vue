@@ -72,44 +72,48 @@
         </el-form>
       </section>
 
-      <p v-if="appStore.isMobileViewport" class="mobile-table-hint">Tap a teacher to review contact and login details.</p>
-      <el-table
-        v-loading="loading"
-        :data="tableData"
-        row-key="id"
-        class="product-table people-main-table"
-        :show-empty="true"
-      >
-        <el-table-column label="Name" min-width="140">
+      <p v-if="appStore.isMobileViewport" class="mobile-table-hint">Swipe to view contact, subjects, and login details. Use More for actions.</p>
+      <div ref="peopleTableScrollRef" class="people-table-zoom-scroll mobile-pinch-scroll">
+        <el-table
+          v-loading="loading"
+          :data="tableData"
+          row-key="id"
+          class="product-table people-main-table"
+          :style="{ zoom: appStore.isMobileViewport ? mobileTableScale : undefined }"
+          :show-empty="true"
+        >
+        <el-table-column label="Name" :min-width="appStore.isMobileViewport ? 132 : 140" fixed="left">
           <template #default="{ row }">
             <div class="cell-stack">
               <strong>{{ row.teacherName }}</strong>
+              <span v-if="appStore.isMobileViewport">{{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="Phone" min-width="140">
+        <el-table-column label="Phone" :min-width="appStore.isMobileViewport ? 120 : 140">
           <template #default="{ row }">{{ formatUsPhoneDisplay(row.mobile) || '-' }}</template>
         </el-table-column>
-        <el-table-column label="Email" min-width="200" prop="email" />
-        <el-table-column label="Subjects" min-width="160">
+        <el-table-column v-if="!appStore.isMobileViewport" label="Email" min-width="200" prop="email" />
+        <el-table-column label="Subjects" :min-width="appStore.isMobileViewport ? 140 : 160">
           <template #default="{ row }">
-            <div class="tag-list">
+            <div v-if="appStore.isMobileViewport" class="teacher-subjects-compact">{{ row.subjectTags?.join(', ') || 'No subjects' }}</div>
+            <div v-else class="tag-list">
               <el-tag v-for="subj in row.subjectTags" :key="subj" size="small" type="info">{{ subj }}</el-tag>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="Status" min-width="90" align="center">
+        <el-table-column v-if="!appStore.isMobileViewport" label="Status" min-width="90" align="center">
           <template #default="{ row }">
             <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">
               {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="Login access" min-width="170">
+        <el-table-column label="Login" :min-width="appStore.isMobileViewport ? 132 : 170">
           <template #default="{ row }">
             <div class="cell-stack">
               <strong>{{ accountForTeacher(row)?.username || 'No login' }}</strong>
-              <el-tag size="small" :type="accountForTeacher(row)?.status === 'ACTIVE' ? 'success' : 'info'">
+              <el-tag v-if="!appStore.isMobileViewport" size="small" :type="accountForTeacher(row)?.status === 'ACTIVE' ? 'success' : 'info'">
                 {{ accountForTeacher(row) ? accountStatusLabel(accountForTeacher(row)!.status) : 'Not enabled' }}
               </el-tag>
             </div>
@@ -117,7 +121,7 @@
         </el-table-column>
         <el-table-column
           :label="appStore.isMobileViewport ? 'More' : 'Actions'"
-          :width="appStore.isMobileViewport ? 72 : 220"
+          :width="appStore.isMobileViewport ? 56 : 220"
           fixed="right"
           align="center"
         >
@@ -151,40 +155,7 @@
             </div>
           </template>
         </el-table-column>
-      </el-table>
-
-      <div v-if="appStore.isMobileViewport" class="people-mobile-list">
-        <article v-for="row in tableData" :key="row.id" class="people-mobile-card">
-          <div class="people-mobile-card__header">
-            <div class="people-mobile-card__identity">
-              <strong>{{ row.teacherName }}</strong>
-              <span>{{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }} · {{ formatUsPhoneDisplay(row.mobile) || 'No phone' }}</span>
-            </div>
-            <el-dropdown trigger="click" placement="bottom-end" @click.stop>
-              <el-button text circle aria-label="More teacher actions" @click.stop>
-                <el-icon><MoreFilled /></el-icon>
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item @click="openTeacherAccountDialog(row)">{{ accountForTeacher(row) ? 'Edit login' : 'Create login' }}</el-dropdown-item>
-                  <el-dropdown-item @click="openTeacherDialog(row)">Edit teacher</el-dropdown-item>
-                  <el-dropdown-item divided @click="handleDeleteTeacher(row)">Delete teacher</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </div>
-          <div class="people-mobile-card__grid">
-            <div><span>Phone</span><strong>{{ formatUsPhoneDisplay(row.mobile) || '-' }}</strong></div>
-            <div><span>Email</span><strong>{{ row.email || '-' }}</strong></div>
-            <div class="people-mobile-card__wide"><span>Subjects</span><strong>{{ row.subjectTags?.join(', ') || 'No subjects' }}</strong></div>
-            <div><span>Login access</span><strong>{{ accountForTeacher(row)?.username || 'No login' }}</strong></div>
-          </div>
-          <div class="people-mobile-card__footer">
-            <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}</el-tag>
-            <span>{{ accountForTeacher(row) ? accountStatusLabel(accountForTeacher(row)!.status) : 'Login not enabled' }}</span>
-          </div>
-        </article>
-        <el-empty v-if="!loading && tableData.length === 0" description="No teachers found" />
+        </el-table>
       </div>
 
       <div class="table-footer">
@@ -205,6 +176,7 @@
     <el-dialog
       v-model="teacherDialogVisible"
       width="500px"
+      :fullscreen="appStore.isMobileViewport"
       :close-on-click-modal="false"
       class="teacher-dialog"
     >
@@ -263,6 +235,7 @@
     <el-dialog
       v-model="teacherAccountDialogVisible"
       width="480px"
+      :fullscreen="appStore.isMobileViewport"
       :close-on-click-modal="false"
       class="teacher-dialog"
     >
@@ -375,13 +348,14 @@
       v-model="subjectManagerVisible"
       title="Manage subject options"
       width="620px"
+      :fullscreen="appStore.isMobileViewport"
       :close-on-click-modal="false"
       class="teacher-dialog"
       @closed="resetSubjectForm"
     >
       <p class="subject-manager__hint">These subjects are available when setting a teacher’s subjects. Existing teacher profiles keep their saved labels when an option is renamed or removed.</p>
       <el-form class="subject-manager__form" inline @submit.prevent="saveSubjectOption">
-        <el-form-item label="Subject name">
+        <el-form-item label="Subject name" class="subject-manager__form-item subject-manager__form-item--name">
           <el-input
             v-model="subjectForm.subjectName"
             maxlength="64"
@@ -389,20 +363,37 @@
             @keyup.enter="saveSubjectOption"
           />
         </el-form-item>
-        <el-form-item label="Order">
+        <el-form-item label="Order" class="subject-manager__form-item subject-manager__form-item--order">
           <el-input-number v-model="subjectForm.displayOrder" :min="0" :max="9999" />
         </el-form-item>
-        <el-form-item>
+        <el-form-item class="subject-manager__form-item subject-manager__form-item--actions">
           <el-button type="primary" :loading="subjectSaving" @click="saveSubjectOption">
             {{ editingSubjectId == null ? 'Add subject' : 'Save changes' }}
           </el-button>
           <el-button v-if="editingSubjectId != null" @click="resetSubjectForm">Cancel edit</el-button>
         </el-form-item>
       </el-form>
-      <el-table v-loading="subjectsLoading" :data="subjectItems" row-key="id" class="product-table" max-height="360">
+      <div v-if="appStore.isMobileViewport" v-loading="subjectsLoading" class="subject-manager__mobile-list">
+        <div v-for="row in subjectItems" :key="row.id" class="subject-manager__mobile-row">
+          <div class="subject-manager__mobile-info">
+            <strong>{{ row.subjectName }}</strong>
+            <small>Order {{ row.displayOrder }}</small>
+          </div>
+          <el-dropdown trigger="click" placement="bottom-end" @command="command => command === 'edit' ? editSubjectOption(row) : removeSubjectOption(row)">
+            <el-button text circle class="subject-manager__more" :aria-label="`More actions for ${row.subjectName}`"><el-icon><MoreFilled /></el-icon></el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="edit">Edit</el-dropdown-item>
+                <el-dropdown-item command="remove" class="subject-manager__remove">Remove</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+      </div>
+      <el-table v-else v-loading="subjectsLoading" :data="subjectItems" row-key="id" class="product-table subject-manager__table" max-height="360">
         <el-table-column label="Subject" min-width="220" prop="subjectName" />
         <el-table-column label="Order" width="100" align="center" prop="displayOrder" />
-        <el-table-column label="Actions" width="150" align="right" fixed="right">
+        <el-table-column label="Actions" width="150" align="center" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
               <el-button text type="primary" @click="editSubjectOption(row)">Edit</el-button>
@@ -424,6 +415,8 @@
       v-model="deletedDialogVisible"
       title="Deleted Teachers"
       width="720px"
+      :fullscreen="appStore.isMobileViewport"
+      class="teacher-dialog"
     >
       <p class="deleted-hint">These instructor profiles have been deleted. This view is read-only.</p>
       <el-table v-loading="deletedLoading" :data="deletedRows" row-key="id" class="product-table" max-height="420">
@@ -482,8 +475,15 @@ import type { SubjectItem, TeacherAccountItem, TeacherItem } from '@/types/domai
 import { DEFAULT_INITIAL_PASSWORD, usernameFromName } from '@/utils/account-credentials';
 import { formatUsPhoneDisplay } from '@/utils/phone-format';
 import { useAppStore } from '@/stores/app';
+import { useMobileTablePinchZoom } from '@/composables/useMobileTablePinchZoom';
 
 const appStore = useAppStore();
+const peopleTableScrollRef = ref<HTMLElement | null>(null);
+const { scale: mobileTableScale } = useMobileTablePinchZoom(
+  peopleTableScrollRef,
+  computed(() => appStore.isMobileViewport),
+  0.72,
+);
 const mobileSearchExpanded = ref(false);
 const loading = ref(false);
 const submitting = ref(false);
@@ -1013,25 +1013,22 @@ onBeforeUnmount(() => {
   gap: 4px;
 }
 
-.people-mobile-list,
-.people-mobile-card { display: none; }
-
-@media (max-width: 640px) {
-  .people-main-table { display: none; }
-  .mobile-table-hint { margin: 0 0 10px; color: #64748b; font-size: 12px; line-height: 1.4; }
-  .people-mobile-list { display: grid; gap: 10px; }
-  .people-mobile-card { display: block; padding: 12px; border: 1px solid #c9d9e2; border-radius: 10px; background: #fff; box-shadow: 0 2px 8px rgba(31, 63, 54, 0.05); }
-  .people-mobile-card__header,
-  .people-mobile-card__footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .people-mobile-card__identity { min-width: 0; display: grid; gap: 3px; }
-  .people-mobile-card__identity strong { color: #1f3f36; font-size: 15px; }
-  .people-mobile-card__identity span,
-  .people-mobile-card__footer span { color: #71808a; font-size: 11px; }
-  .people-mobile-card__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 12px; margin: 12px 0; padding: 10px 0; border-top: 1px solid #edf1f4; border-bottom: 1px solid #edf1f4; }
-  .people-mobile-card__grid > div { min-width: 0; display: grid; gap: 2px; }
-  .people-mobile-card__grid .people-mobile-card__wide { grid-column: 1 / -1; }
-  .people-mobile-card__grid span { color: #87949b; font-size: 11px; }
-  .people-mobile-card__grid strong { overflow: hidden; color: #40535d; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 920px) {
+  .people-table-zoom-scroll { max-height: max(260px, calc(100dvh - 340px)); overflow: auto; touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
+  .people-main-table { width: max-content; min-width: 100%; }
+  .people-main-table { max-width: none; }
+  .people-main-table :deep(.el-table__header-wrapper),
+  .people-main-table :deep(.el-table__fixed-header-wrapper) { position: sticky; top: 0; z-index: 4; }
+  .people-main-table :deep(.el-table__header th) { height: 36px; padding: 4px 6px; white-space: nowrap; }
+  .people-main-table :deep(.el-table__cell) { padding: 4px 6px; }
+  .people-main-table :deep(.cell) { padding: 0; font-size: 11px; white-space: nowrap; }
+  .people-main-table :deep(.cell-stack) { gap: 1px; }
+  .people-main-table :deep(.cell-stack strong) { font-size: 11px; }
+  .people-main-table :deep(.cell-stack span) { font-size: 10px; }
+  .people-main-table :deep(.el-table__row) { height: 42px; }
+  .people-main-table :deep(.el-table__fixed-right) { box-shadow: -4px 0 8px rgb(31 63 54 / 8%); }
+  .people-main-table :deep(.mobile-table-actions .el-button) { width: 36px; height: 36px; }
+  .teacher-subjects-compact { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
 .table-footer {
@@ -1085,6 +1082,14 @@ onBeforeUnmount(() => {
 .subject-manager__form :deep(.el-form-item) {
   margin-right: 0;
 }
+
+.subject-manager__subject-name {
+  display: grid;
+  gap: 2px;
+}
+.subject-manager__subject-name strong { color: #26384c; font-size: 12px; }
+.subject-manager__subject-name small { color: #8795a5; font-size: 10px; }
+.subject-manager__more { width: 32px; height: 32px; margin: 0; }
 
 .delete-confirm {
   display: grid;
@@ -1220,7 +1225,60 @@ onBeforeUnmount(() => {
   }
 
   .teacher-form__row { grid-template-columns: 1fr; gap: 0; }
-  .teacher-dialog :deep(.el-dialog__body) { max-height: none; padding: 12px 14px; }
-  .teacher-dialog :deep(.el-dialog__header), .teacher-dialog :deep(.el-dialog__footer) { padding-right: 14px; padding-left: 14px; }
+  :global(.el-dialog.teacher-dialog:not(.is-fullscreen)) {
+    display: flex;
+    width: calc(100vw - 24px) !important;
+    max-width: 520px;
+    max-height: calc(100dvh - 24px);
+    flex-direction: column;
+    margin: 12px auto !important;
+  }
+  .teacher-dialog :deep(.el-dialog__header),
+  .teacher-dialog :deep(.el-dialog__footer) { flex: 0 0 auto; padding: 10px 12px; }
+  .teacher-dialog :deep(.el-dialog__header h3) { font-size: 15px; }
+  .teacher-dialog :deep(.el-dialog__body) {
+    min-height: 0;
+    max-height: calc(100dvh - 126px);
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 10px 12px;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .teacher-dialog :deep(.el-form-item) { margin-bottom: 10px; }
+  .teacher-dialog :deep(.el-form-item__label) { padding-bottom: 3px; font-size: 11px; line-height: 1.25; }
+  .teacher-dialog :deep(.el-input__wrapper),
+  .teacher-dialog :deep(.el-select__wrapper),
+  .teacher-dialog :deep(.el-input-number .el-input__wrapper) { min-height: 36px; }
+  .teacher-dialog :deep(.el-input__inner),
+  .teacher-dialog :deep(.el-select__placeholder),
+  .teacher-dialog :deep(.el-select__selected-item) { font-size: 12px; }
+  .teacher-dialog :deep(.el-button:not(.is-text):not(.is-link)) { min-height: 34px; padding: 0 10px; font-size: 12px; }
+  .teacher-dialog :deep(.el-table__header th),
+  .teacher-dialog :deep(.el-table__body td) { height: 38px; padding: 4px 6px; }
+  .teacher-dialog :deep(.el-table .cell) { padding: 0 3px; font-size: 11px; }
+  .subject-manager__hint { margin-bottom: 8px; font-size: 11px; line-height: 1.4; }
+  .subject-manager__form { display: grid; grid-template-columns: minmax(0, 1fr) 112px; gap: 0 10px; margin-bottom: 8px; }
+  .subject-manager__form :deep(.el-form-item) { display: flex; min-width: 0; flex-direction: column; align-items: stretch; margin: 0 0 8px; }
+  .subject-manager__form :deep(.el-form-item__label) { width: auto !important; padding: 0 0 4px; line-height: 1.2; text-align: left; }
+  .subject-manager__form :deep(.el-form-item__content) { width: 100%; min-width: 0; margin-left: 0 !important; }
+  .subject-manager__form-item--name { grid-column: 1; }
+  .subject-manager__form-item--order { grid-column: 2; }
+  .subject-manager__form-item--actions { grid-column: 1 / -1; }
+  .subject-manager__form :deep(.el-input),
+  .subject-manager__form :deep(.el-input-number) { width: 100%; }
+  .subject-manager__form-item--actions :deep(.el-form-item__content) { display: flex; flex-wrap: wrap; gap: 6px; }
+  .subject-manager__mobile-list { min-height: 0; border-top: 1px solid #e5eaf1; }
+  .subject-manager__mobile-row { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 2px 5px 0; border-bottom: 1px solid #e5eaf1; }
+  .subject-manager__mobile-info { display: flex; min-width: 0; align-items: baseline; gap: 9px; }
+  .subject-manager__mobile-info strong { overflow: hidden; color: #26384c; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  .subject-manager__mobile-info small { flex: 0 0 auto; color: #8795a5; font-size: 11px; }
+  .subject-manager__more { width: 34px; height: 34px; flex: 0 0 auto; }
+  .subject-manager__remove { color: #f56c6c; }
+  :global(.el-dialog.teacher-dialog.is-fullscreen) { display: flex; width: 100vw !important; height: 100dvh; max-height: 100dvh; flex-direction: column; margin: 0 !important; border-radius: 0; }
+  :global(.el-dialog.teacher-dialog.is-fullscreen .el-dialog__header),
+  :global(.el-dialog.teacher-dialog.is-fullscreen .el-dialog__footer) { flex: 0 0 auto; padding: calc(10px + env(safe-area-inset-top)) 14px 10px; }
+  :global(.el-dialog.teacher-dialog.is-fullscreen .el-dialog__footer) { padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); }
+  :global(.el-dialog.teacher-dialog.is-fullscreen .el-dialog__body) { flex: 1 1 0; min-height: 0; max-height: none; overflow-y: auto; padding: 12px 14px; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 }
 </style>

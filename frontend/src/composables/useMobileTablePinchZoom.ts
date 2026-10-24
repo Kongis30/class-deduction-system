@@ -15,8 +15,9 @@ interface PinchGesture {
 export function useMobileTablePinchZoom(
   container: Ref<HTMLElement | null>,
   isEnabled: Ref<boolean>,
+  initialScale = DEFAULT_SCALE,
 ) {
-  const scale = ref(DEFAULT_SCALE);
+  const scale = ref(Math.min(MAX_SCALE, Math.max(MIN_SCALE, initialScale)));
   let gesture: PinchGesture | null = null;
   let frame = 0;
   let pendingPosition: { scale: number; contentX: number; contentY: number; viewportX: number; viewportY: number } | null = null;

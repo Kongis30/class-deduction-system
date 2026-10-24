@@ -403,8 +403,11 @@ export interface CoursePackageQuery {
   pageSize?: number;
 }
 
-export function fetchCoursePackages(params: CoursePackageQuery = {}) {
-  return http.get<ApiResponse<PageResult<CoursePackageItem>>>('/v1/enrollment/packages', { params });
+export function fetchCoursePackages(
+  params: CoursePackageQuery = {},
+  config: Pick<AxiosRequestConfig, 'signal' | 'timeout'> = {},
+) {
+  return http.get<ApiResponse<PageResult<CoursePackageItem>>>('/v1/enrollment/packages', { params, ...config });
 }
 
 export function fetchMyCoursePackages(params: Omit<CoursePackageQuery, 'studentId'> = {}) {

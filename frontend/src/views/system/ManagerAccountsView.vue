@@ -34,23 +34,36 @@
         <el-button @click="handleFilterChange">Search</el-button>
       </div>
     </section>
-    <p v-if="appStore.isMobileViewport" class="mobile-table-hint">Review account status and activity, then use More to edit or delete.</p>
-    <el-table :data="accounts" row-key="userId" empty-text="No manager accounts" class="manager-accounts-table">
-      <el-table-column prop="displayName" label="Name" min-width="180" />
-      <el-table-column prop="username" label="Username" min-width="170" />
-      <el-table-column prop="mobile" label="Phone" min-width="140" />
-      <el-table-column prop="email" label="Email" min-width="190" />
-      <el-table-column prop="uniqueStudentCount" label="Students registered" width="160" align="right" />
-      <el-table-column prop="registrationCount" label="Registration orders" width="160" align="right" />
-      <el-table-column label="Status" width="120">
+    <p v-if="appStore.isMobileViewport" class="mobile-table-hint">Swipe to view account activity. Use More to edit or delete.</p>
+    <div ref="managerTableScrollRef" class="manager-table-zoom-scroll mobile-pinch-scroll">
+      <el-table
+        :data="accounts"
+        row-key="userId"
+        empty-text="No manager accounts"
+        class="manager-accounts-table"
+        :style="{ zoom: appStore.isMobileViewport ? mobileTableScale : undefined }"
+      >
+      <el-table-column :min-width="appStore.isMobileViewport ? 132 : 180" label="Name" fixed="left">
+        <template #default="{ row }">
+          <div class="manager-name-cell">
+            <strong>{{ row.displayName }}</strong>
+            <span>{{ row.username }} · {{ row.status }}</span>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column prop="mobile" label="Phone" :min-width="appStore.isMobileViewport ? 120 : 140" />
+      <el-table-column v-if="!appStore.isMobileViewport" prop="email" label="Email" min-width="190" />
+      <el-table-column prop="uniqueStudentCount" label="Students" :width="appStore.isMobileViewport ? 90 : 160" align="right" />
+      <el-table-column prop="registrationCount" label="Orders" :width="appStore.isMobileViewport ? 84 : 160" align="right" />
+      <el-table-column v-if="!appStore.isMobileViewport" label="Status" width="120">
         <template #default="{ row }">
           <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="Last login" min-width="180">
+      <el-table-column v-if="!appStore.isMobileViewport" label="Last login" min-width="180">
         <template #default="{ row }">{{ dateTime(row.lastLoginAt) }}</template>
       </el-table-column>
-      <el-table-column :label="appStore.isMobileViewport ? 'More' : 'Actions'" :width="appStore.isMobileViewport ? 72 : 150" fixed="right" align="center">
+      <el-table-column :label="appStore.isMobileViewport ? 'More' : 'Actions'" :width="appStore.isMobileViewport ? 56 : 150" fixed="right" align="center">
         <template #default="{ row }">
           <el-dropdown v-if="appStore.isMobileViewport" class="mobile-table-actions" trigger="click" placement="bottom-end" @click.stop>
             <el-button text circle aria-label="More manager actions" @click.stop><el-icon><MoreFilled /></el-icon></el-button>
@@ -67,38 +80,7 @@
           </template>
         </template>
       </el-table-column>
-    </el-table>
-
-    <div v-if="appStore.isMobileViewport" class="manager-mobile-list">
-      <article v-for="row in accounts" :key="row.userId" class="manager-mobile-card">
-        <div class="manager-mobile-card__header">
-          <div class="manager-mobile-card__identity">
-            <strong>{{ row.displayName }}</strong>
-            <span>{{ row.username }} · {{ row.status }}</span>
-          </div>
-          <el-dropdown trigger="click" placement="bottom-end" @click.stop>
-            <el-button text circle aria-label="More manager actions" @click.stop><el-icon><MoreFilled /></el-icon></el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item @click="openEdit(row)">Edit manager</el-dropdown-item>
-                <el-dropdown-item divided @click="handleDelete(row)">Delete manager</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
-        <div class="manager-mobile-card__grid">
-          <div><span>Phone</span><strong>{{ row.mobile || '-' }}</strong></div>
-          <div><span>Email</span><strong>{{ row.email || '-' }}</strong></div>
-          <div><span>Students registered</span><strong>{{ row.uniqueStudentCount ?? 0 }}</strong></div>
-          <div><span>Registration orders</span><strong>{{ row.registrationCount ?? 0 }}</strong></div>
-          <div class="manager-mobile-card__wide"><span>Last login</span><strong>{{ dateTime(row.lastLoginAt) }}</strong></div>
-        </div>
-        <div class="manager-mobile-card__footer">
-          <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status }}</el-tag>
-          <span>{{ row.uniqueStudentCount ?? 0 }} students · {{ row.registrationCount ?? 0 }} orders</span>
-        </div>
-      </article>
-      <el-empty v-if="!loading && accounts.length === 0" description="No manager accounts" />
+      </el-table>
     </div>
 
     <el-dialog
@@ -133,7 +115,7 @@
         v-model:current-page="pagination.pageNum"
         v-model:page-size="pagination.pageSize"
         background
-        layout="prev, pager, next, sizes"
+        :layout="appStore.isMobileViewport ? 'prev, pager, next' : 'prev, pager, next, sizes'"
         :page-sizes="[10, 20, 50]"
         :total="pagination.total"
         @current-change="loadAccounts"
@@ -185,6 +167,7 @@ import {
 import { extractErrorMessage } from '@/api/http';
 import type { EntityId } from '@/types/domain';
 import { DEFAULT_INITIAL_PASSWORD, usernameFromName } from '@/utils/account-credentials';
+import { useMobileTablePinchZoom } from '@/composables/useMobileTablePinchZoom';
 import { useAppStore } from '@/stores/app';
 
 interface AccountForm {
@@ -199,6 +182,12 @@ interface AccountForm {
 
 const formRef = ref<FormInstance>();
 const appStore = useAppStore();
+const managerTableScrollRef = ref<HTMLElement | null>(null);
+const { scale: mobileTableScale } = useMobileTablePinchZoom(
+  managerTableScrollRef,
+  computed(() => appStore.isMobileViewport),
+  0.72,
+);
 const mobileSearchExpanded = ref(false);
 const accounts = ref<ManagerAccount[]>([]);
 const loading = ref(false);
@@ -376,9 +365,10 @@ defineExpose({ openCreateDialog: openCreate });
 .manager-accounts-page { display: grid; gap: 14px; }
 .manager-accounts-toolbar { display: flex; align-items: center; gap: 10px; }
 .manager-accounts-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #64748b; font-size: 13px; }
+.manager-name-cell { display: grid; gap: 1px; min-width: 0; }
+.manager-name-cell strong { overflow: hidden; color: #303133; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.manager-name-cell span { overflow: hidden; color: #7a8699; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .form-hint { margin-top: 4px; color: #909399; font-size: 12px; line-height: 1.4; }
-.manager-mobile-list,
-.manager-mobile-card { display: none; }
 @media (max-width: 920px) {
   .manager-accounts-toolbar,
   .manager-accounts-footer { flex-wrap: wrap; }
@@ -386,20 +376,16 @@ defineExpose({ openCreateDialog: openCreate });
   .manager-accounts-toolbar :deep(.el-input),
   .manager-accounts-toolbar :deep(.el-select) { width: 100% !important; }
   .manager-accounts-toolbar > .el-button { width: 100%; }
-  .manager-accounts-table { display: none; }
-  .mobile-table-hint { margin: 0; color: #64748b; font-size: 12px; line-height: 1.4; }
-  .manager-mobile-list { display: grid; gap: 10px; }
-  .manager-mobile-card { display: block; padding: 12px; border: 1px solid #c9d9e2; border-radius: 10px; background: #fff; box-shadow: 0 2px 8px rgba(31, 63, 54, 0.05); }
-  .manager-mobile-card__header,
-  .manager-mobile-card__footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .manager-mobile-card__identity { min-width: 0; display: grid; gap: 3px; }
-  .manager-mobile-card__identity strong { color: #1f3f36; font-size: 15px; }
-  .manager-mobile-card__identity span,
-  .manager-mobile-card__footer span { color: #71808a; font-size: 11px; }
-  .manager-mobile-card__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 12px; margin: 12px 0; padding: 10px 0; border-top: 1px solid #edf1f4; border-bottom: 1px solid #edf1f4; }
-  .manager-mobile-card__grid > div { min-width: 0; display: grid; gap: 2px; }
-  .manager-mobile-card__wide { grid-column: 1 / -1; }
-  .manager-mobile-card__grid span { color: #87949b; font-size: 11px; }
-  .manager-mobile-card__grid strong { overflow: hidden; color: #40535d; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  .manager-table-zoom-scroll { max-height: max(260px, calc(100dvh - 330px)); overflow: auto; touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
+  .manager-accounts-table { width: max-content; min-width: 100%; }
+  .manager-accounts-table { max-width: none; }
+  .manager-accounts-table :deep(.el-table__header-wrapper),
+  .manager-accounts-table :deep(.el-table__fixed-header-wrapper) { position: sticky; top: 0; z-index: 4; }
+  .manager-accounts-table :deep(.el-table__header th) { height: 36px; padding: 4px 6px; white-space: nowrap; }
+  .manager-accounts-table :deep(.el-table__cell) { padding: 4px 6px; }
+  .manager-accounts-table :deep(.cell) { padding: 0; font-size: 11px; white-space: nowrap; }
+  .manager-accounts-table :deep(.el-table__row) { height: 42px; }
+  .manager-accounts-table :deep(.el-table__fixed-right) { box-shadow: -4px 0 8px rgb(31 63 54 / 8%); }
+  .manager-accounts-table :deep(.mobile-table-actions .el-button) { width: 36px; height: 36px; }
 }
 </style>

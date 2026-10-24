@@ -220,7 +220,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                 .collect(Collectors.toMap(CoursePackageEntity::getId, item -> item));
         for (PrivateLessonGroupMemberEntity member : members) {
             CoursePackageEntity coursePackage = packageMap.get(member.getPackageId());
-            if (coursePackage == null || !"ACTIVE".equals(coursePackage.getPackageStatus())) {
+            if (!canFinalizePrivateLessonPackage(coursePackage, request.getResultStatus())) {
                 throw new BusinessException("PRIVATE_LESSON_MEMBER_PACKAGE_INVALID",
                         "A private lesson member package is missing or inactive for student " + member.getStudentId() + ".");
             }
@@ -376,7 +376,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                 .findFirst()
                 .orElse(members.get(0));
         CoursePackageEntity primaryPackage = packageMap.get(primaryMember.getPackageId());
-        if (primaryPackage == null || !"ACTIVE".equals(primaryPackage.getPackageStatus())) {
+        if (!"ACTIVE".equals(primaryPackage == null ? null : primaryPackage.getPackageStatus())) {
             throw new BusinessException("PRIVATE_LESSON_MEMBER_PACKAGE_INVALID", "The primary private lesson package is not active.");
         }
         LessonStatusRuleEntity statusRule = requireActiveRule(request.getResultStatus());
@@ -423,6 +423,12 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                 .remainingUnits(UnitConverter.toHoursDecimal(safeUnits(primaryPackage.getRemainingUnits())))
                 .packageCompleted(false)
                 .build();
+    }
+
+    private boolean canFinalizePrivateLessonPackage(CoursePackageEntity coursePackage, String resultStatus) {
+        if (coursePackage == null) return false;
+        return "ACTIVE".equals(coursePackage.getPackageStatus())
+                || ("CANCELLED".equals(resultStatus) && "PAUSED".equals(coursePackage.getPackageStatus()));
     }
 
     @Override

@@ -35,15 +35,15 @@
                 <el-option v-for="operator in operatorOptions" :key="String(operator.operatorUserId ?? operator.operatorName)" :label="operator.operatorName || 'Operator not recorded'" :value="String(operator.operatorUserId ?? '')" />
               </el-select>
             </div>
-            <div class="workbook-toolbar__stats daily-workbook-toolbar__stats">
-              <span class="workbook-toolbar__stat"><em>Course records</em><strong>{{ filteredStats.courses }}</strong></span>
-              <span class="workbook-toolbar__stat"><em>Orders</em><strong>{{ filteredStats.orders }}</strong></span>
-              <span class="workbook-toolbar__stat"><em>Students</em><strong>{{ filteredStats.students }}</strong></span>
-              <span class="workbook-toolbar__stat"><em>Due</em><strong>{{ money(filteredStats.due) }}</strong></span>
-              <span class="workbook-toolbar__stat"><em>Collected</em><strong>{{ money(filteredStats.collected) }}</strong></span>
-              <span class="workbook-toolbar__stat"><em>Outstanding</em><strong>{{ money(filteredStats.outstanding) }}</strong></span>
-            </div>
           </section>
+          <div class="workbook-toolbar__stats daily-workbook-toolbar__stats">
+            <span class="workbook-toolbar__stat"><em>Records</em><strong>{{ filteredStats.courses }}</strong></span>
+            <span class="workbook-toolbar__stat"><em>Orders</em><strong>{{ filteredStats.orders }}</strong></span>
+            <span class="workbook-toolbar__stat"><em>Students</em><strong>{{ filteredStats.students }}</strong></span>
+            <span class="workbook-toolbar__stat"><em>Due</em><strong>{{ money(filteredStats.due) }}</strong></span>
+            <span class="workbook-toolbar__stat"><em>Collected</em><strong>{{ money(filteredStats.collected) }}</strong></span>
+            <span class="workbook-toolbar__stat"><em>Outstanding</em><strong>{{ money(filteredStats.outstanding) }}</strong></span>
+          </div>
         </template>
         <template v-else>
           <span class="workbook-toolbar__label">Saved date</span>
@@ -114,18 +114,6 @@
               </tr>
             </tbody>
           </table>
-        </div>
-        <div v-if="appStore.isMobileViewport" class="daily-mobile-list daily-mobile-operators">
-          <article v-for="operator in visibleOperators" :key="String(operator.operatorUserId ?? operator.operatorName)" class="daily-mobile-card">
-            <div class="daily-mobile-card__header"><strong>{{ operator.operatorName || 'Operator not recorded' }}</strong><span>{{ operator.courseRegistrationCount }} course records</span></div>
-            <div class="daily-mobile-card__grid">
-              <div><span>Students</span><strong>{{ operator.uniqueStudentCount }}</strong></div>
-              <div><span>Orders</span><strong>{{ operator.orderCount }}</strong></div>
-              <div><span>Amount due</span><strong>{{ money(operator.amountDue) }}</strong></div>
-              <div><span>Collected</span><strong>{{ money(operator.amountCollected) }}</strong></div>
-            </div>
-          </article>
-          <el-empty v-if="!loading && visibleOperators.length === 0" description="No operator totals" />
         </div>
       </section>
 
@@ -250,20 +238,6 @@
             </tbody>
           </table>
         </div>
-        <div v-if="appStore.isMobileViewport" class="daily-mobile-list">
-          <article v-for="row in filteredSortedRows" :key="rowKey(row)" class="daily-mobile-card">
-            <div class="daily-mobile-card__header"><div><strong>{{ display(row.studentName) }}</strong><span>{{ display(row.courseName) }}</span></div><span>{{ dateTime(row.savedAt) }}</span></div>
-            <div class="daily-mobile-card__meta">{{ display(row.className) }} · {{ display(row.grade) }} · {{ display(row.operatorName, 'Operator not recorded') }}</div>
-            <div class="daily-mobile-card__grid">
-              <div><span>Pay method</span><strong>{{ display(row.paymentMethod) }}</strong></div>
-              <div><span>Status</span><strong>{{ display(row.paymentStatus) }}</strong></div>
-              <div><span>Amount due</span><strong>{{ money(row.amountDue) }}</strong></div>
-              <div><span>Collected</span><strong>{{ money(row.amountCollected) }}</strong></div>
-              <div><span>Outstanding</span><strong :class="{ 'daily-registration-outstanding': Number(row.outstandingAmount ?? 0) > 0 }">{{ money(row.outstandingAmount) }}</strong></div>
-            </div>
-          </article>
-          <el-empty v-if="!loading && filteredSortedRows.length === 0" description="No registrations match the current filters" />
-        </div>
       </section>
     </div>
   </div>
@@ -278,6 +252,7 @@ import { Close, MoreFilled, Search } from '@element-plus/icons-vue';
 import { fetchDailyRegistrations, type DailyRegistrationOperatorSummary, type DailyRegistrationReport, type DailyRegistrationRow } from '@/api/daily-registrations';
 import { extractErrorMessage } from '@/api/http';
 import { useAppStore } from '@/stores/app';
+import { useMobileTablePinchZoom } from '@/composables/useMobileTablePinchZoom';
 
 type ColumnKey = 'savedAt' | 'studentName' | 'courseName' | 'className' | 'grade' | 'operatorName' | 'paymentMethod' | 'paymentStatus' | 'amountDue' | 'amountCollected' | 'outstandingAmount';
 type FilterType = 'text' | 'select' | 'date' | 'number';
@@ -300,10 +275,15 @@ const columns: Column[] = [
 
 const selectedDate = ref(todayInNewYork());
 const appStore = useAppStore();
+const mobileFiltersExpanded = ref(false);
 const operatorUserId = ref('');
 const report = ref<DailyRegistrationReport>();
 const operatorOptions = ref<DailyRegistrationOperatorSummary[]>([]);
 const loading = ref(false);
+const operatorScrollRef = ref<HTMLElement | null>(null);
+const historyScrollRef = ref<HTMLElement | null>(null);
+const { scale: operatorTableScale } = useMobileTablePinchZoom(operatorScrollRef, computed(() => appStore.isMobileViewport));
+const { scale: historyTableScale } = useMobileTablePinchZoom(historyScrollRef, computed(() => appStore.isMobileViewport));
 let latestRequestId = 0;
 const sortState = ref<{ key: ColumnKey; direction: 'asc' | 'desc' }>({ key: 'savedAt', direction: 'desc' });
 const columnFilters = reactive<Record<ColumnKey, ColumnFilter>>({
@@ -563,14 +543,21 @@ function rowKey(row: DailyRegistrationRow) {
 .daily-sheet__scroll { min-width: 0; overflow: auto; }
 .daily-sheet__scroll--compact { max-height: 180px; }
 .operator-table { min-width: 100%; }
+.daily-workbook-page .workbook-table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+.daily-workbook-page .workbook-table th,
+.daily-workbook-page .workbook-table td { border-right: 1px solid #c3d3df; border-bottom: 1px solid #c3d3df; }
+.daily-workbook-page .workbook-table th { position: sticky; top: 0; z-index: 4; background: #376451; color: #fff; }
+.daily-workbook-page .workbook-header-button { display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; gap: 5px; padding: 0 6px; overflow: hidden; border: 0; border-radius: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; text-align: center; }
+.daily-workbook-page .workbook-header-button > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.daily-workbook-page .workbook-header-icons { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 3px; }
+.daily-workbook-page .workbook-filter-arrow { width: 0; height: 0; border-top: 5px solid currentColor; border-right: 4px solid transparent; border-left: 4px solid transparent; opacity: .75; }
+.daily-workbook-page .workbook-sort-indicator { font-size: 10px; }
 .history-sheet { display: flex; min-height: 0; flex: 1; flex-direction: column; }
 .history-sheet__scroll { flex: 1; min-height: 0; }
 .daily-date-group td.daily-date-group__cell { height: 28px; padding: 5px 8px; border-right: 0; background: #edf4f1; color: #315b49; font-weight: 700; }
 .daily-date-group span { margin-left: 10px; color: #76857f; font-size: 11px; font-weight: 500; }
 .daily-registration-outstanding { color: #bd2431; font-weight: 700; }
 .daily-registration-pill--refunded { background: #6b7280; color: #fff; }
-.daily-mobile-list { display: none; }
-
 @media (max-width: 900px) {
   .daily-workbook-page { height: auto; min-height: calc(100vh - 88px); }
   .daily-workbook-layout { min-height: 60vh; }
@@ -580,26 +567,37 @@ function rowKey(row: DailyRegistrationRow) {
   .daily-sheet__scroll--compact { max-height: 220px; }
 }
 
-@media (max-width: 640px) {
-  .daily-sheet__scroll { display: none; }
-  .daily-mobile-list { display: grid; gap: 10px; padding: 10px; }
-  .daily-mobile-card { padding: 12px; border: 1px solid #c9d9e2; border-radius: 10px; background: #fff; box-shadow: 0 2px 8px rgba(31, 63, 54, .05); }
-  .daily-mobile-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-  .daily-mobile-card__header > div { min-width: 0; display: grid; gap: 3px; }
-  .daily-mobile-card__header strong { color: #1f3f36; font-size: 14px; }
-  .daily-mobile-card__header span { color: #71808a; font-size: 11px; text-align: right; }
-  .daily-mobile-card__header > div span { overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-  .daily-mobile-card__meta { margin-top: 5px; color: #71808a; font-size: 11px; }
-  .daily-mobile-card__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 12px; margin-top: 12px; padding-top: 10px; border-top: 1px solid #edf1f4; }
-  .daily-mobile-card__grid > div { display: grid; gap: 2px; }
-  .daily-mobile-card__grid span { color: #87949b; font-size: 11px; }
-  .daily-mobile-card__grid strong { color: #40535d; font-size: 12px; }
-  .daily-mobile-operators { padding-top: 0; }
-  .daily-workbook-toolbar__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .daily-workbook-toolbar__stat { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; min-width: 0; }
+@media (max-width: 920px) {
+  .daily-workbook-page { display: flex; height: 100%; min-height: 0; flex: 1 1 0; flex-direction: column; overflow: hidden; }
+  .daily-workbook-page .workbook-toolbar { flex: 0 0 auto; padding: 6px 8px; }
+  .daily-workbook-layout { flex: 1 1 0; gap: 8px; overflow: auto; padding-bottom: 8px; }
+  .daily-sheet { flex: 0 0 auto; overflow: hidden; }
+  .history-sheet { min-height: 260px; flex: 1 0 260px; }
+  .daily-sheet__caption { gap: 7px; padding: 6px 8px; }
+  .daily-sheet__caption strong { font-size: 10px; }
+  .daily-sheet__caption span { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+  .daily-sheet__scroll { display: block; max-width: 100%; overflow: auto; border: 0; touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
+  .daily-sheet__scroll--compact { max-height: 150px; }
+  .history-sheet__scroll { min-height: 0; flex: 1 1 0; }
+  .daily-workbook-page .workbook-table { margin: 0; color: #263b44; font-size: 11px; }
+  .daily-workbook-page .workbook-table th,
+  .daily-workbook-page .workbook-table td { height: 30px; padding: 5px 7px; overflow: hidden; border-right: 1px solid #c3d3df; border-bottom: 1px solid #c3d3df; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+  .daily-workbook-page .workbook-table th { position: sticky; top: 0; z-index: 4; height: 38px; padding: 0; border-color: #517768; background: #376451; color: #fff; font-size: 11px; }
+  .daily-workbook-page .workbook-header-button { justify-content: center; gap: 5px; padding: 0 6px; }
+  .daily-workbook-page .workbook-table td { background: #dcebf8; }
+  .daily-workbook-page .workbook-data-row:hover td { background: #d1e5f6; }
+  .daily-workbook-page .workbook-table td.workbook-cell--money { text-align: center; }
+  .daily-workbook-page .daily-date-group td { position: static; height: 25px; padding: 4px 7px; background: #edf4f1; font-size: 9px; }
+  .daily-date-group span { margin-left: 5px; font-size: 9px; }
+  .daily-workbook-page .workbook-empty-row td { height: 44px; text-align: center; }
+  .daily-workbook-page .workbook-group-spacer td { white-space: nowrap; }
+  .daily-workbook-page .daily-date-navigation :deep(.el-date-editor) { width: 132px; }
+  .daily-mobile-filter-controls .operator-filter { width: 100%; }
+  .daily-workbook-toolbar__stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 8px; width: 100%; }
+  .daily-workbook-toolbar__stat { display: grid; gap: 1px; min-width: 0; font-size: 9px; }
+  .daily-workbook-toolbar__stat em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .daily-workbook-toolbar__stat strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
   .daily-workbook-toolbar__stat em { white-space: normal; }
-  .daily-workbook-toolbar__stat strong { flex: 0 0 auto; }
-  .mobile-pinch-scroll { touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
-  .daily-sheet__scroll--compact { max-height: 200px; }
+  .daily-mobile-filter-controls { display: grid; gap: 7px; }
 }
 </style>

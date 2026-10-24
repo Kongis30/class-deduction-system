@@ -152,8 +152,11 @@
         <aside v-show="!packagePanelCollapsed" class="oo-package-panel">
           <div class="oo-package-panel__heading">
             <div>
-              <strong>Student courses</strong>
-              <span>{{ candidateScopeLabel }}</span>
+              <strong>{{ appStore.isMobileViewport ? 'Students & courses' : 'Student courses' }}</strong>
+              <span class="oo-package-panel__scope">{{ candidateScopeLabel }}</span>
+              <small v-if="appStore.isMobileViewport" class="oo-mobile-list-count">
+                {{ filteredStudentCount }} students · {{ filteredPackageCandidates.length }} courses
+              </small>
             </div>
             <div class="oo-package-panel__tools">
               <button
@@ -167,6 +170,7 @@
                 <el-icon><Search /></el-icon>
               </button>
               <el-button
+                v-if="!appStore.isMobileViewport"
                 class="oo-panel-toggle"
                 text
                 size="small"
@@ -188,11 +192,15 @@
                 type="button"
                 class="oo-student-group__toggle"
                 :class="{ 'oo-student-group__toggle--open': expandedStudentGroupKeys.has(studentGroup.key) }"
-                :aria-expanded="expandedStudentGroupKeys.has(studentGroup.key)"
-                @click="toggleStudentGroup(studentGroup.key)"
+                :aria-expanded="appStore.isMobileViewport && studentGroup.candidates.length === 1
+                  ? undefined
+                  : expandedStudentGroupKeys.has(studentGroup.key)"
+                @click="appStore.isMobileViewport && studentGroup.candidates.length === 1
+                  ? selectCandidatePackage(studentGroup.candidates[0])
+                  : toggleStudentGroup(studentGroup.key)"
               >
                 <strong>{{ studentGroup.studentName }}</strong>
-                <small>{{ studentGroup.candidates.length }} courses</small>
+                <small>{{ studentGroup.candidates.length }} {{ studentGroup.candidates.length === 1 ? 'course' : 'courses' }}</small>
                 <span aria-hidden="true">›</span>
               </button>
               <div v-if="expandedStudentGroupKeys.has(studentGroup.key)" class="oo-student-group__packages">
@@ -256,8 +264,12 @@
                         type="button"
                         class="oo-student-group__toggle"
                         :class="{ 'oo-student-group__toggle--open': expandedStudentGroupKeys.has(studentGroup.key) }"
-                        :aria-expanded="expandedStudentGroupKeys.has(studentGroup.key)"
-                        @click="toggleStudentGroup(studentGroup.key)"
+                        :aria-expanded="appStore.isMobileViewport && studentGroup.candidates.length === 1
+                          ? undefined
+                          : expandedStudentGroupKeys.has(studentGroup.key)"
+                        @click="appStore.isMobileViewport && studentGroup.candidates.length === 1
+                          ? selectCandidatePackage(studentGroup.candidates[0])
+                          : toggleStudentGroup(studentGroup.key)"
                       >
                         <strong>{{ studentGroup.studentName }}</strong>
                         <span aria-hidden="true">›</span>
@@ -297,7 +309,7 @@
               <el-icon><Search /></el-icon>
             </button>
             <button type="button" class="oo-mobile-course-toggle" @click="showCourseList">
-              Change course
+              Students
             </button>
           </template>
           <el-button
@@ -349,19 +361,22 @@
                 </span>
               </div>
               <div class="oo-student-context__metric-group oo-student-context__metric-group--teacher" role="group" :aria-label="`Hours for ${activeTeacher?.teacherName || 'teacher'}`">
+                <span v-if="appStore.isMobileViewport" class="oo-student-context__metric-group-title">
+                  {{ activeTeacher?.teacherName || 'Teacher' }} allocation
+                </span>
                 <span class="oo-student-context__metric">
                   <el-tooltip content="Hours assigned to this teacher at the last schedule change. This value stays fixed until the schedule changes again." placement="top" :show-after="200">
-                    <small>Allocated to {{ activeTeacher?.teacherName || 'teacher' }}</small>
+                    <small>{{ appStore.isMobileViewport ? 'Allocated' : `Allocated to ${activeTeacher?.teacherName || 'teacher'}` }}</small>
                   </el-tooltip>{{ formatHours(activeTeacherHours?.allocatedUnits ?? 0) }}h
                 </span>
                 <span class="oo-student-context__metric">
                   <el-tooltip content="Current schedule allocation minus hours finally deducted by the admin. Includes future and past lessons still awaiting final processing." placement="top" :show-after="200">
-                    <small>Remaining with {{ activeTeacher?.teacherName || 'teacher' }}</small>
+                    <small>{{ appStore.isMobileViewport ? 'Remaining' : `Remaining with ${activeTeacher?.teacherName || 'teacher'}` }}</small>
                   </el-tooltip>{{ formatHours(activeTeacherHours?.remainingUnits ?? 0) }}h
                 </span>
                 <span class="oo-student-context__metric">
                   <el-tooltip content="Hours finally deducted in the current schedule period, including student cancellations. Formal leave and pending reviews do not count." placement="top" :show-after="200">
-                    <small>Deducted by {{ activeTeacher?.teacherName || 'teacher' }}</small>
+                    <small>{{ appStore.isMobileViewport ? 'Deducted' : `Deducted by ${activeTeacher?.teacherName || 'teacher'}` }}</small>
                   </el-tooltip>{{ formatHours(activeTeacherHours?.deductedUnits ?? 0) }}h
                 </span>
               </div>
@@ -532,9 +547,14 @@
             </el-table-column>
           </el-table>
 
-          <div v-else class="oo-mobile-lessons no-print">
+          <div v-else class="oo-mobile-lessons no-print" role="table" aria-label="Lesson records">
+            <div class="oo-mobile-lesson-header" role="row">
+              <span role="columnheader">Date / time</span>
+              <span role="columnheader">Course / teacher</span>
+              <span role="columnheader">Status / action</span>
+            </div>
             <template v-for="item in lessonTimelineRows" :key="item.key">
-              <div v-if="item.kind === 'change'" class="oo-schedule-change oo-schedule-change--mobile">
+              <div v-if="item.kind === 'change'" class="oo-schedule-change oo-schedule-change--mobile" role="presentation">
                 <span class="oo-schedule-change__line" aria-hidden="true"></span>
                 <strong>Schedule adjusted · {{ formatScheduleChangeTime(item.change.changedAt) }}</strong>
                 <span class="oo-schedule-change__line" aria-hidden="true"></span>
@@ -542,34 +562,81 @@
               <article
                 v-else
                 class="oo-mobile-lesson"
+                role="row"
                 :class="{ 'oo-mobile-lesson--overdue-unprocessed': isPastUnprocessed(item.lesson) }"
               >
-                <div class="oo-mobile-lesson__heading">
-                  <div class="oo-simple-cell">
-                    <strong>{{ lessonSubjectName(item.lesson) }}</strong>
-                    <span>{{ displayResourceName(item.lesson.actualTeacherName || item.lesson.plannedTeacherName) }}</span>
-                    <small
-                      v-if="item.lesson.allocationOwnerTeacherName
-                        && String(item.lesson.allocationOwnerTeacherId) !== String(item.lesson.actualTeacherId || item.lesson.plannedTeacherId)"
-                    >
-                      Hours remain allocated to {{ displayResourceName(item.lesson.allocationOwnerTeacherName) }}
-                    </small>
-                    <span v-if="isKeptFromPreviousSchedule(item.lesson)" class="oo-schedule-change__kept">Kept from previous schedule</span>
-                  </div>
-                  <el-tag class="status-pill" :class="statusPillClass(item.lesson)" size="small" :type="statusTag(item.lesson)">
+                <div class="oo-mobile-lesson__time" role="cell">
+                  <strong>{{ formatCompactDate(item.lesson.plannedStartAt) }}</strong>
+                  <span>{{ formatCompactTimeRange(item.lesson.plannedStartAt, item.lesson.plannedEndAt) }}</span>
+                </div>
+                <div class="oo-mobile-lesson__course" role="cell">
+                  <el-popover
+                    trigger="click"
+                    placement="top"
+                    :width="240"
+                    popper-class="oo-subject-name-popover"
+                  >
+                    <template #reference>
+                      <button
+                        type="button"
+                        class="oo-mobile-lesson__subject"
+                        :aria-label="`Show full course name: ${lessonSubjectName(item.lesson)}`"
+                      >{{ lessonSubjectName(item.lesson) }}</button>
+                    </template>
+                    <strong class="oo-subject-name-popover__content">{{ lessonSubjectName(item.lesson) }}</strong>
+                  </el-popover>
+                  <span>{{ displayResourceName(item.lesson.actualTeacherName || item.lesson.plannedTeacherName) }}</span>
+                  <small
+                    v-if="item.lesson.allocationOwnerTeacherName
+                      && String(item.lesson.allocationOwnerTeacherId) !== String(item.lesson.actualTeacherId || item.lesson.plannedTeacherId)"
+                  >Allocated to {{ displayResourceName(item.lesson.allocationOwnerTeacherName) }}</small>
+                  <small v-if="isKeptFromPreviousSchedule(item.lesson)" class="oo-schedule-change__kept">Kept from previous schedule</small>
+                </div>
+                <div class="oo-mobile-lesson__actions" role="cell">
+                  <span class="status-pill" :class="statusPillClass(item.lesson)" role="status">
                     {{ statusLabel(item.lesson) }}
-                  </el-tag>
-                </div>
-                <div class="oo-mobile-lesson__time">
-                  <strong>{{ formatDate(item.lesson.plannedStartAt) }}</strong>
-                  <span>{{ formatTimeRange(item.lesson.plannedStartAt, item.lesson.plannedEndAt) }}</span>
-                </div>
-                <div v-if="canConfirmLessons || canManageLessonResources" class="oo-mobile-lesson__actions">
-                  <el-button v-if="canAdjustLesson(item.lesson)" size="small" plain @click="openAdjustDialog(item.lesson)">Adjust</el-button>
-                  <el-button v-if="!needsLessonResources(item.lesson) && canAdminConfirm(item.lesson)" class="action-primary" type="warning" @click="openConfirm(item.lesson, 'admin')">Review &amp; deduct</el-button>
-                  <el-button v-else-if="!needsLessonResources(item.lesson) && canInitialConfirm(item.lesson)" class="action-primary" type="success" plain @click="openConfirm(item.lesson, 'normal')">Submit attendance</el-button>
-                  <el-button v-if="canRevokeLesson(item.lesson)" size="small" type="danger" plain @click="openRevokeDialog(item.lesson)">Undo</el-button>
-                  <span v-if="!canAdjustLesson(item.lesson) && !canAdminConfirm(item.lesson) && !canInitialConfirm(item.lesson) && !canRevokeLesson(item.lesson)" class="oo-no-action">{{ needsLessonResources(item.lesson) ? 'Set a teacher before deduction.' : taskLabel(item.lesson) }}</span>
+                  </span>
+                  <div v-if="canConfirmLessons || canManageLessonResources" class="oo-mobile-lesson__action-buttons">
+                    <el-button
+                      v-if="canAdjustLesson(item.lesson)"
+                      size="small"
+                      plain
+                      title="Adjust lesson"
+                      aria-label="Adjust lesson"
+                      @click="openAdjustDialog(item.lesson)"
+                    >Adjust</el-button>
+                    <el-button
+                      v-if="!needsLessonResources(item.lesson) && canAdminConfirm(item.lesson)"
+                      class="action-primary"
+                      type="warning"
+                      title="Review and deduct lesson"
+                      aria-label="Review and deduct lesson"
+                      @click="openConfirm(item.lesson, 'admin')"
+                    >Review</el-button>
+                    <el-button
+                      v-else-if="!needsLessonResources(item.lesson) && canInitialConfirm(item.lesson)"
+                      class="action-primary"
+                      type="success"
+                      plain
+                      title="Submit attendance"
+                      aria-label="Submit attendance"
+                      @click="openConfirm(item.lesson, 'normal')"
+                    >Submit</el-button>
+                    <el-button
+                      v-if="canRevokeLesson(item.lesson)"
+                      class="oo-mobile-lesson__undo"
+                      size="small"
+                      type="danger"
+                      link
+                      title="Undo deduction"
+                      aria-label="Undo deduction"
+                      @click="openRevokeDialog(item.lesson)"
+                    >Undo</el-button>
+                    <span
+                      v-if="!canAdjustLesson(item.lesson) && !canAdminConfirm(item.lesson) && !canInitialConfirm(item.lesson) && !canRevokeLesson(item.lesson)"
+                      class="oo-no-action"
+                    >{{ needsLessonResources(item.lesson) ? 'Assign teacher' : taskLabel(item.lesson) }}</span>
+                  </div>
                 </div>
               </article>
             </template>
@@ -929,6 +996,9 @@ const filteredPackageCandidates = computed(() =>
     ? menuPackageCandidates.value.filter(matchesCandidateFilters)
     : menuPackageCandidates.value,
 );
+const filteredStudentCount = computed(() => new Set(
+  filteredPackageCandidates.value.map(candidate => candidate.studentKey),
+).size);
 const teacherGradeGroups = computed<TeacherGradeGroup[]>(() => {
   const teacherGroups = new Map<string, {
     key: string;
@@ -1444,6 +1514,10 @@ function selectCandidatePackage(candidate: PackageCandidate) {
 
   mobileFiltersExpanded.value = false;
   packagePanelCollapsed.value = true;
+  // 切换课包后从详情顶部开始，避免沿用上一课包的滚动位置而截掉学生信息。
+  void nextTick(() => {
+    if (printAreaRef.value) printAreaRef.value.scrollTop = 0;
+  });
 }
 
 /** 移动端打开查找时切回课程列表，让筛选结果立即可见。 */
@@ -1940,6 +2014,15 @@ function formatDate(value: string) {
   return value ? dayjs(value).format('MM/DD/YYYY') : '—';
 }
 
+function formatCompactDate(value: string) {
+  return value ? dayjs(value).format('MM/DD') : '—';
+}
+
+function formatCompactTimeRange(startAt: string, endAt: string) {
+  if (!startAt || !endAt) return '—';
+  return `${dayjs(startAt).format('HH:mm')}–${dayjs(endAt).format('HH:mm')}`;
+}
+
 function formatDateTime(value: string) {
   return value ? dayjs(value).format('MM/DD HH:mm') : '—';
 }
@@ -2181,6 +2264,10 @@ onMounted(async () => {
   padding-left: 16px;
 }
 
+.oo-student-context__metric-group-title {
+  display: none;
+}
+
 .oo-student-context__metric {
   color: #102a43;
   font-size: 15px;
@@ -2366,8 +2453,32 @@ onMounted(async () => {
 }
 
 .oo-mobile-lessons {
+  overflow: hidden;
+  border: 1px solid #d9e2ec;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.oo-mobile-lesson-header,
+.oo-mobile-lesson {
   display: grid;
+  grid-template-columns: 68px minmax(0, 1fr) 120px;
+  align-items: center;
   gap: 8px;
+}
+
+.oo-mobile-lesson-header {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  min-height: 32px;
+  padding: 5px 8px;
+  border-bottom: 1px solid #d9e2ec;
+  background: #f5f8fc;
+  color: #64748b;
+  font-size: 9px;
+  font-weight: 700;
+  text-align: center;
 }
 
 .oo-schedule-change {
@@ -2401,54 +2512,140 @@ onMounted(async () => {
 }
 
 .oo-mobile-lesson {
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid #d9e2ec;
-  border-radius: 8px;
-  background: #fff;
+  min-height: 62px;
+  padding: 7px 8px;
+  border-bottom: 1px solid #e7edf4;
+}
+
+.oo-mobile-lesson:last-of-type {
+  border-bottom: 0;
 }
 
 .oo-mobile-lesson--overdue-unprocessed {
-  border-color: #f59e0b;
-  background: #fff3cd;
+  background: #fffaf0;
 }
 
-.oo-mobile-lesson__heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.oo-mobile-lesson__heading .oo-simple-cell {
+.oo-mobile-lesson__time,
+.oo-mobile-lesson__course {
+  display: grid;
   min-width: 0;
-}
-
-.oo-mobile-lesson__heading .status-pill {
-  flex-shrink: 0;
+  gap: 2px;
 }
 
 .oo-mobile-lesson__time {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
   color: #475569;
-  font-size: 12px;
+  font-size: 9px;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.oo-mobile-lesson__time strong {
+  color: #334155;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.oo-mobile-lesson__time span {
+  white-space: nowrap;
+}
+
+.oo-mobile-lesson__course {
+  overflow: hidden;
+  line-height: 1.25;
+}
+
+.oo-mobile-lesson__subject {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #243b53;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oo-mobile-lesson__subject:focus-visible {
+  border-radius: 2px;
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
+:global(.oo-subject-name-popover__content) {
+  display: block;
+  overflow-wrap: anywhere;
+  color: #243b53;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.oo-mobile-lesson__course > span,
+.oo-mobile-lesson__course > small {
+  overflow: hidden;
+  color: #718096;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.oo-mobile-lesson__course > small {
+  color: #9a6b20;
 }
 
 .oo-mobile-lesson__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding-top: 8px;
-  border-top: 1px solid #edf2f7;
+  display: grid;
+  min-width: 0;
+  justify-items: center;
+  gap: 3px;
 }
 
-.oo-mobile-lesson__actions .el-button {
-  flex: 1 1 140px;
-  min-height: 44px;
+.oo-mobile-lesson__actions .status-pill {
+  width: fit-content;
+  max-width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: 1px 5px;
+  font-size: 8px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oo-mobile-lesson__action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 3px;
+}
+
+.oo-mobile-lesson__action-buttons :deep(.el-button) {
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 32px;
+  height: 32px;
   margin: 0;
+  padding: 0 7px;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.oo-mobile-lesson__action-buttons :deep(.el-button.is-link) {
+  padding: 0 3px;
+}
+
+.oo-mobile-lesson__actions .oo-no-action {
+  color: #718096;
+  font-size: 8px;
+  line-height: 1.2;
 }
 
 .oo-package-list::-webkit-scrollbar {
@@ -3211,11 +3408,20 @@ onMounted(async () => {
   }
 
   .oo-student-context__metric-group--teacher {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     border-top: 1px solid #cbd5e1;
     border-left: 0;
     padding-top: 8px;
     padding-left: 0;
+  }
+
+  .oo-student-context__metric-group-title {
+    display: block;
+    grid-column: 1 / -1;
+    color: #64748b;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1.2;
   }
 
   .oo-student-context__metric {
@@ -3249,41 +3455,6 @@ onMounted(async () => {
     display: none;
   }
 
-  .oo-mobile-lessons {
-    gap: 7px;
-  }
-
-  .oo-mobile-lesson {
-    gap: 7px;
-    padding: 10px;
-  }
-
-  .oo-mobile-lesson__heading .oo-simple-cell strong {
-    font-size: 13px;
-    line-height: 1.3;
-  }
-
-  .oo-mobile-lesson__heading .oo-simple-cell span,
-  .oo-mobile-lesson__time {
-    font-size: 11px;
-  }
-
-  .oo-mobile-lesson__actions {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
-    gap: 6px;
-    padding-top: 6px;
-  }
-
-  .oo-mobile-lesson__actions .el-button {
-    width: 100%;
-    min-width: 0;
-    min-height: 38px;
-    margin: 0;
-    padding: 0 6px;
-    font-size: 12px;
-  }
-
   :deep(.el-dialog.is-fullscreen) {
     display: flex;
     flex-direction: column;
@@ -3299,56 +3470,129 @@ onMounted(async () => {
 }
 
 @media (max-width: 920px) {
-  :global(.app-shell__content--one-on-one) .oo-page {
+  :global(.app-shell__content--one-on-one ) {
+    padding: 8px 8px calc(64px + env(safe-area-inset-bottom));
+  }
+
+  :global(.app-shell__content--one-on-one .oo-page) {
+    height: auto;
+    min-height: 0;
+    flex: 1 1 0;
+    gap: 6px;
+    overflow: hidden;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-workspace) {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 0;
+    overflow: hidden;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-split-workspace) {
+    display: flex;
     height: auto;
     min-height: 0;
     flex: 1 1 0;
     overflow: hidden;
   }
 
-  :global(.app-shell__content--one-on-one) .oo-workspace {
-    display: flex;
-    min-height: 0;
-    flex: 1 1 0;
-    overflow: hidden;
-    padding: 6px;
-  }
-
-  :global(.app-shell__content--one-on-one) .oo-split-workspace {
-    display: flex;
-    height: auto;
-    min-height: 0;
-    flex: 1 1 0;
-    overflow: hidden;
-  }
-
-  :global(.app-shell__content--one-on-one) .oo-package-panel,
-  :global(.app-shell__content--one-on-one) .oo-record-panel {
+  :global(.app-shell__content--one-on-one .oo-package-panel),
+  :global(.app-shell__content--one-on-one .oo-record-panel) {
     min-height: 0;
     flex: 1 1 0;
   }
 
-  :global(.app-shell__content--one-on-one) .oo-package-list {
+  :global(.app-shell__content--one-on-one .oo-package-panel) {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-package-panel__heading) {
+    position: sticky;
+    z-index: 2;
+    top: 0;
+    align-items: center;
+    padding: 6px 8px;
+    border: 0;
+    border-bottom: 1px solid #dce4ee;
+    background: #fff;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-package-panel__heading > div:first-child) {
+    min-width: 0;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-package-panel__heading strong) {
+    font-size: 14px;
+    line-height: 1.25;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-package-panel__scope) {
+    display: none;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-mobile-list-count) {
+    display: block;
+    margin-top: 2px;
+    color: #718096;
+    font-size: 10px;
+    line-height: 1.2;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-package-panel__tools) {
+    gap: 0;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-package-panel__tools .oo-filter-toggle) {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    min-height: 34px;
+    flex-basis: 34px;
+    border-radius: 8px;
+    box-shadow: none;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-package-list) {
     min-height: 0;
     max-height: none;
     flex: 1 1 0;
+    gap: 0;
+    padding: 2px 8px 8px;
+    border-radius: 0;
+    background: #fff;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
   }
 
-  :global(.app-shell__content--one-on-one) .oo-teacher-group {
+  :global(.app-shell__content--one-on-one .oo-teacher-group) {
     border: 0;
     border-bottom: 1px solid #dbe4ee;
     border-radius: 0;
     background: transparent;
   }
 
-  :global(.app-shell__content--one-on-one) .oo-teacher-toggle {
-    min-height: 46px;
-    padding: 9px 8px;
+  :global(.app-shell__content--one-on-one .oo-teacher-toggle) {
+    min-height: 42px;
+    padding: 7px 5px;
   }
 
-  :global(.app-shell__content--one-on-one) .oo-teacher-grades {
+  :global(.app-shell__content--one-on-one .oo-teacher-toggle__title strong) {
+    font-size: 13px;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-teacher-toggle small),
+  :global(.app-shell__content--one-on-one .oo-grade-band-toggle small) {
+    font-size: 10px;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-teacher-grades) {
     gap: 2px;
     padding: 2px 0 5px 8px;
     border-top: 0;
@@ -3356,17 +3600,17 @@ onMounted(async () => {
     margin-left: 8px;
   }
 
-  :global(.app-shell__content--one-on-one) .oo-grade-band-group {
+  :global(.app-shell__content--one-on-one .oo-grade-band-group) {
     border: 0;
     border-radius: 0;
   }
 
-  :global(.app-shell__content--one-on-one) .oo-grade-band-toggle {
-    min-height: 42px;
-    padding: 7px 8px;
+  :global(.app-shell__content--one-on-one .oo-grade-band-toggle) {
+    min-height: 38px;
+    padding: 6px 6px;
   }
 
-  :global(.app-shell__content--one-on-one) .oo-grade-band-students {
+  :global(.app-shell__content--one-on-one .oo-grade-band-students) {
     gap: 0;
     padding: 1px 0 3px 7px;
     border-top: 0;
@@ -3374,29 +3618,92 @@ onMounted(async () => {
     margin-left: 8px;
   }
 
-  :global(.app-shell__content--one-on-one) .oo-student-group {
+  :global(.app-shell__content--one-on-one .oo-student-group) {
     border: 0;
     border-bottom: 1px solid #edf2f7;
     border-radius: 0;
   }
 
-  :global(.app-shell__content--one-on-one) .oo-student-group__toggle {
-    min-height: 44px;
-    padding: 7px 8px;
+  :global(.app-shell__content--one-on-one .oo-student-group__toggle) {
+    min-height: 40px;
+    padding: 6px 7px;
   }
 
-  :global(.app-shell__content--one-on-one) .oo-student-group__packages {
+  :global(.app-shell__content--one-on-one .oo-student-group__packages) {
     gap: 3px;
     padding: 3px 4px 5px;
     border-top: 0;
   }
 
-  :global(.app-shell__content--one-on-one) .oo-package-item {
-    min-height: 44px;
-    padding: 8px 9px;
+  :global(.app-shell__content--one-on-one .oo-package-item) {
+    min-height: 38px;
+    padding: 6px 8px;
   }
 
-  :global(.app-shell__content--one-on-one) .oo-record-panel {
+  :global(.app-shell__content--one-on-one .oo-record-panel) {
+    padding: 8px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-student-context) {
+    gap: 8px;
+    margin-bottom: 8px;
+    padding: 8px;
+    border: 1px solid #dbe4ee;
+    border-radius: 10px;
+    background: #fff;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-student-context__metrics) {
+    gap: 6px;
+    margin-top: 2px;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-student-context__metric-group) {
+    gap: 4px;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-student-context__metric-group--teacher) {
+    padding-top: 6px;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-student-context__metric) {
+    padding: 5px 6px;
+    border-radius: 6px;
+    background: #f5f8fc;
+    font-size: 12px;
+    line-height: 1.2;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-student-context__metrics small) {
+    color: #718096;
+    font-size: 9px;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-collapsed-tools) {
+    position: sticky;
+    z-index: 2;
+    top: 0;
+    min-height: 38px;
+    padding: 2px 0 4px;
+    background: #f3f6fa;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-collapsed-tools .oo-filter-toggle),
+  :global(.app-shell__content--one-on-one .oo-mobile-course-toggle) {
+    min-height: 34px;
+    height: 34px;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-mobile-course-toggle) {
+    padding: 0 10px;
+    border-radius: 8px;
+    font-size: 12px;
+  }
+
+  :global(.app-shell__content--one-on-one .oo-record-panel) {
     height: auto;
     overflow-x: hidden;
     overflow-y: auto;
@@ -3404,7 +3711,7 @@ onMounted(async () => {
     -webkit-overflow-scrolling: touch;
   }
 
-  :global(.app-shell__content--one-on-one) .oo-collapsed-tools {
+  :global(.app-shell__content--one-on-one .oo-collapsed-tools) {
     flex: 0 0 auto;
   }
 }

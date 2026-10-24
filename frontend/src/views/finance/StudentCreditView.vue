@@ -28,11 +28,11 @@
               <el-input v-model="keyword" clearable placeholder="Search student or phone" @keyup.enter="loadBalances" />
               <el-button type="primary" @click="loadBalances">Search</el-button>
             </div>
-            <div class="workbook-toolbar__stats">
-              <span class="workbook-toolbar__stat"><em>Students</em><strong>{{ studentGroups.length }}</strong></span>
-              <span class="workbook-toolbar__stat"><em>Available Credit</em><strong>{{ formatMoney(totalCredit) }}</strong></span>
-            </div>
           </section>
+          <div class="workbook-toolbar__stats">
+            <span class="workbook-toolbar__stat"><em>Students</em><strong>{{ studentGroups.length }}</strong></span>
+            <span class="workbook-toolbar__stat"><em>Available credit</em><strong>{{ formatMoney(totalCredit) }}</strong></span>
+          </div>
         </template>
         <template v-else>
           <span class="workbook-toolbar__label">Student Credit</span>
@@ -110,17 +110,6 @@
         </tbody>
         <tbody v-else-if="!loading"><tr class="workbook-empty-row"><td :colspan="creditColumns.length">No available student Credit.</td></tr></tbody>
       </table>
-      <div v-if="appStore.isMobileViewport" class="student-credit-mobile-list">
-        <article v-for="group in sortedStudentGroups" :key="String(group.studentId)" class="student-credit-mobile-card">
-          <div class="student-credit-mobile-card__header">
-            <div><strong>{{ group.studentName || '—' }}</strong><span>{{ formatUsPhoneDisplay(group.guardianPhone) || 'No guardian phone' }}</span></div>
-            <el-button type="primary" link size="small" @click="openEditDialog(group)">Edit</el-button>
-          </div>
-          <div class="student-credit-mobile-card__balance"><span>Available credit</span><strong>{{ formatMoney(group.creditBalance) }}</strong></div>
-          <div class="student-credit-mobile-card__footer"><span>Last activity</span><strong>{{ formatDate(group.lastOccurredAt) }}</strong></div>
-        </article>
-        <el-empty v-if="!loading && sortedStudentGroups.length === 0" description="No available student credit" />
-      </div>
     </div>
   </div>
 
@@ -333,9 +322,27 @@ onMounted(loadBalances);
 }
 
 .student-credit-table .workbook-header-button {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
   justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
   text-align: center;
 }
+
+.student-credit-table .workbook-header-button > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.student-credit-table .workbook-header-icons { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 3px; }
+.student-credit-table .workbook-filter-arrow { width: 0; height: 0; border-top: 5px solid currentColor; border-right: 4px solid transparent; border-left: 4px solid transparent; opacity: .75; }
+.student-credit-table .workbook-sort-indicator { font-size: 10px; }
 
 .credit-edit-student {
   margin-bottom: 18px;
@@ -376,30 +383,27 @@ onMounted(loadBalances);
   gap: 8px;
 }
 
-.student-credit-mobile-list { display: none; }
-
 .credit-edit-amount {
   width: 100%;
 }
 
-@media (max-width: 640px) {
-  .data-summary-page { gap: 10px; }
-  .student-credit-table { display: none; }
-  .student-credit-mobile-list { display: grid; gap: 10px; padding: 10px 0; }
-  .student-credit-mobile-card { padding: 12px; border: 1px solid #c9d9e2; border-radius: 10px; background: #fff; box-shadow: 0 2px 8px rgba(31, 63, 54, .05); }
-  .student-credit-mobile-card__header,
-  .student-credit-mobile-card__footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .student-credit-mobile-card__header > div { min-width: 0; display: grid; gap: 3px; }
-  .student-credit-mobile-card__header strong { color: #1f3f36; font-size: 14px; }
-  .student-credit-mobile-card__header span,
-  .student-credit-mobile-card__footer span { color: #71808a; font-size: 11px; }
-  .student-credit-mobile-card__balance { display: flex; align-items: baseline; justify-content: space-between; margin: 14px 0; padding: 12px; border-radius: 8px; background: #f1f8f4; }
-  .student-credit-mobile-card__balance span { color: #527062; font-size: 11px; }
-  .student-credit-mobile-card__balance strong { color: #1f6b4d; font-size: 20px; font-variant-numeric: tabular-nums; }
-  .student-credit-mobile-card__footer { padding-top: 10px; border-top: 1px solid #edf1f4; }
-  .student-credit-mobile-card__footer strong { color: #40535d; font-size: 12px; }
+@media (max-width: 920px) {
+  .data-summary-page { height: 100%; min-height: 0; flex: 1 1 0; overflow: hidden; }
+  .data-summary-page .workbook-toolbar { flex: 0 0 auto; gap: 6px; padding: 6px 8px; }
+  .data-summary-page .workbook-scroll { display: block; min-height: 0; flex: 1 1 0; overflow: auto; border: 1px solid #9eafa7; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  .student-credit-table { display: table; width: max-content; min-width: 100%; margin: 0; border-collapse: separate; border-spacing: 0; table-layout: fixed; color: #263b44; font-size: 11px; }
+  .student-credit-table th,
+  .student-credit-table td { height: 34px; padding: 6px 7px; overflow: hidden; border-right: 1px solid #c3d3df; border-bottom: 1px solid #c3d3df; background: #dcebf8; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+  .student-credit-table th { border-right: 1px solid #517768; border-bottom: 1px solid #517768; }
+  .student-credit-table th { position: sticky; top: 0; z-index: 4; height: 38px; padding: 0; border-color: #517768; background: #376451; color: #fff; font-size: 11px; }
+  .student-credit-table .workbook-header-button { justify-content: center; gap: 5px; padding: 0 6px; }
+  .student-credit-table td:first-child { position: sticky; left: 0; z-index: 2; background: #dcebf8; box-shadow: 2px 0 0 rgb(81 119 104 / 25%); }
+  .student-credit-table th:first-child { position: sticky; left: 0; z-index: 6; background: #376451; }
+  .student-credit-table .workbook-data-row:hover td { background: #d1e5f6; }
+  .student-credit-table .credit-balance-cell { min-width: 0; gap: 3px; }
+  .credit-edit-button { width: 30px; height: 30px; }
   .credit-edit-student { padding: 12px; border-radius: 6px; background: #f8fafc; }
-  .student-credit-search-form .el-button { min-height: 42px; margin: 0; }
+  .student-credit-search-form .el-button { min-height: 36px; margin: 0; }
   .mobile-toolbar-actions { display: inline-flex; align-items: center; gap: 8px; }
   .mobile-pinch-scroll { touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
   .mobile-search-panel .workbook-toolbar__stats { display: flex; flex-wrap: wrap; gap: 12px 18px; margin-top: 12px; }

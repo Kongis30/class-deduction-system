@@ -58,6 +58,7 @@ axiosRetry(http, {
   retries: 2,
   retryDelay: (retryCount) => retryCount * 200,
   retryCondition: (error) => {
+    if (error.code === 'ERR_CANCELED') return false;
     const method = error.config?.method?.toLowerCase();
     // Never auto-retry write operations to avoid duplicate enrollment/payment/refund.
     if (!method || !IDEMPOTENT_METHODS.has(method)) {
