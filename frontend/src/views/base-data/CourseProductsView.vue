@@ -321,7 +321,7 @@
 
         <section class="product-step product-step--settings">
           <div class="product-form__row">
-            <el-form-item v-if="form.teachingMode === 'GROUP'" label="Course type" prop="courseType">
+            <el-form-item v-if="!editingId && form.teachingMode === 'GROUP'" label="Course type" prop="courseType">
               <el-select v-model="form.courseType" style="width: 100%;">
                 <el-option label="After-school" value="AFTER_SCHOOL" />
                 <el-option label="Saturday class" value="SATURDAY" />
