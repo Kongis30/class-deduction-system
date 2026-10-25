@@ -291,6 +291,7 @@ export function fetchClassOccurrences(classId: string | number) {
 }
 
 export interface ClassScheduleSlotPayload {
+  slotLineageId?: string | number;
   teacherId?: string | number;
   subjectName?: string;
   alternateTeacherId?: string | number;
@@ -306,11 +307,39 @@ export interface ClassScheduleSlotPayload {
   plannedUnits?: number;
 }
 
+export interface ClassScheduleSegmentPayload {
+  startDate: string;
+  endDate: string;
+  slots: ClassScheduleSlotPayload[];
+}
+
 export interface ClassScheduleUpdatePayload {
   /** 兼容旧页面；新页面应在每个 slot 中提交资源。 */
   teacherId?: string | number;
   classroomId?: string | number;
-  slots: ClassScheduleSlotPayload[];
+  slots?: ClassScheduleSlotPayload[];
+  segments?: ClassScheduleSegmentPayload[];
+}
+
+export interface ClassSchedulePreview {
+  classId: EntityId;
+  cancelledFutureOccurrences: number;
+  generatedOccurrences: number;
+  futureLessonCount: number;
+  futureHours: number;
+  retainedFutureOccurrences: number;
+  sessionEntitlementChanges: number;
+  firstLessons: Array<{
+    startAt: string;
+    endAt: string;
+    subjectName?: string;
+    hours: number;
+    preserved: boolean;
+  }>;
+}
+
+export function previewClassSchedule(classId: EntityId, data: ClassScheduleUpdatePayload) {
+  return http.post<ApiResponse<ClassSchedulePreview>>(`/v1/classes/${classId}/schedule/preview`, data);
 }
 
 export interface ClassInfoPayload {

@@ -688,8 +688,12 @@ export interface ClassGroupItem {
   campusName?: string;
   startDate?: string;
   endDate?: string;
+  scheduleBaseEndDate?: string;
   activeStudentCount: number;
   scheduleSlots?: Array<{
+    slotLineageId?: EntityId;
+    effectiveStartDate?: string;
+    effectiveEndDate?: string;
     teacherId?: EntityId;
     classroomId?: EntityId;
     deliveryMode?: 'IN_PERSON' | 'ONLINE' | string;

@@ -22,6 +22,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotM
 import com.classdeduction.system.modules.schedule.mapper.ClassHolidayMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
+import com.classdeduction.system.modules.schedule.service.ClassAdjustedSlotReservations;
 import com.classdeduction.system.modules.schedule.util.ClassScheduleDates;
 import com.classdeduction.system.modules.schedule.util.ClassSlotRotation;
 import com.classdeduction.system.modules.schedule.util.ScheduleSlotTime;
@@ -57,6 +58,7 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
     private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
     private final ClassGroupMapper classGroupMapper;
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
+    private final ClassAdjustedSlotReservations adjustedSlotReservations;
     private final LessonRecordMapper lessonRecordMapper;
 
     @Override
@@ -421,7 +423,7 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
                     continue;
                 }
                 ClassSlotRotation.Assignment assignment = ClassSlotRotation.resolve(slot,
-                        occurrence.getPlannedStartAt().toLocalDate(), group.getStartDate(),
+                        occurrence.getPlannedStartAt().toLocalDate(), group.getStartDate(), baseEnd, slots,
                         date -> holidayForDate(holidays, date) != null);
                 Long resolvedTeacherId = assignment.teacherId() == null ? group.getTeacherId() : assignment.teacherId();
                 Long resolvedClassroomId = assignment.alternate()
@@ -445,12 +447,15 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
             Set<String> existingKeys = occurrences.stream()
                     .map(item -> occurrenceKey(item.getPlannedStartAt(), item.getPlannedEndAt()))
                     .collect(java.util.stream.Collectors.toSet());
+            Set<ClassAdjustedSlotReservations.Reservation> adjustedReservations = adjustedSlotReservations.load(group.getId());
 
             for (LocalDate date = generationStart; !date.isAfter(targetEnd); date = date.plusDays(1)) {
                 if (holidayForDate(holidays, date) != null) continue;
                 int weekday = date.getDayOfWeek().getValue();
                 for (ClassGroupScheduleSlotEntity slot : slots) {
-                    if (!Objects.equals(slot.getWeekday(), weekday)) continue;
+                    if (!ClassScheduleDates.slotAppliesOn(slot, date, baseEnd, slots)) continue;
+                    Long lineageId = slot.getSlotLineageId() == null ? slot.getId() : slot.getSlotLineageId();
+                    if (adjustedReservations.contains(new ClassAdjustedSlotReservations.Reservation(date, lineageId))) continue;
                     LocalDateTime startAt = LocalDateTime.of(date, slot.getStartTime());
                     if (startAt.isBefore(now)) continue;
                     LocalDateTime endAt = ScheduleSlotTime.endAt(date, slot.getStartTime(), slot.getEndTime());
@@ -463,7 +468,8 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
                     occurrence.setScheduleSlotId(slot.getId());
                     occurrence.setOccurrenceType("REGULAR");
                     ClassSlotRotation.Assignment assignment = ClassSlotRotation.resolve(slot, date,
-                            group.getStartDate(), holidayDate -> holidayForDate(holidays, holidayDate) != null);
+                            group.getStartDate(), baseEnd, slots,
+                            holidayDate -> holidayForDate(holidays, holidayDate) != null);
                     occurrence.setPlannedTeacherId(assignment.teacherId() == null
                             ? group.getTeacherId() : assignment.teacherId());
                     occurrence.setSubjectName(assignment.subjectName());
@@ -586,8 +592,7 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
         for (ClassEnrollmentEntity enrollment : enrollments) {
             ClassGroupEntity group = classGroupMapper.selectById(enrollment.getClassId());
             if (group == null || enrollment.getPurchasedQuantity() == null || enrollment.getPurchasedQuantity() < 1) continue;
-            LocalDate projected = nthSessionDate(enrollment.getEnrollmentDate(), enrollment.getPurchasedQuantity(),
-                    loadSlots(group.getId()), holidays);
+            LocalDate projected = projectedExpiry(enrollment, group, loadSlots(group.getId()), holidays);
             if (projected == null) continue;
             if (group.getEndDate() != null && projected.isAfter(group.getEndDate())) {
                 projected = group.getEndDate();
@@ -598,19 +603,40 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
         }
     }
 
-    private LocalDate nthSessionDate(LocalDate startDate, int quantity,
-                                     List<ClassGroupScheduleSlotEntity> slots,
-                                     List<ClassHolidayEntity> holidays) {
-        if (startDate == null || quantity < 1 || slots.isEmpty()) return null;
-        Set<Integer> weekdays = new HashSet<>();
-        slots.stream().map(ClassGroupScheduleSlotEntity::getWeekday).filter(Objects::nonNull).forEach(weekdays::add);
-        if (weekdays.isEmpty()) return null;
-        int sessions = 0;
-        for (LocalDate date = startDate; !date.isAfter(startDate.plusYears(10)); date = date.plusDays(1)) {
-            if (weekdays.contains(date.getDayOfWeek().getValue()) && holidayForDate(holidays, date) == null
-                    && ++sessions >= quantity) return date;
+    @Override
+    public void recalculateClassSessionEnrollments(Long classId) {
+        ClassGroupEntity group = classGroupMapper.selectById(classId);
+        if (group == null) return;
+        List<ClassGroupScheduleSlotEntity> slots = loadSlots(classId);
+        List<ClassHolidayEntity> holidays = classHolidayMapper.selectList(new LambdaQueryWrapper<ClassHolidayEntity>()
+                .eq(ClassHolidayEntity::getGroupProjectId, group.getGroupProjectId())
+                .eq(ClassHolidayEntity::getIsDeleted, 0));
+        List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(
+                new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getClassId, classId)
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0)
+                        .in(ClassEnrollmentEntity::getBillingType, "PER_SESSION", "SESSION")
+                        .in(ClassEnrollmentEntity::getStatus, "ACTIVE", "EXPIRED"));
+        LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
+        for (ClassEnrollmentEntity enrollment : enrollments) {
+            if (enrollment.getPurchasedQuantity() == null || enrollment.getPurchasedQuantity() < 1) continue;
+            LocalDate projected = projectedExpiry(enrollment, group, slots, holidays);
+            if (projected == null || group.getEndDate() != null && projected.isAfter(group.getEndDate())) {
+                throw new BusinessException("CLASS_SCHEDULE_INSUFFICIENT",
+                        "The new class schedule cannot cover every purchased lesson for existing students.");
+            }
+            enrollment.setExpiryDate(projected);
+            enrollment.setStatus(projected.isBefore(today) ? "EXPIRED" : "ACTIVE");
+            classEnrollmentMapper.updateById(enrollment);
         }
-        return null;
+    }
+
+    private LocalDate projectedExpiry(ClassEnrollmentEntity enrollment, ClassGroupEntity group,
+                                      List<ClassGroupScheduleSlotEntity> slots,
+                                      List<ClassHolidayEntity> holidays) {
+        return ClassScheduleDates.nthScheduledDay(enrollment.getEnrollmentDate(), enrollment.getPurchasedQuantity(),
+                ClassScheduleDates.resolveBaseEndDate(group.getScheduleBaseEndDate(), group.getEndDate()),
+                slots, date -> holidayForDate(holidays, date) != null);
     }
 
     private List<ClassGroupScheduleSlotEntity> loadSlots(Long classId) {

@@ -390,7 +390,10 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         updated.setScheduleRuleId(source.getScheduleRuleId());
         updated.setScheduleSlotId(source.getScheduleSlotId());
         updated.setAllocationOwnerTeacherId(source.getAllocationOwnerTeacherId());
-        updated.setAllocationAnchorDate(source.getAllocationAnchorDate());
+        updated.setAllocationAnchorDate(source.getAllocationAnchorDate() != null
+                ? source.getAllocationAnchorDate()
+                : source.getClassGroupId() != null && source.getPlannedStartAt() != null
+                    ? source.getPlannedStartAt().toLocalDate() : null);
         updated.setOccurrenceType(source.getOccurrenceType());
         updated.setSubjectName(source.getSubjectName());
         updated.setSourceOccurrenceId(source.getSourceOccurrenceId());

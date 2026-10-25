@@ -26,4 +26,7 @@ public interface ClassHolidayService {
     ClassHolidayVO updateHoliday(Long groupProjectId, Long id, ClassHolidaySaveRequest request);
 
     void deleteHoliday(Long groupProjectId, Long id);
+
+    /** 班课模板变更后，按当前课表重算该班按课次报名的到期日。 */
+    void recalculateClassSessionEnrollments(Long classId);
 }

@@ -18,6 +18,6 @@ public record GroupCourseProductSetupVO(Long productId, String productName, List
     }
 
     public record ActualClass(Long id, String className, String actualClass, Long campusId, String campusName, LocalDate startDate,
-                              LocalDate endDate, String status) {
+                              LocalDate endDate, String status, boolean hasSchedule) {
     }
 }

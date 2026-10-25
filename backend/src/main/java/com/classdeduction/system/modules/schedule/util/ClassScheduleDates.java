@@ -5,9 +5,7 @@ import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotE
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import java.util.function.Predicate;
-import java.util.stream.Collectors;
 
 /** 班课排期共用的日期计算：同一天多时段只计一个上课日，假期日不计入课次。 */
 public final class ClassScheduleDates {
@@ -23,26 +21,30 @@ public final class ClassScheduleDates {
     public static int countScheduledDays(LocalDate startDate, LocalDate endDate,
                                          List<ClassGroupScheduleSlotEntity> slots) {
         if (startDate == null || endDate == null || endDate.isBefore(startDate)) return 0;
-        Set<Integer> weekdays = weekdays(slots);
         int count = 0;
         for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
-            if (weekdays.contains(date.getDayOfWeek().getValue())) count++;
+            if (hasClassOn(date, slots, endDate)) count++;
         }
         return count;
     }
 
-    /** 返回班级唯一周课表在日期范围内真实可上的日期，同一天多个时段只返回一次。 */
+    /** 返回各生效日期段内真实可上的日期，同一天多个时段只返回一次。 */
     public static List<LocalDate> scheduledDays(LocalDate startDate, LocalDate endDate,
+                                                List<ClassGroupScheduleSlotEntity> slots,
+                                                Predicate<LocalDate> isHoliday) {
+        return scheduledDays(startDate, endDate, endDate, slots, isHoliday);
+    }
+
+    public static List<LocalDate> scheduledDays(LocalDate startDate, LocalDate endDate,
+                                                LocalDate baseEndDate,
                                                 List<ClassGroupScheduleSlotEntity> slots,
                                                 Predicate<LocalDate> isHoliday) {
         if (startDate == null || endDate == null || endDate.isBefore(startDate) || slots == null || slots.isEmpty()) {
             return List.of();
         }
-        Set<Integer> weekdays = weekdays(slots);
-        if (weekdays.isEmpty()) return List.of();
         java.util.ArrayList<LocalDate> dates = new java.util.ArrayList<>();
         for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
-            if (weekdays.contains(date.getDayOfWeek().getValue()) && !isHoliday.test(date)) dates.add(date);
+            if (hasClassOn(date, slots, baseEndDate) && !isHoliday.test(date)) dates.add(date);
         }
         return List.copyOf(dates);
     }
@@ -57,26 +59,46 @@ public final class ClassScheduleDates {
         int requiredDays = sessionBilling
                 ? (totalSessions == null ? 0 : totalSessions)
                 : countScheduledDays(startDate, baseEndDate, slots);
-        return nthScheduledDay(startDate, requiredDays, slots, isHoliday);
+        return nthScheduledDay(startDate, requiredDays, baseEndDate, slots, isHoliday);
     }
 
     /** 找到跳过假期后的第 N 个周课表上课日，用于顺延班级结束日期。 */
     public static LocalDate nthScheduledDay(LocalDate startDate, int quantity,
                                             List<ClassGroupScheduleSlotEntity> slots,
                                             Predicate<LocalDate> isHoliday) {
+        return nthScheduledDay(startDate, quantity, null, slots, isHoliday);
+    }
+
+    public static LocalDate nthScheduledDay(LocalDate startDate, int quantity, LocalDate baseEndDate,
+                                             List<ClassGroupScheduleSlotEntity> slots,
+                                             Predicate<LocalDate> isHoliday) {
         if (startDate == null || quantity < 1) return null;
-        Set<Integer> weekdays = weekdays(slots);
-        if (weekdays.isEmpty()) return null;
         int sessions = 0;
         for (LocalDate date = startDate; !date.isAfter(startDate.plusYears(10)); date = date.plusDays(1)) {
-            if (weekdays.contains(date.getDayOfWeek().getValue()) && !isHoliday.test(date)
+            if (hasClassOn(date, slots, baseEndDate) && !isHoliday.test(date)
                     && ++sessions >= quantity) return date;
         }
         return null;
     }
 
-    private static Set<Integer> weekdays(List<ClassGroupScheduleSlotEntity> slots) {
-        return slots.stream().map(ClassGroupScheduleSlotEntity::getWeekday)
-                .filter(Objects::nonNull).collect(Collectors.toSet());
+    /** 全部课次与报名日期共用此判断；段后假期顺延沿用最后一段的周课表。 */
+    public static boolean slotAppliesOn(ClassGroupScheduleSlotEntity slot, LocalDate date,
+                                        LocalDate baseEndDate, List<ClassGroupScheduleSlotEntity> slots) {
+        if (slot == null || date == null || !Objects.equals(slot.getWeekday(), date.getDayOfWeek().getValue())) {
+            return false;
+        }
+        LocalDate start = slot.getEffectiveStartDate();
+        LocalDate end = slot.getEffectiveEndDate();
+        if (start == null && end == null) return true;
+        if (start == null || end == null || date.isBefore(start)) return false;
+        if (!date.isAfter(end)) return true;
+        LocalDate lastSegmentEnd = slots.stream().map(ClassGroupScheduleSlotEntity::getEffectiveEndDate)
+                .filter(Objects::nonNull).max(LocalDate::compareTo).orElse(null);
+        return baseEndDate != null && date.isAfter(baseEndDate) && end.equals(lastSegmentEnd);
+    }
+
+    public static boolean hasClassOn(LocalDate date, List<ClassGroupScheduleSlotEntity> slots,
+                                     LocalDate baseEndDate) {
+        return slots != null && slots.stream().anyMatch(slot -> slotAppliesOn(slot, date, baseEndDate, slots));
     }
 }

@@ -97,6 +97,15 @@ public class ClassGroupController {
         return ApiResponse.success("Class schedule updated.", classGroupService.updateClassSchedule(classId, body == null ? Map.of() : body));
     }
 
+    @PostMapping("/{classId}/schedule/preview")
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
+    @Operation(summary = "Preview class schedule changes without saving")
+    public ApiResponse<Map<String, Object>> previewClassSchedule(
+            @PathVariable Long classId,
+            @RequestBody Map<String, Object> body) {
+        return ApiResponse.success(classGroupService.previewClassSchedule(classId, body == null ? Map.of() : body));
+    }
+
     @PostMapping("/actual-classes")
     @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     @Operation(summary = "Create an actual class under a product grade")

@@ -74,6 +74,13 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
                 "bigint DEFAULT NULL COMMENT 'Classroom for the alternating lesson' AFTER alternate_delivery_mode");
         addScheduleColumnIfMissing("class_group_schedule_slot", "rotation_anchor_date",
                 "date DEFAULT NULL COMMENT 'First scheduled date assigned to the primary teacher and subject' AFTER alternate_subject_name");
+        addScheduleColumnIfMissing("class_group_schedule_slot", "effective_start_date",
+                "date DEFAULT NULL COMMENT 'First date of this class schedule period' AFTER rotation_anchor_date");
+        addScheduleColumnIfMissing("class_group_schedule_slot", "effective_end_date",
+                "date DEFAULT NULL COMMENT 'Last date of this class schedule period' AFTER effective_start_date");
+        addScheduleColumnIfMissing("class_group_schedule_slot", "slot_lineage_id",
+                "bigint DEFAULT NULL COMMENT 'Stable class slot identity across schedule edits' AFTER class_group_id");
+        jdbcTemplate.update("UPDATE class_group_schedule_slot SET slot_lineage_id = id WHERE slot_lineage_id IS NULL");
         addScheduleColumnIfMissing("lesson_occurrence", "delivery_mode",
                 "varchar(16) DEFAULT NULL COMMENT 'Delivery mode snapshot: IN_PERSON or ONLINE' AFTER planned_teacher_id");
         addScheduleColumnIfMissing("lesson_occurrence", "subject_name",

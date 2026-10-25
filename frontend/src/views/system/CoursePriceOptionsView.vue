@@ -672,112 +672,11 @@
       </template>
     </el-dialog>
 
-    <el-dialog
-      v-model="actualClassScheduleDialogVisible"
-      width="min(920px, calc(100vw - 48px))"
-      :close-on-click-modal="false"
-      :title="actualClassScheduleTitle"
-      class="actual-class-schedule-dialog"
-    >
-      <el-alert
-        title="Saving rebuilds future unconfirmed lessons for this actual class only. Confirmed lessons stay unchanged."
-        type="info"
-        :closable="false"
-        show-icon
-        class="grade-class-settings__alert"
-      />
-      <div class="weekly-schedule-panel">
-        <WeeklyTimeSelector v-model="actualClassScheduleForm.slots" hide-hint />
-      </div>
-      <div v-if="actualClassScheduleForm.slots.length > 0" class="slot-teacher-list actual-class-slot-list">
-        <div
-          v-for="(slot, index) in actualClassScheduleForm.slots"
-          :key="`${slot.weekday}-${slot.startTime}-${index}`"
-          class="actual-class-slot-row"
-        >
-          <div class="actual-class-slot-heading">
-            <div class="actual-class-slot-time-label">
-              <strong>{{ groupSlotLabel(slot) }}</strong>
-              <span>{{ (slot.plannedUnits * 0.5).toFixed(1) }} hours</span>
-            </div>
-            <el-tooltip content="Teacher, subject, and classroom alternate each class. Holidays are skipped." placement="top">
-              <div class="slot-rotation-toggle">
-                <span>A/B rotation</span>
-                <el-switch v-model="slot.rotationEnabled" />
-              </div>
-            </el-tooltip>
-          </div>
-          <div class="actual-class-slot-fields">
-            <label class="slot-field">
-              <span>Teacher</span>
-              <el-select v-model="slot.teacherId" clearable filterable placeholder="No teacher for this slot">
-                <el-option v-for="teacher in sortedTeachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
-              </el-select>
-            </label>
-            <label class="slot-field">
-              <span>Course / subject</span>
-              <el-input v-model="slot.subjectName" placeholder="e.g. English" maxlength="128" />
-            </label>
-            <label class="slot-field">
-              <span>Classroom</span>
-              <el-select
-                v-model="slot.classroomSelection"
-                clearable
-                popper-class="actual-classroom-picker"
-                filterable
-                placeholder="No classroom (optional)"
-              >
-                <el-option label="Online" value="ONLINE" />
-                <el-option-group
-                  v-for="group in classroomGroups"
-                  :key="group.key"
-                  :label="group.label"
-                  class="actual-classroom-campus-group"
-                >
-                  <el-option
-                    v-for="room in group.classrooms"
-                    :key="room.id"
-                    :label="room.roomName"
-                    :value="`ROOM:${room.id}`"
-                  />
-                </el-option-group>
-              </el-select>
-            </label>
-          </div>
-          <div v-if="slot.rotationEnabled" class="actual-class-alternate-fields">
-            <label class="slot-field">
-              <span>Teacher (B)</span>
-              <el-select v-model="slot.alternateTeacherId" clearable filterable placeholder="Select teacher">
-                <el-option v-for="teacher in sortedTeachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
-              </el-select>
-            </label>
-            <label class="slot-field">
-              <span>Course / subject (B)</span>
-              <el-input v-model="slot.alternateSubjectName" placeholder="e.g. Math" maxlength="128" />
-            </label>
-            <label class="slot-field">
-              <span>Classroom (B)</span>
-              <el-select
-                v-model="slot.alternateClassroomSelection"
-                clearable
-                popper-class="actual-classroom-picker"
-                filterable
-                placeholder="No classroom (optional)"
-              >
-                <el-option label="Online" value="ONLINE" />
-                <el-option-group v-for="group in classroomGroups" :key="group.key" :label="group.label" class="actual-classroom-campus-group">
-                  <el-option v-for="room in group.classrooms" :key="room.id" :label="room.roomName" :value="`ROOM:${room.id}`" />
-                </el-option-group>
-              </el-select>
-            </label>
-          </div>
-        </div>
-      </div>
-      <template #footer>
-        <el-button @click="actualClassScheduleDialogVisible = false">Cancel</el-button>
-        <el-button type="primary" :loading="savingActualClassSchedule" @click="saveActualClassSchedule">Save schedule</el-button>
-      </template>
-    </el-dialog>
+    <GroupClassScheduleEditor
+      v-model:visible="actualClassScheduleDialogVisible"
+      :class-id="editingActualClass?.id"
+      @saved="loadAll"
+    />
 
     <el-dialog
       v-model="actualClassInfoDialogVisible"
@@ -841,12 +740,10 @@ import {
   deleteClassGroup,
   fetchClassGroups,
   updateClassInfo,
-  updateClassSchedule,
 } from '@/api/schedule';
-import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
+import GroupClassScheduleEditor from '@/components/GroupClassScheduleEditor.vue';
 import GroupCourseModelPanel from '@/views/system/GroupCourseModelPanel.vue';
-import type { SlotDef } from '@/components/WeeklyTimeSelector.vue';
-import { scheduleEndTimeForApi, scheduleEndTimeForDisplay, scheduleDurationMinutes } from '@/utils/schedule-time';
+import { scheduleEndTimeForApi, scheduleDurationMinutes } from '@/utils/schedule-time';
 import type { CampusItem, ClassGroupItem, ClassroomItem, CoursePriceOptionItem, CourseProductItem, EntityId, TeacherItem } from '@/types/domain';
 
 type CourseMode = 'ONE_ON_ONE' | 'GROUP';
@@ -1018,23 +915,10 @@ const dialogVisible = ref(false);
 const editingId = ref<EntityId | null>(null);
 const formRef = ref();
 const actualClassScheduleDialogVisible = ref(false);
-const savingActualClassSchedule = ref(false);
 const editingActualClass = ref<ActualClassScheduleRow | null>(null);
 const actualClassInfoDialogVisible = ref(false);
 const savingActualClassInfo = ref(false);
 const editingActualClassInfo = ref<ActualClassScheduleRow | null>(null);
-const actualClassScheduleForm = reactive({
-  slots: [] as Array<SlotDef & {
-    teacherId?: EntityId;
-    subjectName?: string;
-    alternateTeacherId?: EntityId;
-    alternateSubjectName?: string;
-    alternateClassroomSelection?: string;
-    rotationAnchorDate?: string;
-    rotationEnabled: boolean;
-    classroomSelection?: string;
-  }>,
-});
 const actualClassInfoForm = reactive({
   productId: undefined as EntityId | undefined,
   gradeBand: '',
@@ -1224,10 +1108,6 @@ const priceSaveButtonLabel = computed(() => {
 const canEditActualClassesInOptionForm = computed(() =>
   formTeachingMode.value === 'GROUP' && !editingId.value && !existingGradeClass.value
 );
-const actualClassScheduleTitle = computed(() => {
-  const classLabel = editingActualClass.value?.className || editingActualClass.value?.actualClass || 'Class';
-  return `Edit ${classLabel} schedule`;
-});
 const actualClassInfoTitle = computed(() =>
   editingActualClassInfo.value ? 'Edit actual class' : 'Add actual class'
 );
@@ -1923,18 +1803,7 @@ async function saveOption() {
 }
 
 function openActualClassScheduleDialog(actualClass: ActualClassScheduleRow) {
-  prepareActualClassScheduleEdit(actualClass);
-}
-
-function prepareActualClassScheduleEdit(actualClass: ActualClassScheduleRow) {
-  const classDetail = classGroups.value.find(item => String(item.id) === String(actualClass.id)) ?? actualClass;
   editingActualClass.value = actualClass;
-  actualClassScheduleForm.slots = normalizeActualClassScheduleSlots(
-    classDetail.scheduleSlots,
-    classDetail.teacherId,
-    classDetail.classroomId,
-    classDetail.startDate,
-  );
   actualClassScheduleDialogVisible.value = true;
 }
 
@@ -2011,84 +1880,6 @@ function deleteActualClassById(group: ProductPriceGroup, classId: string | numbe
   const actualClass = groupActualClassRows(group).find(item => String(item.id) === String(classId));
   if (actualClass) {
     void deleteActualClass(actualClass);
-  }
-}
-
-function normalizeActualClassScheduleSlots(
-  slots: ClassGroupItem['scheduleSlots'],
-  defaultTeacherId?: EntityId,
-  defaultClassroomId?: EntityId,
-  classStartDate?: string,
-): Array<SlotDef & {
-  teacherId?: EntityId;
-  subjectName?: string;
-  alternateTeacherId?: EntityId;
-  alternateSubjectName?: string;
-  alternateClassroomSelection?: string;
-  rotationAnchorDate?: string;
-  rotationEnabled: boolean;
-  classroomSelection?: string;
-}> {
-  const hasSlotTeacher = (slots ?? []).some(slot => slot.teacherId != null);
-  const hasConfiguredSlotClassroom = (slots ?? []).some(slot => slot.classroomId != null || slot.deliveryMode === 'ONLINE');
-  return (slots ?? []).map(slot => ({
-    weekday: slot.weekday,
-    teacherId: hasSlotTeacher ? slot.teacherId : defaultTeacherId,
-    subjectName: slot.subjectName ?? '',
-    alternateTeacherId: slot.alternateTeacherId,
-    alternateSubjectName: slot.alternateSubjectName ?? '',
-    alternateClassroomSelection: slot.alternateDeliveryMode === 'ONLINE'
-      ? 'ONLINE' : slot.alternateClassroomId != null ? `ROOM:${slot.alternateClassroomId}` : '',
-    rotationAnchorDate: slot.rotationAnchorDate || classStartDate || '',
-    rotationEnabled: Boolean(slot.alternateTeacherId || slot.alternateSubjectName
-      || slot.alternateClassroomId || slot.alternateDeliveryMode),
-    classroomSelection: slot.deliveryMode === 'ONLINE'
-      ? 'ONLINE'
-      : (hasConfiguredSlotClassroom ? slot.classroomId : slot.classroomId ?? defaultClassroomId) != null
-        ? `ROOM:${hasConfiguredSlotClassroom ? slot.classroomId : slot.classroomId ?? defaultClassroomId}`
-        : '',
-    startTime: slot.startTime.slice(0, 5),
-    endTime: scheduleEndTimeForDisplay(slot.startTime, slot.endTime),
-    plannedUnits: slot.plannedUnits ?? plannedUnitsForSlot(slot.startTime, slot.endTime),
-  }));
-}
-
-async function saveActualClassSchedule() {
-  if (!editingActualClass.value || savingActualClassSchedule.value) {
-    return;
-  }
-  if (actualClassScheduleForm.slots.length === 0) {
-    ElMessage.warning('Add at least one weekly class time.');
-    return;
-  }
-  savingActualClassSchedule.value = true;
-  try {
-      await updateClassSchedule(editingActualClass.value.id, {
-      slots: actualClassScheduleForm.slots.map(({ teacherId, subjectName, alternateTeacherId, alternateSubjectName,
-        alternateClassroomSelection, rotationAnchorDate, rotationEnabled, classroomSelection, weekday, startTime, endTime, plannedUnits }) => ({
-        teacherId,
-        subjectName: subjectName?.trim() || undefined,
-        alternateTeacherId: rotationEnabled ? alternateTeacherId : undefined,
-        alternateSubjectName: rotationEnabled ? alternateSubjectName?.trim() || undefined : undefined,
-        alternateDeliveryMode: rotationEnabled ? alternateClassroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON' : undefined,
-        alternateClassroomId: rotationEnabled && alternateClassroomSelection?.startsWith('ROOM:')
-          ? alternateClassroomSelection.slice(5) : undefined,
-        rotationAnchorDate: rotationEnabled ? rotationAnchorDate || editingActualClass.value?.startDate || undefined : undefined,
-        deliveryMode: classroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON',
-        classroomId: classroomSelection?.startsWith('ROOM:') ? classroomSelection.slice(5) : undefined,
-        weekday,
-        startTime,
-        endTime: scheduleEndTimeForApi(endTime),
-        plannedUnits,
-      })),
-    });
-    ElMessage.success('Class schedule updated.');
-    actualClassScheduleDialogVisible.value = false;
-    await loadAll();
-  } catch (err) {
-    ElMessage.error({ message: extractErrorMessage(err), duration: 10000, showClose: true });
-  } finally {
-    savingActualClassSchedule.value = false;
   }
 }
 
@@ -2354,11 +2145,6 @@ function packageUnitPlural(unit: string, quantity: number) {
 
 function formatQuantity(value: number) {
   return Number.isInteger(Number(value)) ? String(Number(value)) : Number(value).toFixed(1);
-}
-
-function groupSlotLabel(slot: { weekday: number; startTime: string; endTime: string }) {
-  const weekday = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][slot.weekday] ?? '';
-  return `${weekday} ${slot.startTime}-${scheduleEndTimeForDisplay(slot.startTime, slot.endTime)}`;
 }
 
 function expandGradeBand(gradeBand: string) {
@@ -3232,129 +3018,6 @@ function normalizeSlotAttendance(value?: string) {
   background: #fbfdff;
 }
 
-.actual-class-schedule-dialog :deep(.el-dialog__body) {
-  display: grid;
-  gap: 12px;
-  max-height: calc(100vh - 180px);
-  overflow: auto;
-}
-
-.actual-class-slot-list {
-  margin-top: 2px;
-}
-
-.actual-class-slot-row {
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid #dbeafe;
-  border-radius: 8px;
-  background: #fbfdff;
-}
-
-.actual-class-slot-fields {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(150px, 1fr));
-  align-items: end;
-  gap: 10px;
-  min-width: 0;
-}
-
-.actual-class-slot-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.actual-class-slot-time-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.actual-class-slot-heading strong {
-  color: #1e293b;
-  font-size: 14px;
-}
-
-.actual-class-slot-time-label > span {
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: #eaf1fb;
-  color: #52627a;
-  font-size: 11px;
-}
-
-.slot-rotation-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
-  color: #64748b;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.actual-class-alternate-fields {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(150px, 1fr));
-  gap: 10px;
-  padding-top: 10px;
-  border-top: 1px solid #e5edf7;
-}
-
-.slot-time-cell,
-.slot-field {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-
-.slot-time-cell small,
-.slot-field span {
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1;
-}
-
-.slot-field__label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.slot-field__tip {
-  color: #909399;
-  cursor: help;
-  font-size: 13px;
-  line-height: 1;
-}
-
-.slot-field__tip:hover {
-  color: #409eff;
-}
-
-.slot-time-cell strong {
-  overflow: hidden;
-  color: #334155;
-  font-size: 13px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.slot-field :deep(.el-select),
-.slot-field :deep(.el-input),
-.slot-field :deep(.el-input-number) {
-  width: 100%;
-}
-
-.slot-field :deep(.el-input-number .el-input__inner) {
-  text-align: left;
-}
-
 .custom-hours {
   display: flex;
   align-items: center;
@@ -3460,13 +3123,6 @@ function normalizeSlotAttendance(value?: string) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .slot-time-cell {
-    grid-column: 1 / -1;
-  }
-
-  .actual-class-slot-fields {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 640px) {
@@ -3509,55 +3165,5 @@ function normalizeSlotAttendance(value?: string) {
     grid-template-columns: 1fr;
   }
 
-  .actual-class-slot-fields,
-  .actual-class-alternate-fields {
-    grid-template-columns: 1fr;
-  }
-}
-</style>
-
-<!-- 教室下拉会 teleport 到 body，校区卡片样式必须用全局选择器。 -->
-<style>
-.actual-classroom-picker .el-select-group__wrap {
-  margin: 7px 8px;
-  overflow: hidden;
-  border: 1px solid #9bb5d1 !important;
-  border-left: 4px solid #3974a8 !important;
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 1px 3px rgb(28 55 85 / 8%);
-}
-
-.actual-classroom-picker .el-select-group__wrap + .el-select-group__wrap {
-  margin-top: 10px;
-}
-
-.actual-classroom-picker .el-select-group__title {
-  height: 36px;
-  padding: 0 12px;
-  border-bottom: 1px solid #9bb5d1 !important;
-  background: #dceaf7 !important;
-  color: #173f65 !important;
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 36px;
-  letter-spacing: 0.035em;
-}
-
-.actual-classroom-picker .el-select-group__wrap .el-select-dropdown__item {
-  min-height: 35px;
-  padding: 0 14px 0 24px;
-  color: #35475b;
-  line-height: 35px;
-}
-
-.actual-classroom-picker .el-select-group__wrap .el-select-dropdown__item.is-hovering {
-  background: #edf5fc;
-  color: #173f65;
-}
-
-.actual-classroom-picker .el-select-group__wrap .el-select-dropdown__item.is-selected {
-  background: #e2effb;
-  color: #15538a;
 }
 </style>

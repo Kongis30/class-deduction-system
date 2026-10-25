@@ -33,6 +33,9 @@ public interface ClassGroupService {
     /** 更新班课固定周课表，并重建未来未确认课次 */
     Map<String, Object> updateClassSchedule(Long classId, Map<String, Object> body);
 
+    /** 不落库预览同一保存流程的课次与权益校验结果。 */
+    Map<String, Object> previewClassSchedule(Long classId, Map<String, Object> body);
+
     /** 新增某个收费 grade 下的实际班级 */
     Map<String, Object> createActualClass(Map<String, Object> body);
 

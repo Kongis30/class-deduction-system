@@ -32,6 +32,7 @@ export interface GroupProjectClass {
   startDate?: string;
   endDate?: string;
   status: string;
+  hasSchedule?: boolean;
 }
 
 export interface GroupCourseProject {

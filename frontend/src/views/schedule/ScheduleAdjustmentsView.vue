@@ -477,105 +477,11 @@
       </main>
     </div>
 
-    <!-- ====== Class Weekly Schedule Dialog ====== -->
-    <el-dialog
-      v-model="classScheduleDialogVisible"
-      title="Edit Class Schedule"
-      width="920px"
-      :close-on-click-modal="false"
-      class="adj-dialog class-schedule-dialog"
-    >
-      <el-alert
-        title="Saving rebuilds future lessons from this schedule. Started or completed lessons stay unchanged."
-        type="info"
-        :closable="false"
-        show-icon
-        class="class-schedule-alert"
-      />
-      <el-form ref="classScheduleFormRef" :model="classScheduleForm" :rules="classScheduleFormRules" label-width="110px">
-        <div class="class-schedule-form-grid">
-          <el-form-item label="Default teacher">
-            <el-select v-model="classScheduleForm.teacherId" placeholder="No default teacher" clearable filterable style="width: 100%;">
-              <el-option v-for="t in teachers" :key="t.id" :label="t.teacherName" :value="t.id" />
-            </el-select>
-          </el-form-item>
-        </div>
-        <el-form-item label="Weekly Times" prop="slots">
-          <WeeklyTimeSelector v-model="classScheduleForm.slots" hide-hint />
-        </el-form-item>
-        <div v-if="classScheduleForm.slots.length > 0" class="class-slot-teacher-list">
-          <div
-            v-for="(slot, index) in classScheduleForm.slots"
-            :key="`${slot.weekday}-${slot.startTime}-${index}`"
-            class="class-slot-teacher-row"
-          >
-            <div class="class-slot-row-heading">
-              <div class="class-slot-time-label">
-                <strong>{{ classScheduleSlotLabel(slot) }}</strong>
-                <span>{{ (slot.plannedUnits * 0.5).toFixed(1) }} hours</span>
-              </div>
-              <el-tooltip content="Teacher, subject, and classroom alternate each class. Holidays are skipped." placement="top">
-                <div class="class-slot-rotation-toggle">
-                  <span>A/B rotation</span>
-                  <el-switch v-model="slot.rotationEnabled" />
-                </div>
-              </el-tooltip>
-            </div>
-            <div class="class-slot-teacher-fields">
-              <label class="class-slot-field">
-                <span>Teacher</span>
-                <el-select v-model="slot.teacherId" clearable filterable placeholder="Use class default">
-                  <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
-                </el-select>
-              </label>
-              <label class="class-slot-field">
-                <span>Course / subject</span>
-                <el-input v-model="slot.subjectName" placeholder="e.g. English" maxlength="128" />
-              </label>
-              <label class="class-slot-field">
-                <span>Classroom</span>
-                <el-select v-model="slot.classroomSelection" clearable filterable placeholder="No classroom">
-                <el-option label="Online" value="ONLINE" />
-                <el-option-group v-for="group in classScheduleClassroomGroups" :key="group.key" :label="group.label">
-                  <el-option
-                    v-for="classroom in group.classrooms"
-                    :key="classroom.id"
-                    :label="classroom.roomName"
-                    :value="`ROOM:${classroom.id}`"
-                  />
-                </el-option-group>
-                </el-select>
-              </label>
-            </div>
-            <div v-if="slot.rotationEnabled" class="class-slot-alternate-fields">
-              <label class="class-slot-field">
-                <span>Teacher (B)</span>
-                <el-select v-model="slot.alternateTeacherId" clearable filterable placeholder="Select teacher">
-                  <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
-                </el-select>
-              </label>
-              <label class="class-slot-field">
-                <span>Course / subject (B)</span>
-                <el-input v-model="slot.alternateSubjectName" placeholder="e.g. Math" maxlength="128" />
-              </label>
-              <label class="class-slot-field">
-                <span>Classroom (B)</span>
-                <el-select v-model="slot.alternateClassroomSelection" clearable filterable placeholder="No classroom">
-                  <el-option label="Online" value="ONLINE" />
-                  <el-option-group v-for="group in classScheduleClassroomGroups" :key="group.key" :label="group.label">
-                    <el-option v-for="classroom in group.classrooms" :key="classroom.id" :label="classroom.roomName" :value="`ROOM:${classroom.id}`" />
-                  </el-option-group>
-                </el-select>
-              </label>
-            </div>
-          </div>
-        </div>
-      </el-form>
-      <template #footer>
-        <el-button @click="classScheduleDialogVisible = false">Cancel</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitClassSchedule">Save Schedule</el-button>
-      </template>
-    </el-dialog>
+    <GroupClassScheduleEditor
+      v-model:visible="classScheduleDialogVisible"
+      :class-id="selectedClassId"
+      @saved="onClassScheduleSaved"
+    />
 
     <!-- ====== Class Schedule Adjustment Dialog ====== -->
     <el-dialog
@@ -783,16 +689,15 @@ import dayjs from 'dayjs';
 
 import { extractErrorMessage } from '@/api/http';
 import { fetchAllClassrooms, fetchAllStudents, fetchAllTeachers } from '@/api/base-data';
-import { createScheduleAdjustment, fetchLessonOccurrences, fetchClassGroups, fetchClassStudents, fetchClassOccurrences, confirmClassLesson, rejectClassLesson, deleteClassGroup, updateClassSchedule } from '@/api/schedule';
+import { createScheduleAdjustment, fetchLessonOccurrences, fetchClassGroups, fetchClassStudents, fetchClassOccurrences, confirmClassLesson, rejectClassLesson, deleteClassGroup } from '@/api/schedule';
 import { fetchCoursePackages } from '@/api/enrollment';
 import { adminConfirmLessonRecord, confirmLesson, fetchLessonRecords, rejectLessonRecord, type LessonConfirmPayload } from '@/api/lesson';
 import { useAuthStore } from '@/stores/auth';
 import { isAdminOrStaffUser, isTeacherUser } from '@/types/auth';
 import type { CoursePackageItem, EntityId, LessonOccurrenceItem, ClassGroupItem, ClassEnrolledStudentItem, ClassOccurrenceItem, ClassroomItem, LessonRecordItem } from '@/types/domain';
-import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
+import GroupClassScheduleEditor from '@/components/GroupClassScheduleEditor.vue';
 import { useAppStore } from '@/stores/app';
-import type { SlotDef } from '@/components/WeeklyTimeSelector.vue';
-import { scheduleEndTimeForApi, scheduleEndTimeForDisplay, scheduleDurationMinutes, scheduleOccurrenceTimeRange } from '@/utils/schedule-time';
+import { scheduleEndTimeForDisplay, scheduleOccurrenceTimeRange } from '@/utils/schedule-time';
 import { ElMessageBox } from 'element-plus';
 
 const props = withDefaults(defineProps<{
@@ -852,22 +757,6 @@ const deleting = ref(false);
 
 const teachers = ref<{ id: EntityId; teacherName: string }[]>([]);
 const classrooms = ref<ClassroomItem[]>([]);
-const classScheduleClassroomGroups = computed(() => {
-  const groups = new Map<string, ClassroomItem[]>();
-  for (const classroom of classrooms.value) {
-    const campusName = classroom.campus?.trim() || 'Other';
-    groups.set(campusName, [...(groups.get(campusName) ?? []), classroom]);
-  }
-  return [...groups.entries()]
-    .sort(([left], [right]) => left.localeCompare(right, 'en', { sensitivity: 'base', numeric: true }))
-    .map(([label, groupClassrooms]) => ({
-      key: label,
-      label,
-      classrooms: groupClassrooms.sort((left, right) => left.roomName.localeCompare(right.roomName, 'en', { sensitivity: 'base', numeric: true })),
-    }));
-});
-
-
 const authStore = useAuthStore();
 const submitting = ref(false);
 const selectedOcc = ref<ConfirmableOccurrence | null>(null);
@@ -881,7 +770,6 @@ const classScheduleDialogVisible = ref(false);
 const classAdjustDialogVisible = ref(false);
 const confirmFormRef = ref<FormInstance>();
 const rejectFormRef = ref<FormInstance>();
-const classScheduleFormRef = ref<FormInstance>();
 const classAdjustFormRef = ref<FormInstance>();
 
 const isTeacherRole = computed(() => isTeacherUser(authStore.currentUser));
@@ -1512,35 +1400,6 @@ const classAdjustForm = reactive({
   reason: '',
 });
 
-const classScheduleForm = reactive({
-  teacherId: undefined as string | number | undefined,
-  slots: [] as Array<SlotDef & {
-    teacherId?: EntityId;
-    subjectName?: string;
-    alternateTeacherId?: EntityId;
-    alternateSubjectName?: string;
-    alternateClassroomSelection?: string;
-    rotationAnchorDate?: string;
-    rotationEnabled: boolean;
-    classroomSelection?: string;
-  }>,
-});
-
-const classScheduleFormRules: FormRules = {
-  slots: [
-    {
-      validator: (_rule: unknown, value: SlotDef[], callback: (error?: Error) => void) => {
-        if (value?.length) {
-          callback();
-          return;
-        }
-        callback(new Error('Add at least one weekly class time.'));
-      },
-      trigger: 'change',
-    },
-  ],
-};
-
 const classAdjustFormRules: FormRules = {
   plannedStartAt: [{ required: true, message: 'Start time is required', trigger: 'change' }],
   plannedEndAt: [
@@ -1567,103 +1426,13 @@ function canAdjustClassOccurrence(occ: ClassOccurrenceItem) {
     && !getLessonRecordId(occ);
 }
 
-function normalizeClassScheduleSlots(
-  slots: ClassGroupItem['scheduleSlots'],
-  defaultClassroomId?: EntityId,
-): Array<SlotDef & {
-  teacherId?: EntityId;
-  subjectName?: string;
-  alternateTeacherId?: EntityId;
-  alternateSubjectName?: string;
-  alternateClassroomSelection?: string;
-  rotationAnchorDate?: string;
-  rotationEnabled: boolean;
-  classroomSelection?: string;
-}> {
-  const hasConfiguredSlotClassroom = (slots ?? []).some(slot => slot.classroomId != null || slot.deliveryMode === 'ONLINE');
-  return (slots ?? []).map(slot => {
-    const start = slot.startTime.slice(0, 5);
-    const end = scheduleEndTimeForDisplay(slot.startTime, slot.endTime);
-    return {
-      weekday: slot.weekday,
-      teacherId: slot.teacherId,
-      subjectName: slot.subjectName ?? '',
-      alternateTeacherId: slot.alternateTeacherId,
-      alternateSubjectName: slot.alternateSubjectName ?? '',
-      alternateClassroomSelection: slot.alternateDeliveryMode === 'ONLINE'
-        ? 'ONLINE' : slot.alternateClassroomId != null ? `ROOM:${slot.alternateClassroomId}` : '',
-      rotationAnchorDate: slot.rotationAnchorDate || selectedClass.value?.startDate || '',
-      rotationEnabled: Boolean(slot.alternateTeacherId || slot.alternateSubjectName
-        || slot.alternateClassroomId || slot.alternateDeliveryMode),
-      classroomSelection: slot.deliveryMode === 'ONLINE'
-        ? 'ONLINE'
-        : (hasConfiguredSlotClassroom ? slot.classroomId : slot.classroomId ?? defaultClassroomId) != null
-          ? `ROOM:${hasConfiguredSlotClassroom ? slot.classroomId : slot.classroomId ?? defaultClassroomId}`
-          : '',
-      startTime: start,
-      endTime: end,
-      plannedUnits: slot.plannedUnits ?? Math.max(1, scheduleDurationMinutes(start, end) / 30),
-    };
-  });
-}
-
-function classScheduleSlotLabel(slot: SlotDef) {
-  const weekday = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][slot.weekday] ?? '';
-  return `${weekday} ${slot.startTime}-${slot.endTime}`;
-}
-
 function openClassScheduleDialog() {
-  if (!selectedClass.value) return;
-  prepareClassScheduleEdit();
+  if (selectedClassId.value) classScheduleDialogVisible.value = true;
 }
 
-/** 统一准备班课周排课表单；保存时只重建未来课次，历史课次保留。 */
-function prepareClassScheduleEdit() {
-  const currentClass = selectedClass.value;
-  if (!currentClass) return;
-  classScheduleFormRef.value?.resetFields();
-  Object.assign(classScheduleForm, {
-    teacherId: currentClass.teacherId,
-    slots: normalizeClassScheduleSlots(currentClass.scheduleSlots, currentClass.classroomId),
-  });
-  classScheduleDialogVisible.value = true;
-}
-
-async function submitClassSchedule() {
-  if (!classScheduleFormRef.value || !selectedClassId.value) return;
-  await classScheduleFormRef.value.validate(async (valid) => {
-    if (!valid) return;
-    submitting.value = true;
-    try {
-      await updateClassSchedule(selectedClassId.value!, {
-        teacherId: classScheduleForm.teacherId,
-        slots: classScheduleForm.slots.map(({ teacherId, subjectName, alternateTeacherId, alternateSubjectName,
-          alternateClassroomSelection, rotationAnchorDate, rotationEnabled, classroomSelection, weekday, startTime, endTime }) => ({
-          teacherId,
-          subjectName: subjectName?.trim() || undefined,
-          alternateTeacherId: rotationEnabled ? alternateTeacherId : undefined,
-          alternateSubjectName: rotationEnabled ? alternateSubjectName?.trim() || undefined : undefined,
-          alternateDeliveryMode: rotationEnabled ? alternateClassroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON' : undefined,
-          alternateClassroomId: rotationEnabled && alternateClassroomSelection?.startsWith('ROOM:')
-            ? alternateClassroomSelection.slice(5) : undefined,
-          rotationAnchorDate: rotationEnabled ? rotationAnchorDate || selectedClass.value?.startDate || undefined : undefined,
-          deliveryMode: classroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON',
-          classroomId: classroomSelection?.startsWith('ROOM:') ? classroomSelection.slice(5) : undefined,
-          weekday, startTime, endTime: scheduleEndTimeForApi(endTime),
-        })),
-      });
-      ElMessage.success('Class schedule updated.');
-      classScheduleDialogVisible.value = false;
-      await loadClasses();
-      if (selectedClassId.value) {
-        await loadClassOccurrences(selectedClassId.value);
-      }
-    } catch (err) {
-      ElMessage.error(extractErrorMessage(err));
-    } finally {
-      submitting.value = false;
-    }
-  });
+async function onClassScheduleSaved() {
+  await loadClasses();
+  if (selectedClassId.value) await loadClassOccurrences(selectedClassId.value);
 }
 
 function openClassAdjustDialog(occ: ClassOccurrenceItem) {
@@ -2598,98 +2367,6 @@ onMounted(async () => {
 .adj-dialog :deep(.el-dialog__footer) {
   border-top: 1px solid #ebeef5;
   padding: 12px 20px;
-}
-.class-schedule-alert {
-  margin-bottom: 14px;
-}
-.class-schedule-form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-.class-schedule-dialog :deep(.weekly-time-selector) {
-  min-width: 760px;
-}
-.class-slot-teacher-list {
-  display: grid;
-  gap: 8px;
-  margin: 0 0 4px 110px;
-}
-.class-slot-teacher-row {
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid #dbeafe;
-  border-radius: 8px;
-  background: #f8fbff;
-}
-.class-slot-teacher-fields {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(150px, 1fr));
-  align-items: end;
-  gap: 10px;
-  min-width: 0;
-}
-.class-slot-row-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-width: 0;
-}
-.class-slot-time-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.class-slot-row-heading strong {
-  color: #1e293b;
-  font-size: 14px;
-}
-.class-slot-time-label > span {
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: #eaf1fb;
-  color: #52627a;
-  font-size: 11px;
-}
-.class-slot-field {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-.class-slot-field > span {
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 600;
-}
-.class-slot-rotation-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
-  color: #64748b;
-  font-size: 12px;
-  cursor: pointer;
-}
-.class-slot-alternate-fields {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(150px, 1fr));
-  gap: 10px;
-  padding-top: 10px;
-  border-top: 1px solid #e5edf7;
-}
-@media (max-width: 980px) {
-  .class-slot-teacher-fields {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-@media (max-width: 640px) {
-  .class-slot-teacher-fields,
-  .class-slot-alternate-fields {
-    grid-template-columns: 1fr;
-  }
 }
 .makeup-hint {
   margin: 0 0 12px;

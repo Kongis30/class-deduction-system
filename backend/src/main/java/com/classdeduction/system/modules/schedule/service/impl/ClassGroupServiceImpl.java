@@ -34,6 +34,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.service.ClassAdjustedSlotReservations;
 import com.classdeduction.system.modules.schedule.service.ClassGroupService;
 import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
 import com.classdeduction.system.modules.schedule.util.ClassScheduleDates;
@@ -44,6 +45,7 @@ import com.classdeduction.system.modules.schedule.util.ScheduleDescParser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
@@ -74,6 +76,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final LessonRecordMapper lessonRecordMapper;
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
+    private final ClassAdjustedSlotReservations adjustedSlotReservations;
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
@@ -169,6 +172,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("actualClass", StringUtils.hasText(clz.getActualClass()) ? clz.getActualClass() : clz.getGradeBand());
             item.put("startDate", clz.getStartDate());
             item.put("endDate", clz.getEndDate());
+            item.put("scheduleBaseEndDate", clz.getScheduleBaseEndDate());
             item.put("status", clz.getStatus());
             item.put("scheduleSlots", toScheduleSlotList(clz.getId(), clz.getScheduleDesc()));
             item.put("activeStudentCount", enrollmentCounts.getOrDefault(clz.getId(), 0L));
@@ -193,6 +197,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         detail.put("scheduleDesc", clz.getScheduleDesc());
         detail.put("startDate", clz.getStartDate());
         detail.put("endDate", clz.getEndDate());
+        detail.put("scheduleBaseEndDate", clz.getScheduleBaseEndDate());
+        detail.put("scheduleSlots", toScheduleSlotList(clz.getId(), clz.getScheduleDesc()));
         detail.put("teacherName", teacher != null ? teacher.getTeacherName() : null);
         detail.put("classroomName", classroom != null ? classroom.getRoomName() : null);
         CampusEntity campus = clz.getCampusId() == null ? null : campusMapper.selectById(clz.getCampusId());
@@ -874,12 +880,39 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         // 保留旧客户端的班级默认值作为兼容回退；新页面按 slot 提交独立资源。
         Long defaultTeacherId = parseLongFromBody(body, "teacherId");
         Long defaultClassroomId = parseLongFromBody(body, "classroomId");
-        List<ClassGroupScheduleSlotEntity> slots = parseClassScheduleSlots(
-                body.get("slots"), defaultTeacherId, defaultClassroomId);
+        boolean segmentedRequest = body.containsKey("segments");
+        List<ClassGroupScheduleSlotEntity> priorSlots = classGroupScheduleSlotMapper.selectList(
+                new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
+                        .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classId));
+        if (!segmentedRequest && priorSlots.stream()
+                .anyMatch(slot -> slot.getEffectiveStartDate() != null)) {
+            throw new BusinessException("CLASS_SCHEDULE_FORMAT_CHANGED",
+                    "This class has date-based schedule periods. Refresh the page before editing.");
+        }
+        List<ClassGroupScheduleSlotEntity> slots = segmentedRequest
+                ? parseClassScheduleSegments(body.get("segments"), classGroup, defaultTeacherId, defaultClassroomId)
+                : parseClassScheduleSlots(body.get("slots"), defaultTeacherId, defaultClassroomId);
         if (slots.isEmpty()) {
             throw new BusinessException("CLASS_SCHEDULE_REQUIRED", "Add at least one weekly class time.");
         }
         validateClassScheduleSlots(slots);
+        Set<Long> validLineages = priorSlots.stream()
+                .map(slot -> slot.getSlotLineageId() == null ? slot.getId() : slot.getSlotLineageId())
+                .collect(Collectors.toSet());
+        for (ClassGroupScheduleSlotEntity slot : slots) {
+            if (slot.getSlotLineageId() == null) {
+                priorSlots.stream().filter(prior -> Objects.equals(prior.getEffectiveStartDate(), slot.getEffectiveStartDate())
+                                && Objects.equals(prior.getEffectiveEndDate(), slot.getEffectiveEndDate())
+                                && Objects.equals(prior.getWeekday(), slot.getWeekday())
+                                && Objects.equals(prior.getStartTime(), slot.getStartTime())
+                                && Objects.equals(prior.getEndTime(), slot.getEndTime()))
+                        .findFirst().ifPresent(prior -> slot.setSlotLineageId(
+                                prior.getSlotLineageId() == null ? prior.getId() : prior.getSlotLineageId()));
+            }
+            if (slot.getSlotLineageId() != null && !validLineages.contains(slot.getSlotLineageId())) {
+                throw new BusinessException("INVALID_CLASS_SCHEDULE", "Refresh before editing this class schedule.");
+            }
+        }
         slots.stream()
                 .map(ClassGroupScheduleSlotEntity::getTeacherId)
                 .filter(Objects::nonNull)
@@ -909,19 +942,77 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         for (ClassGroupScheduleSlotEntity slot : slots) {
             if ((slot.getAlternateTeacherId() != null || StringUtils.hasText(slot.getAlternateSubjectName()))
                     && slot.getRotationAnchorDate() == null) {
-                slot.setRotationAnchorDate(classGroup.getStartDate() == null
-                        ? rebuildFrom.toLocalDate() : classGroup.getStartDate());
+                boolean existingLineage = slot.getSlotLineageId() != null && validLineages.contains(slot.getSlotLineageId());
+                slot.setRotationAnchorDate(existingLineage || slot.getEffectiveStartDate() == null
+                        ? classGroup.getStartDate() == null ? rebuildFrom.toLocalDate() : classGroup.getStartDate()
+                        : slot.getEffectiveStartDate());
             }
             slot.setClassGroupId(classId);
             classGroupScheduleSlotMapper.insert(slot);
+            if (slot.getSlotLineageId() == null) {
+                slot.setSlotLineageId(slot.getId());
+                classGroupScheduleSlotMapper.updateById(slot);
+            }
         }
 
         FutureClassOccurrences previousOccurrences = removeFutureUnconfirmedOccurrences(classId, rebuildFrom);
         List<LessonOccurrenceEntity> retainedOccurrences = retainedClassOccurrences(classId, rebuildFrom);
         int generatedCount = generateFutureClassOccurrences(classGroup, slots, retainedOccurrences,
                 previousOccurrences.occurrences(), rebuildFrom);
+        classHolidayService.recalculateClassSessionEnrollments(classId);
         return Map.of("classId", classId, "cancelledFutureOccurrences", previousOccurrences.removedCount(),
                 "generatedOccurrences", generatedCount);
+    }
+
+    /** 预览与正式保存复用同一事务路径，读取候选课次后回滚全部写入。 */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> previewClassSchedule(Long classId, Map<String, Object> body) {
+        LocalDateTime previewAt = AppTime.nowLocalDateTime();
+        Set<Long> originalFutureIds = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .eq(LessonOccurrenceEntity::getClassGroupId, classId)
+                        .ge(LessonOccurrenceEntity::getPlannedStartAt, previewAt))
+                .stream().map(LessonOccurrenceEntity::getId).collect(Collectors.toSet());
+        Map<Long, LocalDate> expiryBefore = new HashMap<>();
+        classEnrollmentMapper.selectList(
+                new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getClassId, classId)
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0)
+                        .in(ClassEnrollmentEntity::getBillingType, "PER_SESSION", "SESSION"))
+                .forEach(item -> expiryBefore.put(item.getId(), item.getExpiryDate()));
+        Map<String, Object> change = updateClassSchedule(classId, body);
+        List<LessonOccurrenceEntity> future = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .eq(LessonOccurrenceEntity::getClassGroupId, classId)
+                        .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                        .ge(LessonOccurrenceEntity::getPlannedStartAt, previewAt)
+                        .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt));
+        List<Map<String, Object>> firstLessons = future.stream().limit(40).map(occ -> {
+            Map<String, Object> lesson = new LinkedHashMap<String, Object>();
+            lesson.put("startAt", occ.getPlannedStartAt());
+            lesson.put("endAt", occ.getPlannedEndAt());
+            lesson.put("subjectName", occ.getSubjectName());
+            lesson.put("hours", occ.getPlannedUnits() == null ? 0 : occ.getPlannedUnits() * 0.5);
+            lesson.put("preserved", originalFutureIds.contains(occ.getId()));
+            return lesson;
+        }).toList();
+        Map<String, Object> preview = new LinkedHashMap<>(change);
+        preview.put("futureLessonCount", future.size());
+        preview.put("futureHours", future.stream().mapToInt(occ -> occ.getPlannedUnits() == null ? 0 : occ.getPlannedUnits()).sum() * 0.5);
+        preview.put("retainedFutureOccurrences", Math.max(0,
+                future.size() - (int) change.get("generatedOccurrences")));
+        long changedEntitlements = classEnrollmentMapper.selectList(
+                new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getClassId, classId)
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0)
+                        .in(ClassEnrollmentEntity::getBillingType, "PER_SESSION", "SESSION"))
+                .stream().filter(item -> !Objects.equals(expiryBefore.get(item.getId()), item.getExpiryDate()))
+                .count();
+        preview.put("sessionEntitlementChanges", changedEntitlements);
+        preview.put("firstLessons", firstLessons);
+        TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+        return preview;
     }
 
     @Override
@@ -1000,9 +1091,21 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             if (startDate == null || endDate == null || endDate.isBefore(startDate)) {
                 throw new BusinessException("CLASS_PERIOD_INVALID", "Enter a valid start and end date for this actual class.");
             }
-            classGroup.setStartDate(startDate);
-            classGroup.setEndDate(endDate);
-            classGroup.setScheduleBaseEndDate(endDate);
+            boolean datesChanged = !Objects.equals(startDate, classGroup.getStartDate())
+                    || !Objects.equals(endDate, classGroup.getEndDate());
+            if (datesChanged) {
+                boolean hasPeriods = classGroupScheduleSlotMapper.selectCount(
+                        new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
+                                .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classId)
+                                .isNotNull(ClassGroupScheduleSlotEntity::getEffectiveStartDate)) > 0;
+                if (hasPeriods) {
+                    throw new BusinessException("CLASS_PERIOD_HAS_SCHEDULE",
+                            "Edit the class schedule periods before changing the class dates.");
+                }
+                classGroup.setStartDate(startDate);
+                classGroup.setEndDate(endDate);
+                classGroup.setScheduleBaseEndDate(endDate);
+            }
         }
         classGroupMapper.updateById(classGroup);
         return toClassInfoMap(classGroup);
@@ -1677,6 +1780,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 continue;
             }
             ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
+            slot.setSlotLineageId(parseLongValue(map.get("slotLineageId")));
             Long teacherId = parseLongValue(map.get("teacherId"));
             Long alternateTeacherId = parseLongValue(map.get("alternateTeacherId"));
             Long classroomId = parseLongValue(map.get("classroomId"));
@@ -1729,6 +1833,59 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         return result;
     }
 
+    /** 班课创建和编辑共用：把用户配置的互不重叠日期段转成带生效日期的周时段。 */
+    private List<ClassGroupScheduleSlotEntity> parseClassScheduleSegments(
+            Object value, ClassGroupEntity classGroup, Long defaultTeacherId, Long defaultClassroomId) {
+        if (!(value instanceof List<?> rawSegments) || rawSegments.isEmpty()) {
+            throw new BusinessException("CLASS_SCHEDULE_REQUIRED", "Add at least one schedule period.");
+        }
+        LocalDate baseEnd = ClassScheduleDates.resolveBaseEndDate(
+                classGroup.getScheduleBaseEndDate(), classGroup.getEndDate());
+        List<LocalDate[]> periods = new ArrayList<>();
+        List<ClassGroupScheduleSlotEntity> result = new ArrayList<>();
+        for (Object rawSegment : rawSegments) {
+            if (!(rawSegment instanceof Map<?, ?> segment)) {
+                throw new BusinessException("INVALID_CLASS_SCHEDULE", "Complete each schedule period.");
+            }
+            LocalDate start = parseSchedulePeriodDate(segment.get("startDate"));
+            LocalDate end = parseSchedulePeriodDate(segment.get("endDate"));
+            if (start == null || end == null || end.isBefore(start)
+                    || classGroup.getStartDate() != null && start.isBefore(classGroup.getStartDate())
+                    || baseEnd != null && end.isAfter(baseEnd)) {
+                throw new BusinessException("INVALID_CLASS_SCHEDULE",
+                        "Schedule periods must have valid dates inside the original class period.");
+            }
+            for (LocalDate[] prior : periods) {
+                if (!end.isBefore(prior[0]) && !start.isAfter(prior[1])) {
+                    throw new BusinessException("INVALID_CLASS_SCHEDULE", "Schedule periods cannot overlap.");
+                }
+            }
+            List<ClassGroupScheduleSlotEntity> segmentSlots = parseClassScheduleSlots(
+                    segment.get("slots"), defaultTeacherId, defaultClassroomId);
+            if (segmentSlots.isEmpty()) {
+                throw new BusinessException("CLASS_SCHEDULE_REQUIRED", "Add a weekly time to every schedule period.");
+            }
+            for (ClassGroupScheduleSlotEntity slot : segmentSlots) {
+                slot.setEffectiveStartDate(start);
+                slot.setEffectiveEndDate(end);
+            }
+            periods.add(new LocalDate[]{start, end});
+            result.addAll(segmentSlots);
+        }
+        return result;
+    }
+
+    private LocalDate parseSchedulePeriodDate(Object value) {
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return LocalDate.parse(text);
+            } catch (RuntimeException ignored) {
+                // 无效输入由调用方统一转成用户可读的日期提示。
+            }
+        }
+        return null;
+    }
+
     private void validateClassScheduleSlots(List<ClassGroupScheduleSlotEntity> slots) {
         Set<String> seen = new HashSet<>();
         for (ClassGroupScheduleSlotEntity slot : slots) {
@@ -1738,7 +1895,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             if (!ScheduleSlotTime.isValidRange(slot.getStartTime(), slot.getEndTime())) {
                 throw new BusinessException("INVALID_CLASS_SCHEDULE", "Schedule end time must be after start time.");
             }
-            String key = slot.getWeekday() + "|" + slot.getStartTime() + "|" + slot.getEndTime();
+            String key = slot.getEffectiveStartDate() + "|" + slot.getEffectiveEndDate()
+                    + "|" + slot.getWeekday() + "|" + slot.getStartTime() + "|" + slot.getEndTime();
             if (!seen.add(key)) {
                 throw new BusinessException("INVALID_CLASS_SCHEDULE", "Duplicate class schedule slots are not allowed.");
             }
@@ -1760,7 +1918,11 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             ClassGroupScheduleSlotEntity left = slots.get(i);
             for (int j = i + 1; j < slots.size(); j++) {
                 ClassGroupScheduleSlotEntity right = slots.get(j);
-                if (Objects.equals(left.getWeekday(), right.getWeekday())
+                boolean samePeriod = left.getEffectiveStartDate() == null && right.getEffectiveStartDate() == null
+                        || left.getEffectiveStartDate() != null && right.getEffectiveStartDate() != null
+                        && !left.getEffectiveEndDate().isBefore(right.getEffectiveStartDate())
+                        && !right.getEffectiveEndDate().isBefore(left.getEffectiveStartDate());
+                if (samePeriod && Objects.equals(left.getWeekday(), right.getWeekday())
                         && left.getStartTime().toSecondOfDay() / 60
                                 < ScheduleSlotTime.endMinutes(right.getStartTime(), right.getEndTime())
                         && right.getStartTime().toSecondOfDay() / 60
@@ -1790,6 +1952,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 .collect(Collectors.toSet());
 
         List<Long> removableIds = futureOccurrences.stream()
+                .filter(occ -> "SCHEDULED".equals(occ.getPlanningStatus())
+                        && "REGULAR".equals(occ.getOccurrenceType()))
                 .map(LessonOccurrenceEntity::getId)
                 .filter(id -> !recordedOccurrenceIds.contains(id))
                 .toList();
@@ -1824,6 +1988,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         Map<LocalDate, List<LessonOccurrenceEntity>> previousByDate = previousOccurrences.stream()
                 .filter(occurrence -> occurrence.getPlannedStartAt() != null && occurrence.getPlannedEndAt() != null)
                 .collect(Collectors.groupingBy(occurrence -> occurrence.getPlannedStartAt().toLocalDate()));
+        Set<ClassAdjustedSlotReservations.Reservation> adjustedReservations = adjustedSlotReservations.load(classGroup.getId());
         LocalDate configuredStart = classGroup.getStartDate();
         LocalDate configuredEnd = classGroup.getEndDate();
         LocalDate startDate = configuredStart == null || configuredStart.isBefore(today) ? today : configuredStart;
@@ -1863,7 +2028,12 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             }
             int weekday = date.getDayOfWeek().getValue();
             for (ClassGroupScheduleSlotEntity slot : slots) {
-                if (!Objects.equals(slot.getWeekday(), weekday)) {
+                if (!ClassScheduleDates.slotAppliesOn(slot, date,
+                        ClassScheduleDates.resolveBaseEndDate(classGroup.getScheduleBaseEndDate(), endDate), slots)) {
+                    continue;
+                }
+                Long lineageId = slot.getSlotLineageId() == null ? slot.getId() : slot.getSlotLineageId();
+                if (adjustedReservations.contains(new ClassAdjustedSlotReservations.Reservation(date, lineageId))) {
                     continue;
                 }
                 LocalDateTime plannedStartAt = LocalDateTime.of(date, slot.getStartTime());
@@ -1896,7 +2066,10 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 occurrence.setScheduleSlotId(slot.getId());
                 occurrence.setOccurrenceType("REGULAR");
                 ClassSlotRotation.Assignment assignment = ClassSlotRotation.resolve(slot, date,
-                        classGroup.getStartDate(), holidayDate -> classHolidayService.isHoliday(holidayDate, holidays));
+                        classGroup.getStartDate(),
+                        ClassScheduleDates.resolveBaseEndDate(classGroup.getScheduleBaseEndDate(), endDate),
+                        slots,
+                        holidayDate -> classHolidayService.isHoliday(holidayDate, holidays));
                 occurrence.setPlannedTeacherId(assignment.teacherId() != null ? assignment.teacherId()
                         : hasSlotTeacher ? slot.getTeacherId() : classGroup.getTeacherId());
                 occurrence.setSubjectName(assignment.subjectName());
@@ -2314,14 +2487,19 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     }
 
     private String buildScheduleDesc(List<ClassGroupScheduleSlotEntity> slots) {
-        return slots.stream()
-                .sorted(Comparator.comparing(ClassGroupScheduleSlotEntity::getWeekday)
+        String description = slots.stream()
+                .sorted(Comparator.comparing(ClassGroupScheduleSlotEntity::getEffectiveStartDate,
+                                Comparator.nullsFirst(Comparator.naturalOrder()))
+                        .thenComparing(ClassGroupScheduleSlotEntity::getWeekday)
                         .thenComparing(ClassGroupScheduleSlotEntity::getStartTime))
-                .map(slot -> weekdayShortLabel(slot.getWeekday()) + " "
+                .map(slot -> (slot.getEffectiveStartDate() == null ? ""
+                        : slot.getEffectiveStartDate() + "–" + slot.getEffectiveEndDate() + " ")
+                        + weekdayShortLabel(slot.getWeekday()) + " "
                         + slot.getStartTime().toString().substring(0, 5)
                         + "-"
                         + ScheduleSlotTime.formatEndTime(slot.getStartTime(), slot.getEndTime()))
                 .collect(Collectors.joining("; "));
+        return description.length() <= 255 ? description : description.substring(0, 252) + "...";
     }
 
     private String weekdayShortLabel(Integer weekday) {
@@ -2405,13 +2583,17 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 return classSlots.stream()
                         .map(slot -> {
                             int minutes = ScheduleSlotTime.durationMinutes(slot.getStartTime(), slot.getEndTime());
-                            return toSlotMap(slot.getTeacherId(), slot.getClassroomId(), slot.getDeliveryMode(), slot.getWeekday(),
+                            Map<String, Object> mapped = toSlotMap(slot.getTeacherId(), slot.getClassroomId(), slot.getDeliveryMode(), slot.getWeekday(),
                                     slot.getStartTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
                                     ScheduleSlotTime.formatEndTime(slot.getStartTime(), slot.getEndTime()),
                                     minutes > 0 ? minutes / 30 : 0,
                                     slot.getSubjectName(), slot.getAlternateTeacherId(),
                                     slot.getAlternateSubjectName(), slot.getAlternateClassroomId(),
                                     slot.getAlternateDeliveryMode(), slot.getRotationAnchorDate());
+                            mapped.put("effectiveStartDate", slot.getEffectiveStartDate());
+                            mapped.put("effectiveEndDate", slot.getEffectiveEndDate());
+                            mapped.put("slotLineageId", slot.getSlotLineageId() == null ? slot.getId() : slot.getSlotLineageId());
+                            return mapped;
                         })
                         .toList();
             }

@@ -101,7 +101,9 @@ public class GroupCourseModelServiceImpl implements GroupCourseModelService {
                 .eq(ClassHolidayEntity::getIsDeleted, 0)
                 .le(ClassHolidayEntity::getStartDate, end)
                 .ge(ClassHolidayEntity::getEndDate, start));
-        return ClassScheduleDates.scheduledDays(start, end, slots, date -> holidays.stream()
+        return ClassScheduleDates.scheduledDays(start, end,
+                ClassScheduleDates.resolveBaseEndDate(classGroup.getScheduleBaseEndDate(), classEnd),
+                slots, date -> holidays.stream()
                 .anyMatch(holiday -> !date.isBefore(holiday.getStartDate()) && !date.isAfter(holiday.getEndDate())));
     }
 
@@ -216,7 +218,8 @@ public class GroupCourseModelServiceImpl implements GroupCourseModelService {
                     CampusEntity campus = group.getCampusId() == null ? null : campusById.get(group.getCampusId());
                     return new GroupCourseProductSetupVO.ActualClass(group.getId(), group.getClassName(),
                             group.getActualClass(), group.getCampusId(), campus == null ? null : campus.getCampusName(),
-                            classStartDate(group), classEndDate(group), group.getStatus());
+                            classStartDate(group), classEndDate(group), group.getStatus(),
+                            group.getScheduleDesc() != null && !group.getScheduleDesc().isBlank());
                 }).toList();
         return new GroupCourseProductSetupVO.Project(project.getId(), project.getProjectCode(), project.getProjectName(),
                 project.getDescription(), project.getStatus(), project.getDisplayOrder(), plans, classes);

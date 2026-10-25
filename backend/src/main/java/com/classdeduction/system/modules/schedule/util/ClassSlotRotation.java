@@ -3,6 +3,8 @@ package com.classdeduction.system.modules.schedule.util;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 
 import java.time.LocalDate;
+import java.util.List;
+import java.util.Objects;
 import java.util.function.Predicate;
 
 /**
@@ -17,6 +19,24 @@ public final class ClassSlotRotation {
     public static Assignment resolve(ClassGroupScheduleSlotEntity slot,
                                      LocalDate lessonDate,
                                      LocalDate fallbackAnchor,
+                                     Predicate<LocalDate> isHoliday) {
+        return resolve(slot, lessonDate, fallbackAnchor, null, isHoliday);
+    }
+
+    public static Assignment resolve(ClassGroupScheduleSlotEntity slot,
+                                     LocalDate lessonDate,
+                                     LocalDate fallbackAnchor,
+                                     LocalDate baseEndDate,
+                                     Predicate<LocalDate> isHoliday) {
+        return resolve(slot, lessonDate, fallbackAnchor, baseEndDate, List.of(slot), isHoliday);
+    }
+
+    /** 同一逻辑课位跨日期段沿用轮换序号，不因编辑时拆分过去和未来而重置 A/B。 */
+    public static Assignment resolve(ClassGroupScheduleSlotEntity slot,
+                                     LocalDate lessonDate,
+                                     LocalDate fallbackAnchor,
+                                     LocalDate baseEndDate,
+                                     List<ClassGroupScheduleSlotEntity> allSlots,
                                      Predicate<LocalDate> isHoliday) {
         boolean alternating = slot.getAlternateTeacherId() != null
                 || hasText(slot.getAlternateSubjectName())
@@ -36,8 +56,13 @@ public final class ClassSlotRotation {
         }
 
         int classIndex = 0;
+        Long lineageId = slot.getSlotLineageId() == null ? slot.getId() : slot.getSlotLineageId();
         for (LocalDate date = firstSlotDate; !date.isAfter(lessonDate); date = date.plusWeeks(1)) {
-            if (!isHoliday.test(date)) {
+            LocalDate candidateDate = date;
+            boolean activeLineage = allSlots.stream().anyMatch(candidate ->
+                    Objects.equals(candidate.getSlotLineageId() == null ? candidate.getId() : candidate.getSlotLineageId(), lineageId)
+                            && ClassScheduleDates.slotAppliesOn(candidate, candidateDate, baseEndDate, allSlots));
+            if (activeLineage && !isHoliday.test(date)) {
                 classIndex++;
             }
         }

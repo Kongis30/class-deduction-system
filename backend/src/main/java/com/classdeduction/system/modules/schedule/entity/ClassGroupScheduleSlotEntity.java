@@ -20,6 +20,9 @@ public class ClassGroupScheduleSlotEntity extends BaseEntity {
 
     private Long classGroupId;
 
+    /** 同一班课时段跨多次编辑的稳定课位，用于保留单节调整的原位置。 */
+    private Long slotLineageId;
+
     private Long teacherId;
 
     private String deliveryMode;
@@ -37,6 +40,11 @@ public class ClassGroupScheduleSlotEntity extends BaseEntity {
     private String alternateSubjectName;
 
     private LocalDate rotationAnchorDate;
+
+    /** 本时段所属排课段的首末日期；旧时段为空时覆盖班级原周期。 */
+    private LocalDate effectiveStartDate;
+
+    private LocalDate effectiveEndDate;
 
     private Integer weekday;
 

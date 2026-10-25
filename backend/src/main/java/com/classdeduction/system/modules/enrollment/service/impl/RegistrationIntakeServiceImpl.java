@@ -1237,7 +1237,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                         .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classId)
                         .eq(ClassGroupScheduleSlotEntity::getIsDeleted, 0));
         List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getGroupProjectId(), start, end);
-        return ClassScheduleDates.scheduledDays(start, end, slots, date -> holidays.stream()
+        return ClassScheduleDates.scheduledDays(start, end,
+                ClassScheduleDates.resolveBaseEndDate(classGroup.getScheduleBaseEndDate(), classEnd),
+                slots, date -> holidays.stream()
                 .anyMatch(holiday -> !date.isBefore(holiday.startDate()) && !date.isAfter(holiday.endDate())));
     }
 

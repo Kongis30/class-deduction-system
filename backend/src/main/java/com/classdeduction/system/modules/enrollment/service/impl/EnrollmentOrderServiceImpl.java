@@ -99,6 +99,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassHolidayMapper;
 import com.classdeduction.system.modules.schedule.util.ClassScheduleDates;
+import com.classdeduction.system.modules.schedule.service.ClassAdjustedSlotReservations;
 import com.classdeduction.system.modules.schedule.mapper.LessonAdjustmentLogMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
@@ -188,6 +189,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private final ClassGroupMapper classGroupMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
+    private final ClassAdjustedSlotReservations adjustedSlotReservations;
     private final ClassHolidayMapper classHolidayMapper;
     private final GroupCourseProjectMapper groupCourseProjectMapper;
     private final GroupRegistrationPlanMapper groupRegistrationPlanMapper;
@@ -2713,7 +2715,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .eq(ClassHolidayEntity::getIsDeleted, 0)
                 .le(ClassHolidayEntity::getStartDate, end)
                 .ge(ClassHolidayEntity::getEndDate, start));
-        List<LocalDate> scheduledDates = ClassScheduleDates.scheduledDays(start, end, slots, date -> holidays.stream()
+        List<LocalDate> scheduledDates = ClassScheduleDates.scheduledDays(start, end,
+                ClassScheduleDates.resolveBaseEndDate(targetClass.getScheduleBaseEndDate(), classEnd),
+                slots, date -> holidays.stream()
                 .anyMatch(holiday -> !date.isBefore(holiday.getStartDate()) && !date.isAfter(holiday.getEndDate())));
         if (scheduledDates.isEmpty() || ("SESSION".equals(unit) && scheduledDates.size() < quantity)) {
             throw new BusinessException("GROUP_PLAN_SCHEDULE_INSUFFICIENT",
@@ -5828,6 +5832,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .stream()
                 .map(LessonOccurrenceEntity::getPlannedStartAt)
                 .collect(Collectors.toSet());
+        Set<ClassAdjustedSlotReservations.Reservation> adjustedReservations = adjustedSlotReservations.load(classGroup.getId());
 
         List<LessonOccurrenceEntity> occurrences = new ArrayList<>();
         for (LocalDate date = windowStart; !date.isAfter(horizonEnd); date = date.plusDays(1)) {
@@ -5836,10 +5841,13 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             }
             int weekday = date.getDayOfWeek().getValue(); // Monday=1, Sunday=7
             for (ClassGroupScheduleSlotEntity slot : slots) {
-                if (!Objects.equals(slot.getWeekday(), weekday)
+                if (!ClassScheduleDates.slotAppliesOn(slot, date,
+                        ClassScheduleDates.resolveBaseEndDate(classGroup.getScheduleBaseEndDate(), horizonEnd), slots)
                         || !ScheduleSlotTime.isValidRange(slot.getStartTime(), slot.getEndTime())) {
                     continue;
                 }
+                Long lineageId = slot.getSlotLineageId() == null ? slot.getId() : slot.getSlotLineageId();
+                if (adjustedReservations.contains(new ClassAdjustedSlotReservations.Reservation(date, lineageId))) continue;
                 LocalDateTime plannedStartAt = LocalDateTime.of(date, slot.getStartTime());
                 if (existingStarts.contains(plannedStartAt)) {
                     continue;
@@ -5851,7 +5859,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 occ.setScheduleSlotId(slot.getId());
                 occ.setOccurrenceType("REGULAR");
                 ClassSlotRotation.Assignment assignment = ClassSlotRotation.resolve(slot, date,
-                        classGroup.getStartDate(), holidayDate -> classHolidayService.isHoliday(holidayDate, holidays));
+                        classGroup.getStartDate(),
+                        ClassScheduleDates.resolveBaseEndDate(classGroup.getScheduleBaseEndDate(), horizonEnd),
+                        slots,
+                        holidayDate -> classHolidayService.isHoliday(holidayDate, holidays));
                 occ.setPlannedTeacherId(assignment.teacherId() == null
                         ? classGroup.getTeacherId() : assignment.teacherId());
                 occ.setSubjectName(assignment.subjectName());
