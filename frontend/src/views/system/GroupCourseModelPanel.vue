@@ -21,16 +21,27 @@
 
     <aside v-if="!appStore.isMobileViewport" class="group-model-products">
       <span class="group-model-products__label">Group class products</span>
+      <small v-if="canReorder" class="group-model-products__hint">{{ savingOrder ? 'Saving order…' : 'Drag to reorder · saved automatically' }}</small>
       <button
         v-for="product in products"
         :key="product.id"
         type="button"
-        class="group-model-product"
-        :class="{ 'group-model-product--active': String(product.id) === String(selectedProductId) }"
+        :class="['group-model-product', {
+          'group-model-product--active': String(product.id) === String(selectedProductId),
+          'group-model-product--dragging': draggedProductId === String(product.id),
+          'group-model-product--drag-target': dragTargetProductId === String(product.id),
+        }]"
+        :draggable="canReorder && !savingOrder"
+        @dragstart="startProductDrag(product.id, $event)"
+        @dragover.prevent="setProductDragTarget(product.id)"
+        @drop.prevent="dropProductOn(product.id)"
+        @dragend="clearProductDrag"
         @click="selectProduct(product.id)"
       >
-        <strong>{{ product.productName }}</strong>
-        <small v-if="product.status !== 'ACTIVE'">Inactive</small>
+        <span class="group-model-product__text">
+          <strong>{{ product.productName }}</strong>
+          <small v-if="product.status !== 'ACTIVE'">Inactive</small>
+        </span>
       </button>
       <el-empty v-if="products.length === 0" :image-size="48" description="No group class products" />
     </aside>
@@ -419,16 +430,18 @@ interface EditableClassScheduleSlot extends SlotDef {
 
 const PROJECT_DELETE_COOLDOWN_SECONDS = 10;
 const PROJECT_DELETE_COOLDOWN_MS = PROJECT_DELETE_COOLDOWN_SECONDS * 1000;
-const props = defineProps<{ products: CourseProductItem[] }>();
+const props = defineProps<{ products: CourseProductItem[]; canReorder?: boolean; savingOrder?: boolean }>();
 const appStore = useAppStore();
-const emit = defineEmits<{ reload: [] }>();
+const emit = defineEmits<{ reload: []; reorder: [productIds: EntityId[]] }>();
 const products = computed(() => props.products
   .filter((item) => item.teachingMode === 'GROUP')
-  .sort((left, right) => left.productName.localeCompare(right.productName, undefined, {
-    sensitivity: 'base',
-    numeric: true,
-  })));
+  .sort((left, right) => (left.sortOrder ?? 99) - (right.sortOrder ?? 99)
+    || left.productName.localeCompare(right.productName, undefined, { sensitivity: 'base', numeric: true })));
+const canReorder = computed(() => props.canReorder === true);
+const savingOrder = computed(() => props.savingOrder === true);
 const selectedProductId = ref<EntityId>();
+const draggedProductId = ref<string | null>(null);
+const dragTargetProductId = ref<string | null>(null);
 const expandedProjectIds = ref(new Set<string>());
 const setup = ref<GroupCourseProductSetup>();
 const campuses = ref<CampusItem[]>([]);
@@ -530,6 +543,38 @@ async function selectProduct(id: EntityId) {
   selectedProductId.value = id;
   expandedProjectIds.value = new Set();
   await loadSetup();
+}
+
+function startProductDrag(productId: EntityId, event: DragEvent) {
+  if (!canReorder.value || savingOrder.value) {
+    event.preventDefault();
+    return;
+  }
+  draggedProductId.value = String(productId);
+  event.dataTransfer?.setData('text/plain', String(productId));
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+}
+
+function setProductDragTarget(productId: EntityId) {
+  if (draggedProductId.value) dragTargetProductId.value = String(productId);
+}
+
+function dropProductOn(targetProductId: EntityId) {
+  const sourceId = draggedProductId.value;
+  clearProductDrag();
+  if (!sourceId || sourceId === String(targetProductId)) return;
+  const nextIds = products.value.map(product => String(product.id));
+  const sourceIndex = nextIds.indexOf(sourceId);
+  const targetIndex = nextIds.indexOf(String(targetProductId));
+  if (sourceIndex < 0 || targetIndex < 0) return;
+  const [movedId] = nextIds.splice(sourceIndex, 1);
+  nextIds.splice(targetIndex, 0, movedId);
+  emit('reorder', nextIds);
+}
+
+function clearProductDrag() {
+  draggedProductId.value = null;
+  dragTargetProductId.value = null;
 }
 
 // 移动端项目默认收起，点击项目标题后再展开报名方案和实际班级。
@@ -974,13 +1019,18 @@ function errorMessage(error: any) {
 .group-model-layout { display:grid; grid-template-columns:240px minmax(0,1fr); gap:20px; min-height:460px; }
 .group-model-products { align-self:start; display:flex; flex-direction:column; gap:8px; padding:14px; border:1px solid var(--el-border-color); border-radius:12px; background:#fbfcfe; }
 .group-model-products__label,.group-model-eyebrow { color:var(--el-text-color-secondary); font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+.group-model-products__hint { margin-top:-5px; color:var(--el-text-color-placeholder); font-size:10px; }
 .group-model-eyebrow--with-help { display:flex; align-items:center; gap:6px; }
 .group-model-help { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; padding:0; border:1px solid var(--el-border-color); border-radius:50%; color:var(--el-text-color-secondary); background:#fff; font:inherit; font-size:10px; font-weight:700; line-height:1; letter-spacing:0; cursor:help; }
 .group-model-help:hover { border-color:var(--el-color-primary); color:var(--el-color-primary); }
 .group-model-help:focus-visible { border-color:var(--el-color-primary); color:var(--el-color-primary); outline:2px solid var(--el-color-primary-light-7); outline-offset:2px; }
-.group-model-product { display:flex; flex-direction:column; gap:4px; padding:12px; border:1px solid transparent; border-radius:8px; color:var(--el-text-color-primary); background:transparent; text-align:left; cursor:pointer; }
+.group-model-product { display:flex; align-items:center; gap:8px; padding:12px; border:1px solid transparent; border-radius:8px; color:var(--el-text-color-primary); background:transparent; text-align:left; cursor:pointer; }
 .group-model-product:hover { background:#f2f6fc; }
 .group-model-product--active { border-color:var(--el-color-primary-light-5); background:var(--el-color-primary-light-9); }
+.group-model-product[draggable='true'] { cursor:grab; }
+.group-model-product--dragging { opacity:.45; }
+.group-model-product--drag-target { border-color:var(--el-color-primary-light-3); background:var(--el-color-primary-light-9); }
+.group-model-product__text { display:flex; flex:1; min-width:0; flex-direction:column; gap:4px; }
 .group-model-product small,.group-project-card__header small,.group-project-section__heading span,.group-cell-subtitle { color:var(--el-text-color-secondary); font-size:12px; }
 .group-model-content { min-width:0; }
 .mobile-project-action,.mobile-project-summary { display:none; }

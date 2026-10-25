@@ -30,6 +30,7 @@
       <div v-if="selectedMode === 'ONE_ON_ONE'" class="matrix-layout">
         <aside class="navigation-sidebar">
           <span class="navigation-sidebar__label">{{ selectedModeLabel }} courses</span>
+          <small v-if="canReorderProducts" class="navigation-sidebar__hint">{{ productOrderHint }}</small>
           <el-tooltip
             v-for="product in productChoices"
             :key="product.id"
@@ -38,8 +39,17 @@
             :show-after="300"
           >
             <button
-              :class="['product-nav-item', { 'product-nav-item--active': String(query.courseProductId) === String(product.id) }]"
+              :class="['product-nav-item', {
+                'product-nav-item--active': String(query.courseProductId) === String(product.id),
+                'product-nav-item--dragging': draggingProductId === String(product.id),
+                'product-nav-item--drag-target': dragTargetProductId === String(product.id),
+              }]"
               type="button"
+              :draggable="canReorderProducts"
+              @dragstart="startProductDrag(product.id, $event)"
+              @dragover.prevent="setProductDragTarget(product.id)"
+              @drop.prevent="dropProductOn(product.id, selectedMode)"
+              @dragend="clearProductDrag"
               @click="selectCourseProduct(product)"
             >
               <strong>{{ product.productName }}</strong>
@@ -364,7 +374,14 @@
           </template>
         </div>
       </div>
-      <GroupCourseModelPanel v-else :products="productChoices" @reload="loadAll" />
+      <GroupCourseModelPanel
+        v-else
+        :products="productChoices"
+        :can-reorder="canReorderProducts"
+        :saving-order="savingProductOrder"
+        @reorder="reorderVisibleProducts('GROUP', $event)"
+        @reload="loadAll"
+      />
     </section>
 
     <el-dialog
@@ -797,6 +814,8 @@ import { ElIcon, ElMessage, ElMessageBox, ElTooltip } from 'element-plus';
 import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '@/stores/app';
+import { useAuthStore } from '@/stores/auth';
+import { isAdminUser } from '@/types/auth';
 
 import { extractErrorMessage } from '@/api/http';
 import {
@@ -808,6 +827,8 @@ import {
   fetchCoursePriceOptions,
   fetchCourseCategories,
   fetchCourseProducts,
+  fetchAllCourseProducts,
+  saveCourseProductTabOrder,
   fetchProductGradeConfigs,
   saveProductGradeConfigs,
   updateCourseCategory,
@@ -938,6 +959,11 @@ const courseModes: CourseModeDef[] = [
 const route = useRoute();
 const router = useRouter();
 const appStore = useAppStore();
+const authStore = useAuthStore();
+const canReorderProducts = computed(() => isAdminUser(authStore.currentUser));
+const savingProductOrder = ref(false);
+const draggingProductId = ref<string | null>(null);
+const dragTargetProductId = ref<string | null>(null);
 const oneOnOneHourChoices = [20, 40, 60, 80, 100, 120];
 const groupPackageUnits: Array<{ value: Exclude<PackageUnit, 'HOUR'>; label: string }> = [
   { value: 'MONTH', label: 'By month' },
@@ -957,6 +983,7 @@ const loadingProducts = ref(false);
 const saving = ref(false);
 const options = ref<CoursePriceOptionItem[]>([]);
 const courseProducts = ref<CourseProductItem[]>([]);
+const allProductsForOrder = ref<CourseProductItem[]>([]);
 const classGroups = ref<ClassGroupItem[]>([]);
 const campuses = ref<CampusItem[]>([]);
 const activeCampuses = computed(() => campuses.value.filter(campus => campus.status === 'ACTIVE'));
@@ -1150,6 +1177,9 @@ const fromProductSetup = computed(() => queryValue(route.query.from) === 'course
 const productChoices = computed(() =>
   sortCourseProducts(courseProducts.value.filter(product => product.teachingMode === selectedMode.value))
 );
+const productOrderHint = computed(() => savingProductOrder.value
+  ? 'Saving order…'
+  : canReorderProducts.value ? 'Drag to reorder · saved automatically' : '');
 const visibleOptions = computed(() => {
   return options.value.filter((option) => {
     if (modeForCourseType(option.courseType) !== selectedMode.value) {
@@ -1466,14 +1496,16 @@ async function saveGrades() {
 async function loadProductsAndClasses() {
   loadingProducts.value = true;
   try {
-    const [productsRes, classRes, teachersRes, classroomsRes, campusesRes] = await Promise.all([
+    const [productsRes, allProductsRes, classRes, teachersRes, classroomsRes, campusesRes] = await Promise.all([
       fetchCourseProducts({ pageNum: 1, pageSize: 200 }),
+      fetchAllCourseProducts(),
       fetchClassGroups({ includeInactiveProducts: true }).catch(() => ({ data: { data: [] as ClassGroupItem[] } })),
       fetchAllTeachers(),
       fetchAllClassrooms(),
       fetchCampuses().catch(() => ({ data: { data: [] as CampusItem[] } })),
     ]);
     courseProducts.value = productsRes.data.data.records ?? [];
+    allProductsForOrder.value = allProductsRes.data.data ?? [];
     classGroups.value = classRes.data.data ?? [];
     teachers.value = teachersRes.data.data ?? [];
     classrooms.value = classroomsRes.data.data ?? [];
@@ -1483,6 +1515,92 @@ async function loadProductsAndClasses() {
   } finally {
     loadingProducts.value = false;
   }
+}
+
+function startProductDrag(productId: EntityId, event: DragEvent) {
+  if (!canReorderProducts.value || savingProductOrder.value) {
+    event.preventDefault();
+    return;
+  }
+  draggingProductId.value = String(productId);
+  event.dataTransfer?.setData('text/plain', String(productId));
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+}
+
+function setProductDragTarget(productId: EntityId) {
+  if (draggingProductId.value) dragTargetProductId.value = String(productId);
+}
+
+function clearProductDrag() {
+  draggingProductId.value = null;
+  dragTargetProductId.value = null;
+}
+
+function dropProductOn(targetProductId: EntityId, mode: CourseMode) {
+  const sourceId = draggingProductId.value;
+  clearProductDrag();
+  if (!sourceId || sourceId === String(targetProductId)) return;
+
+  const visibleIds = sortCourseProducts(courseProducts.value.filter(product => product.teachingMode === mode))
+    .map(product => String(product.id));
+  const sourceIndex = visibleIds.indexOf(sourceId);
+  const targetIndex = visibleIds.indexOf(String(targetProductId));
+  if (sourceIndex < 0 || targetIndex < 0) return;
+  const [movedId] = visibleIds.splice(sourceIndex, 1);
+  visibleIds.splice(targetIndex, 0, movedId);
+  void reorderVisibleProducts(mode, visibleIds);
+}
+
+async function reorderVisibleProducts(mode: CourseMode, requestedIds: EntityId[]) {
+  if (!canReorderProducts.value || savingProductOrder.value) return;
+  const visibleIds = courseProducts.value
+    .filter(product => product.teachingMode === mode)
+    .map(product => String(product.id));
+  const requested = requestedIds.map(String);
+  if (requested.length !== visibleIds.length || new Set(requested).size !== visibleIds.length
+    || visibleIds.some(id => !requested.includes(id))) return;
+
+  const requestedProducts = requested.map(id => allProductsForOrder.value.find(product => String(product.id) === id));
+  if (requestedProducts.some(product => !product || product.teachingMode !== mode)) {
+    ElMessage.error('Could not save course order. Reload the page and try again.');
+    return;
+  }
+
+  const previousOrder = [...allProductsForOrder.value];
+  const reorderedIds = new Set(visibleIds);
+  let nextIndex = 0;
+  const nextOrder = allProductsForOrder.value.map(product => {
+    if (!reorderedIds.has(String(product.id))) return product;
+    return requestedProducts[nextIndex++]!;
+  });
+  if (nextOrder.every((product, index) => String(product.id) === String(previousOrder[index]?.id))) return;
+
+  applyProductOrder(nextOrder);
+  savingProductOrder.value = true;
+  try {
+    await saveCourseProductTabOrder(nextOrder.map(product => product.id));
+    ElMessage.success('Course order saved.');
+  } catch (error) {
+    restoreProductOrder(previousOrder);
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    savingProductOrder.value = false;
+  }
+}
+
+function applyProductOrder(products: CourseProductItem[]) {
+  const ordered = products.map((product, index) => ({ ...product, sortOrder: index + 1 }));
+  restoreProductOrder(ordered);
+}
+
+function restoreProductOrder(products: CourseProductItem[]) {
+  const ordered = [...products];
+  const sortOrderById = new Map(ordered.map(product => [String(product.id), product.sortOrder]));
+  allProductsForOrder.value = ordered;
+  courseProducts.value = courseProducts.value.map(product => ({
+    ...product,
+    sortOrder: sortOrderById.get(String(product.id)) ?? product.sortOrder,
+  }));
 }
 
 async function loadOptions() {
@@ -2482,8 +2600,16 @@ function normalizeSlotAttendance(value?: string) {
   text-transform: uppercase;
 }
 
+.navigation-sidebar__hint {
+  margin: -2px 3px 3px;
+  color: #8a98aa;
+  font-size: 10px;
+}
+
 .product-nav-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 5px;
   width: 100%;
   min-width: 0;
   padding: 7px 8px;
@@ -2495,6 +2621,13 @@ function normalizeSlotAttendance(value?: string) {
   cursor: pointer;
 }
 
+.product-nav-item[draggable='true'] {
+  cursor: grab;
+}
+
+.product-nav-item--dragging { opacity: .45; }
+.product-nav-item--drag-target { border-color: #67a5ff; background: #eef6ff; }
+
 .product-nav-item:hover,
 .product-nav-item--active {
   border-color: #c9ead5;
@@ -2503,6 +2636,7 @@ function normalizeSlotAttendance(value?: string) {
 }
 
 .product-nav-item strong {
+  flex: 1;
   display: block;
   width: 100%;
   overflow: hidden;
