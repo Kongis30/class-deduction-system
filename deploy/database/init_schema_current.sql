@@ -202,10 +202,13 @@ DROP TABLE IF EXISTS `class_group_schedule_slot`;
 CREATE TABLE `class_group_schedule_slot` (
   `id` bigint NOT NULL,
   `class_group_id` bigint NOT NULL,
+  `slot_lineage_id` bigint DEFAULT NULL COMMENT 'Stable weekly slot identity across schedule period edits',
   `teacher_id` bigint DEFAULT NULL COMMENT 'Optional teacher override for this weekly slot',
   `delivery_mode` varchar(16) DEFAULT NULL COMMENT 'IN_PERSON or ONLINE',
   `classroom_id` bigint DEFAULT NULL COMMENT 'Classroom override for this weekly slot',
   `subject_name` varchar(128) DEFAULT NULL COMMENT 'Subject taught in this weekly class slot',
+  `effective_start_date` date DEFAULT NULL COMMENT 'First date of this class schedule period',
+  `effective_end_date` date DEFAULT NULL COMMENT 'Last date of this class schedule period',
   `weekday` tinyint NOT NULL,
   `start_time` time NOT NULL,
   `end_time` time NOT NULL,

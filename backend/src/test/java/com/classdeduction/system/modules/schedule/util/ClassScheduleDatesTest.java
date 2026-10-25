@@ -73,6 +73,37 @@ class ClassScheduleDatesTest {
     }
 
     @Test
+    void laterPeriodUsesItsOwnWeeklyTimesInsteadOfRepeatingTheEarlierPeriod() {
+        ClassGroupScheduleSlotEntity firstPeriod = mondaySlot();
+        firstPeriod.setEffectiveStartDate(LocalDate.of(2026, 10, 5));
+        firstPeriod.setEffectiveEndDate(LocalDate.of(2026, 10, 18));
+        ClassGroupScheduleSlotEntity secondPeriod = new ClassGroupScheduleSlotEntity();
+        secondPeriod.setWeekday(3);
+        secondPeriod.setEffectiveStartDate(LocalDate.of(2026, 10, 19));
+        secondPeriod.setEffectiveEndDate(LocalDate.of(2026, 11, 1));
+
+        assertThat(ClassScheduleDates.scheduledDays(LocalDate.of(2026, 10, 5), LocalDate.of(2026, 11, 1),
+                LocalDate.of(2026, 11, 1), List.of(firstPeriod, secondPeriod), date -> false))
+                .containsExactly(LocalDate.of(2026, 10, 5), LocalDate.of(2026, 10, 12),
+                        LocalDate.of(2026, 10, 21), LocalDate.of(2026, 10, 28));
+    }
+
+    @Test
+    void purchasedSessionCoverageCountsDatesAcrossDifferentPeriods() {
+        ClassGroupScheduleSlotEntity firstPeriod = mondaySlot();
+        firstPeriod.setEffectiveStartDate(LocalDate.of(2026, 10, 5));
+        firstPeriod.setEffectiveEndDate(LocalDate.of(2026, 10, 12));
+        ClassGroupScheduleSlotEntity secondPeriod = new ClassGroupScheduleSlotEntity();
+        secondPeriod.setWeekday(3);
+        secondPeriod.setEffectiveStartDate(LocalDate.of(2026, 10, 19));
+        secondPeriod.setEffectiveEndDate(LocalDate.of(2026, 10, 28));
+
+        assertThat(ClassScheduleDates.nthScheduledDay(LocalDate.of(2026, 10, 5), 4,
+                LocalDate.of(2026, 10, 28), List.of(firstPeriod, secondPeriod), date -> false))
+                .isEqualTo(LocalDate.of(2026, 10, 28));
+    }
+
+    @Test
     void holidayExtensionContinuesUsingTheLastPeriodSchedule() {
         ClassGroupScheduleSlotEntity firstPeriod = mondaySlot();
         firstPeriod.setEffectiveStartDate(LocalDate.of(2026, 10, 5));

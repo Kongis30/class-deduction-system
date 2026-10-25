@@ -14,7 +14,7 @@
       </p>
       <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" show-icon />
       <template v-if="classItem && !loadError">
-        <section v-for="(period, index) in segments" :key="period.key" class="class-period">
+        <section v-for="(period, index) in segments" :key="period.key" class="class-period" :data-period-key="period.key">
           <header class="class-period__heading">
             <button type="button" class="class-period__toggle" @click="expandedKey = expandedKey === period.key ? null : period.key">
               <strong>Period {{ index + 1 }}</strong>
@@ -25,12 +25,27 @@
           </header>
           <div v-if="expandedKey === period.key" class="class-period__content">
             <div class="class-period__dates">
-              <label><span>From</span><el-date-picker v-model="period.startDate" type="date" value-format="YYYY-MM-DD" :disabled="isPastPeriod(period)" /></label>
-              <label><span>Through</span><el-date-picker v-model="period.endDate" type="date" value-format="YYYY-MM-DD" :disabled="isPastPeriod(period)" /></label>
+              <label data-period-field="startDate" :class="{ 'is-invalid': periodErrors[period.key]?.startDate }">
+                <span>From</span>
+                <el-date-picker v-model="period.startDate" type="date" value-format="YYYY-MM-DD" :disabled="isPastPeriod(period)" />
+                <small v-if="periodErrors[period.key]?.startDate">{{ periodErrors[period.key]?.startDate }}</small>
+              </label>
+              <label data-period-field="endDate" :class="{ 'is-invalid': periodErrors[period.key]?.endDate }">
+                <span>Through</span>
+                <el-date-picker v-model="period.endDate" type="date" value-format="YYYY-MM-DD" :disabled="isPastPeriod(period)" />
+                <small v-if="periodErrors[period.key]?.endDate">{{ periodErrors[period.key]?.endDate }}</small>
+              </label>
             </div>
             <el-alert v-if="isPastPeriod(period)" title="Historical period: existing lessons are kept and this period is read-only." type="info" :closable="false" />
             <template v-else>
-              <div class="class-period__calendar"><WeeklyTimeSelector v-model="period.slots" hide-hint /></div>
+              <div
+                data-period-field="slots"
+                class="class-period__calendar"
+                :class="{ 'is-invalid': periodErrors[period.key]?.slots }"
+              >
+                <WeeklyTimeSelector v-model="period.slots" hide-hint />
+                <small v-if="periodErrors[period.key]?.slots">{{ periodErrors[period.key]?.slots }}</small>
+              </div>
               <article v-for="(slot, slotIndex) in period.slots" :key="`${slot.weekday}-${slot.startTime}-${slotIndex}`" class="class-period__slot">
                 <div class="class-period__slot-head">
                   <strong>{{ slotLabel(slot) }}</strong>
@@ -67,15 +82,18 @@
       </template>
     </div>
     <template #footer>
+      <span class="class-period-dialog__save-hint">
+        Save validates required fields and creates a preview first. Review the preview, then save again.
+      </span>
       <el-button @click="emit('update:visible', false)">Cancel</el-button>
       <el-button :loading="previewing" :disabled="loading || saving || !isDirty || Boolean(loadError)" @click="previewChanges">Preview lessons</el-button>
-      <el-button type="primary" :loading="saving" :disabled="!preview || !isDirty || loading || previewing" @click="saveChanges">{{ isCreate ? 'Create schedule' : 'Save changes' }}</el-button>
+      <el-button type="primary" :loading="saving" :disabled="!isDirty || loading || previewing || Boolean(loadError)" @click="saveChanges">{{ isCreate ? 'Create schedule' : 'Save changes' }}</el-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import dayjs from 'dayjs';
 import { ElMessage } from 'element-plus';
 import { fetchAllClassrooms, fetchAllTeachers } from '@/api/base-data';
@@ -99,6 +117,8 @@ interface EditableSlot extends SlotDef {
   rotationEnabled: boolean;
 }
 interface EditablePeriod { key: number; startDate: string; endDate: string; slots: EditableSlot[] }
+type PeriodField = 'startDate' | 'endDate' | 'slots';
+type PeriodFieldErrors = Record<number, Partial<Record<PeriodField, string>>>;
 
 const props = defineProps<{ visible: boolean; classId?: EntityId | null }>();
 const emit = defineEmits<{ 'update:visible': [value: boolean]; saved: [] }>();
@@ -114,6 +134,7 @@ const saving = ref(false);
 const previewing = ref(false);
 const isCreate = ref(false);
 const expandedKey = ref<number | null>(null);
+const periodErrors = ref<PeriodFieldErrors>({});
 function todayInNewYork() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
@@ -160,7 +181,11 @@ watch(() => [props.visible, props.classId] as const, async ([visible, classId]) 
   }
 }, { immediate: true });
 
-watch(segments, () => { preview.value = null; previewError.value = ''; }, { deep: true });
+watch(segments, () => {
+  preview.value = null;
+  previewError.value = '';
+  periodErrors.value = {};
+}, { deep: true });
 
 // 旧周课表包装成单段；跨越今天的段拆出只读历史，避免编辑未来时重算过去的报名日期。
 function periodsFromClass(item: ClassGroupItem): EditablePeriod[] {
@@ -229,19 +254,52 @@ function payload(): ClassScheduleUpdatePayload | null {
   const start = item.startDate || '';
   const end = item.scheduleBaseEndDate || item.endDate || '';
   const ordered = [...segments.value].sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const errors: PeriodFieldErrors = {};
+  let firstIssue: { periodKey: number; field: PeriodField } | null = null;
+  const addError = (period: EditablePeriod, field: PeriodField, message: string) => {
+    errors[period.key] ??= {};
+    errors[period.key][field] = message;
+    firstIssue ??= { periodKey: period.key, field };
+  };
+
   for (const [index, period] of ordered.entries()) {
-    if (!period.startDate || !period.endDate || period.startDate > period.endDate || period.startDate < start || period.endDate > end) {
-      ElMessage.warning(`Period ${index + 1}: choose dates inside the original class period.`); return null;
+    if (!period.startDate) addError(period, 'startDate', 'Choose a start date.');
+    if (!period.endDate) addError(period, 'endDate', 'Choose an end date.');
+    if (period.startDate && period.endDate && period.startDate > period.endDate) {
+      addError(period, 'endDate', 'End date must be on or after the start date.');
     }
-    if (!period.slots.length) { ElMessage.warning(`Period ${index + 1}: add a weekly class time.`); return null; }
-    if (index > 0 && ordered[index - 1].endDate >= period.startDate) {
-      ElMessage.warning('Schedule periods cannot overlap.'); return null;
+    if (start && period.startDate && period.startDate < start) {
+      addError(period, 'startDate', `Start date must be on or after ${start}.`);
+    }
+    if (end && period.endDate && period.endDate > end) {
+      addError(period, 'endDate', `End date must be on or before ${end}.`);
+    }
+    if (!period.slots.length) addError(period, 'slots', 'Add at least one weekly class time.');
+    if (index > 0 && ordered[index - 1].endDate && period.startDate
+        && ordered[index - 1].endDate >= period.startDate) {
+      addError(period, 'startDate', `This period overlaps Period ${index}. Choose a later start date.`);
     }
   }
+  periodErrors.value = errors;
+  if (firstIssue) {
+    void scrollToPeriodIssue(firstIssue.periodKey, firstIssue.field);
+    return null;
+  }
+
   return { segments: ordered.map(period => ({
     startDate: period.startDate, endDate: period.endDate,
     slots: period.slots.map(slot => slotPayload(slot, period)),
   })) };
+}
+
+async function scrollToPeriodIssue(periodKey: number, field: PeriodField) {
+  const period = segments.value.find(item => item.key === periodKey);
+  if (period) expandedKey.value = period.key;
+  await nextTick();
+  const target = document.querySelector<HTMLElement>(
+    `[data-period-key="${periodKey}"] [data-period-field="${field}"]`,
+  );
+  target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 function slotPayload(slot: EditableSlot, period: EditablePeriod): ClassScheduleSlotPayload {
@@ -266,20 +324,27 @@ function slotPayload(slot: EditableSlot, period: EditablePeriod): ClassScheduleS
 
 async function previewChanges() {
   const request = payload();
-  if (!request || props.classId == null) return;
+  if (!request || props.classId == null) return false;
   previewing.value = true;
   preview.value = null;
   previewError.value = '';
   try {
     const response = await previewClassSchedule(props.classId, request);
     preview.value = response.data.data;
-  } catch (error) { previewError.value = extractErrorMessage(error); }
+    return true;
+  } catch (error) { previewError.value = extractErrorMessage(error); return false; }
   finally { previewing.value = false; }
 }
 
 async function saveChanges() {
   const request = payload();
-  if (!request || props.classId == null || !preview.value) return;
+  if (!request || props.classId == null) return;
+  if (!preview.value) {
+    if (await previewChanges()) {
+      ElMessage.info('Review the lesson preview, then click Save again to apply the changes.');
+    }
+    return;
+  }
   saving.value = true;
   try {
     await updateClassSchedule(props.classId, request);
@@ -304,13 +369,18 @@ async function saveChanges() {
 .class-period__dates { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 540px; }
 .class-period__dates label, .class-period__fields label { display: grid; gap: 5px; min-width: 0; font-size: 12px; color: #66758b; }
 .class-period__dates :deep(.el-date-editor) { width: 100%; }
+.class-period__dates label.is-invalid { color: #c45656; }
+.class-period__dates label.is-invalid :deep(.el-input__wrapper) { box-shadow: 0 0 0 1px #f56c6c inset; }
+.class-period__dates small, .class-period__calendar small { color: #c45656; font-size: 11px; }
 .class-period__calendar { margin: 12px 0; }
+.class-period__calendar.is-invalid { padding: 6px; border: 1px solid #f56c6c; border-radius: 8px; }
 .class-period__slot { border: 1px solid #e2e9f0; border-radius: 8px; padding: 12px; margin-top: 8px; }
 .class-period__slot-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 13px; }
 .class-period__slot-head > span { color: #738397; }
 .class-period__rotation { margin-left: auto; display: flex !important; align-items: center; gap: 7px !important; }
 .class-period__fields--alternate { border-top: 1px solid #e6ebf0; padding-top: 10px; margin-top: 10px; }
 .class-period-dialog__add { width: 100%; margin: 2px 0 12px; }
+.class-period-dialog__save-hint { margin-right: auto; color: #718096; font-size: 12px; }
 .class-period-preview { padding: 12px; border: 1px solid #cddff3; border-radius: 8px; background: #f7fbff; font-size: 13px; }
 .class-period-preview p { margin: 7px 0; color: #657a90; }
 .class-period-preview__lessons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 14px; max-height: 160px; overflow: auto; }

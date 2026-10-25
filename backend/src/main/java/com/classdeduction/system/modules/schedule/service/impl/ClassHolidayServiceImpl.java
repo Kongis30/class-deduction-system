@@ -623,7 +623,7 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
             LocalDate projected = projectedExpiry(enrollment, group, slots, holidays);
             if (projected == null || group.getEndDate() != null && projected.isAfter(group.getEndDate())) {
                 throw new BusinessException("CLASS_SCHEDULE_INSUFFICIENT",
-                        "The new class schedule cannot cover every purchased lesson for existing students.");
+                        "The current periods do not provide enough class dates for some students’ purchased sessions. Add weekly class times or extend the class end date, then preview again.");
             }
             enrollment.setExpiryDate(projected);
             enrollment.setStatus(projected.isBefore(today) ? "EXPIRED" : "ACTIVE");
