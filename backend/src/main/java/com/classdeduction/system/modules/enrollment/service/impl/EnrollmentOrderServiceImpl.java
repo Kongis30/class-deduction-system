@@ -5280,7 +5280,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         requireSeparableOrderItemLines(order.getExtraFeeDetail(), target.getExtraFeeAmount(), target);
         requireSeparableOrderItemLines(order.getDiscountDetail(), target.getDiscountAmount(), target);
 
-        deleteOrderItemPayments(orderId, itemId, allocations);
+        deleteOrderItemPaymentAllocations(itemId);
         if (target.getClassId() != null) {
             // 混合收据必须按课程项外键定位，不能按学生+班级回退，避免误退同班的另一张订单。
             List<ClassEnrollmentEntity> seats = classEnrollmentMapper.selectList(
@@ -5374,28 +5374,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         syncReceiptAfterOrderItemDeletion(order, target);
     }
 
-    /** 将目标课程的正向付款和退款分摊一同移除，保留同笔付款中其他课程的份额。 */
-    private void deleteOrderItemPayments(Long orderId, Long itemId, List<PaymentAllocationEntity> allocations) {
-        Map<Long, BigDecimal> removedByPayment = new LinkedHashMap<>();
-        for (PaymentAllocationEntity allocation : allocations) {
-            removedByPayment.merge(allocation.getPaymentRecordId(), defaultAmount(allocation.getAmount()), BigDecimal::add);
-        }
-        for (Map.Entry<Long, BigDecimal> entry : removedByPayment.entrySet()) {
-            PaymentRecordEntity payment = paymentRecordMapper.selectById(entry.getKey());
-            if (payment == null || !Objects.equals(payment.getEnrollmentOrderId(), orderId)) {
-                throw new BusinessException("COURSE_PAYMENT_MISSING", "A course payment record could not be found.");
-            }
-            BigDecimal remaining = defaultAmount(payment.getAmount()).subtract(entry.getValue());
-            if (remaining.compareTo(ZERO_AMOUNT) == 0) {
-                paymentRecordMapper.update(null, new LambdaUpdateWrapper<PaymentRecordEntity>()
-                        .eq(PaymentRecordEntity::getId, payment.getId())
-                        .setSql("payment_no = CONCAT(LEFT(payment_no, 8), '-DEL-', id)"));
-                paymentRecordMapper.deleteById(payment.getId());
-            } else {
-                payment.setAmount(remaining);
-                paymentRecordMapper.updateById(payment);
-            }
-        }
+    /** 移除目标课程的收付款分摊，同时保留不可变的实际资金流水。 */
+    private void deleteOrderItemPaymentAllocations(Long itemId) {
+        // 删除课程只移除课程分摊，不改写真实收付款流水的金额或历史。
         paymentAllocationMapper.delete(new LambdaQueryWrapper<PaymentAllocationEntity>()
                 .eq(PaymentAllocationEntity::getEnrollmentOrderItemId, itemId));
     }
@@ -5692,13 +5673,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         // 课程级分摊明细随订单一并软删
         paymentAllocationMapper.delete(new LambdaQueryWrapper<PaymentAllocationEntity>()
                 .eq(PaymentAllocationEntity::getEnrollmentOrderId, order.getId()));
-        // 软删前把业务唯一号追加行级唯一后缀：uk_xxx_no(receipt_no/payment_no, is_deleted)
-        // 复合唯一键只允许一行 (no,1)，若历史软删行占用键位，批量软删会撞 Duplicate entry。
-        // 列宽 varchar(32)：原号截前 8 位 + '-DEL-' + 19 位雪花 id 恰好 32。
-        paymentRecordMapper.update(null, new LambdaUpdateWrapper<PaymentRecordEntity>()
-                .eq(PaymentRecordEntity::getEnrollmentOrderId, order.getId())
-                .eq(PaymentRecordEntity::getIsDeleted, 0)
-                .setSql("payment_no = CONCAT(LEFT(payment_no, 8), '-DEL-', id)"));
+        // payment_record 是资金流水账本。即使订单和收据被归档，也保留原金额、编号和记录。
         receiptRecordMapper.update(null, new LambdaUpdateWrapper<ReceiptRecordEntity>()
                 .eq(ReceiptRecordEntity::getEnrollmentOrderId, order.getId())
                 .eq(ReceiptRecordEntity::getIsDeleted, 0)
@@ -5707,8 +5682,6 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             enrollmentOrderItemMapper.delete(new LambdaQueryWrapper<EnrollmentOrderItemEntity>()
                     .in(EnrollmentOrderItemEntity::getId, itemIds));
         }
-        paymentRecordMapper.delete(new LambdaQueryWrapper<PaymentRecordEntity>()
-                .eq(PaymentRecordEntity::getEnrollmentOrderId, order.getId()));
         receiptRecordMapper.delete(new LambdaQueryWrapper<ReceiptRecordEntity>()
                 .eq(ReceiptRecordEntity::getEnrollmentOrderId, order.getId()));
     }

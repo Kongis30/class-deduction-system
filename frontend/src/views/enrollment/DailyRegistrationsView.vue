@@ -6,13 +6,13 @@
           <div class="mobile-search-heading">
             <span class="workbook-toolbar__label">Daily Registrations</span>
             <div class="mobile-toolbar-actions">
-              <button type="button" class="mobile-search-trigger" :aria-expanded="mobileFiltersExpanded" aria-label="Show registration filters" @click="mobileFiltersExpanded = !mobileFiltersExpanded"><el-icon><Search /></el-icon></button>
+              <button type="button" class="mobile-search-trigger" :aria-expanded="mobileFiltersExpanded" aria-label="Show report filters" @click="mobileFiltersExpanded = !mobileFiltersExpanded"><el-icon><Search /></el-icon></button>
               <el-dropdown trigger="click" @command="handleMobileAction">
                 <button type="button" class="mobile-search-trigger" aria-label="More registration actions"><el-icon><MoreFilled /></el-icon></button>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item command="clear" :disabled="!hasAnyColumnFilter">Clear filters</el-dropdown-item>
-                    <el-dropdown-item command="export" :disabled="filteredRows.length === 0">Export Excel</el-dropdown-item>
+                    <el-dropdown-item command="clear" :disabled="!hasActiveReportFilters && !operatorUserId">Clear filters</el-dropdown-item>
+                    <el-dropdown-item command="export" :disabled="exportDisabled">Export Excel</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -37,12 +37,11 @@
             </div>
           </section>
           <div class="workbook-toolbar__stats daily-workbook-toolbar__stats">
-            <span class="workbook-toolbar__stat"><em>Records</em><strong>{{ filteredStats.courses }}</strong></span>
-            <span class="workbook-toolbar__stat"><em>Orders</em><strong>{{ filteredStats.orders }}</strong></span>
-            <span class="workbook-toolbar__stat"><em>Students</em><strong>{{ filteredStats.students }}</strong></span>
-            <span class="workbook-toolbar__stat"><em>Due</em><strong>{{ money(filteredStats.due) }}</strong></span>
-            <span class="workbook-toolbar__stat"><em>Collected</em><strong>{{ money(filteredStats.collected) }}</strong></span>
-            <span class="workbook-toolbar__stat"><em>Outstanding</em><strong>{{ money(filteredStats.outstanding) }}</strong></span>
+            <span class="workbook-toolbar__stat"><em>Registrations</em><strong>{{ historyStats.registrations }}</strong></span>
+            <span class="workbook-toolbar__stat"><em>Transactions</em><strong>{{ cashStats.count }}</strong></span>
+            <span class="workbook-toolbar__stat"><em>Incoming</em><strong>{{ money(cashStats.incoming) }}</strong></span>
+            <span class="workbook-toolbar__stat"><em>Outgoing</em><strong>{{ money(cashStats.outgoing) }}</strong></span>
+            <span class="workbook-toolbar__stat"><em>Net</em><strong>{{ money(cashStats.net) }}</strong></span>
           </div>
         </template>
         <template v-else>
@@ -60,17 +59,17 @@
       </div>
 
       <div v-if="!appStore.isMobileViewport" class="workbook-toolbar__stats daily-workbook-toolbar__stats">
-        <span class="workbook-toolbar__stat"><em>Course records</em><strong>{{ filteredStats.courses }}</strong></span>
-        <span class="workbook-toolbar__stat"><em>Orders</em><strong>{{ filteredStats.orders }}</strong></span>
-        <span class="workbook-toolbar__stat"><em>Students</em><strong>{{ filteredStats.students }}</strong></span>
-        <span class="workbook-toolbar__stat"><em>Due</em><strong>{{ money(filteredStats.due) }}</strong></span>
-        <span class="workbook-toolbar__stat"><em>Collected</em><strong>{{ money(filteredStats.collected) }}</strong></span>
-        <span class="workbook-toolbar__stat"><em>Outstanding</em><strong>{{ money(filteredStats.outstanding) }}</strong></span>
+        <span class="workbook-toolbar__stat"><em>Registrations</em><strong>{{ historyStats.registrations }}</strong></span>
+        <span class="workbook-toolbar__stat"><em>Transactions</em><strong>{{ cashStats.count }}</strong></span>
+        <span class="workbook-toolbar__stat"><em>Incoming</em><strong>{{ money(cashStats.incoming) }}</strong></span>
+        <span class="workbook-toolbar__stat"><em>Outgoing</em><strong>{{ money(cashStats.outgoing) }}</strong></span>
+        <span class="workbook-toolbar__stat"><em>Net</em><strong>{{ money(cashStats.net) }}</strong></span>
+        <span v-if="cashStats.internal > 0" class="workbook-toolbar__stat"><em>Internal Credit</em><strong>{{ money(cashStats.internal) }}</strong></span>
       </div>
 
       <div v-if="!appStore.isMobileViewport" class="workbook-toolbar__export daily-workbook-toolbar__actions">
-        <el-button size="small" :disabled="!hasAnyColumnFilter" @click="clearAllFilters">Clear filters</el-button>
-        <el-button size="small" type="primary" :disabled="filteredRows.length === 0" @click="exportExcel">Export Excel</el-button>
+        <el-button size="small" :disabled="!hasActiveReportFilters && !operatorUserId" @click="clearAllFilters">Clear filters</el-button>
+        <el-button size="small" type="primary" :disabled="exportDisabled" @click="exportExcel">Export Excel</el-button>
       </div>
     </div>
 
@@ -86,9 +85,6 @@
               <col style="width: 220px">
               <col style="width: 125px">
               <col style="width: 125px">
-              <col style="width: 165px">
-              <col style="width: 145px">
-              <col style="width: 145px">
             </colgroup>
             <thead>
               <tr>
@@ -96,8 +92,6 @@
                 <th>Students</th>
                 <th>Orders</th>
                 <th>Course records</th>
-                <th>Amount due</th>
-                <th>Collected</th>
               </tr>
             </thead>
             <tbody>
@@ -106,11 +100,9 @@
                 <td class="workbook-cell--center">{{ operator.uniqueStudentCount }}</td>
                 <td class="workbook-cell--center">{{ operator.orderCount }}</td>
                 <td class="workbook-cell--center">{{ operator.courseRegistrationCount }}</td>
-                <td class="workbook-cell--money">{{ money(operator.amountDue) }}</td>
-                <td class="workbook-cell--money">{{ money(operator.amountCollected) }}</td>
               </tr>
               <tr v-if="visibleOperators.length === 0" class="workbook-empty-row">
-                <td colspan="6">No operator totals for this date.</td>
+                <td colspan="4">No operator totals for this date.</td>
               </tr>
             </tbody>
           </table>
@@ -120,7 +112,7 @@
       <section class="daily-sheet history-sheet">
         <div class="daily-sheet__caption">
           <strong>Registration history</strong>
-          <span>{{ filteredRows.length }} course record(s) saved on {{ formatDay(selectedDate) }}, ordered by saved time</span>
+          <span>{{ filteredRows.length }} record(s) on {{ formatDay(selectedDate) }}. Amounts: + incoming, − outgoing; internal credit and voided entries are excluded from cash totals.</span>
         </div>
         <div ref="historyScrollRef" class="workbook-scroll daily-sheet__scroll history-sheet__scroll mobile-pinch-scroll" data-testid="daily-registration-workbook">
           <table class="workbook-table history-table" :style="{ zoom: appStore.isMobileViewport ? historyTableScale : undefined }">
@@ -207,11 +199,12 @@
                 <tr class="workbook-group-spacer daily-date-group">
                   <td :colspan="columns.length" class="daily-date-group__cell">
                     {{ group.label }}
-                    <span>{{ group.rows.length }} course record(s)</span>
+                    <span>{{ group.rows.length }} record(s)</span>
                   </td>
                 </tr>
-                <tr v-for="row in group.rows" :key="rowKey(row)" class="workbook-data-row">
+                <tr v-for="row in group.rows" :key="row.key" class="workbook-data-row" :class="{ 'history-row--voided': row.voided, 'history-row--internal': row.internalTransfer }">
                   <td>{{ dateTime(row.savedAt) }}</td>
+                  <td>{{ row.recordType }}</td>
                   <td>{{ display(row.operatorName, 'Operator not recorded') }}</td>
                   <td>{{ display(row.studentName) }}</td>
                   <td>{{ display(row.courseName) }}</td>
@@ -220,20 +213,16 @@
                   <td class="workbook-cell--center">
                     <span :class="['workbook-pill', paymentMethodClass(row.paymentMethod)]">{{ display(row.paymentMethod) }}</span>
                   </td>
-                  <td class="workbook-cell--center">
-                    <span :class="['workbook-pill', paymentStatusClass(row.paymentStatus)]">{{ display(row.paymentStatus) }}</span>
-                  </td>
-                  <td class="workbook-cell--money">{{ money(row.amountDue) }}</td>
-                  <td class="workbook-cell--money">{{ money(row.amountCollected) }}</td>
-                  <td class="workbook-cell--money" :class="{ 'daily-registration-outstanding': Number(row.outstandingAmount ?? 0) > 0 }">
-                    {{ money(row.outstandingAmount) }}
-                  </td>
+                  <td class="workbook-cell--center">{{ display(row.paymentStatus) }}</td>
+                  <td class="workbook-cell--money">{{ row.source === 'registration' ? money(row.amountDue) : '—' }}</td>
+                  <td class="workbook-cell--money" :class="row.cashMovement > 0 ? 'history-amount--incoming' : row.cashMovement < 0 ? 'history-amount--outgoing' : ''">{{ row.cashMovement ? signedAmount(row.cashMovement) : '—' }}</td>
+                  <td>{{ display(row.referenceNo || row.note) }}</td>
                 </tr>
               </template>
             </tbody>
             <tbody v-else-if="!loading">
               <tr class="workbook-empty-row">
-                <td :colspan="columns.length">No registrations match the current filters.</td>
+                <td :colspan="columns.length">No history records match the current filters.</td>
               </tr>
             </tbody>
           </table>
@@ -249,28 +238,36 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import * as XLSX from 'xlsx';
 import { Close, MoreFilled, Search } from '@element-plus/icons-vue';
 
-import { fetchDailyRegistrations, type DailyRegistrationOperatorSummary, type DailyRegistrationReport, type DailyRegistrationRow } from '@/api/daily-registrations';
+import { fetchDailyCashFlow, fetchDailyRegistrations, type DailyCashFlowReport, type DailyCashFlowRow, type DailyRegistrationOperatorSummary, type DailyRegistrationReport, type DailyRegistrationRow } from '@/api/daily-registrations';
 import { extractErrorMessage } from '@/api/http';
 import { useAppStore } from '@/stores/app';
 import { useMobileTablePinchZoom } from '@/composables/useMobileTablePinchZoom';
 
-type ColumnKey = 'savedAt' | 'studentName' | 'courseName' | 'className' | 'grade' | 'operatorName' | 'paymentMethod' | 'paymentStatus' | 'amountDue' | 'amountCollected' | 'outstandingAmount';
+type ColumnKey = 'savedAt' | 'recordType' | 'studentName' | 'courseName' | 'className' | 'grade' | 'operatorName' | 'paymentMethod' | 'paymentStatus' | 'amountDue' | 'cashMovement' | 'referenceNo';
 type FilterType = 'text' | 'select' | 'date' | 'number';
 type Column = { key: ColumnKey; label: string; width: number; filterType: FilterType };
 type ColumnFilter = { text: string; selected: string[]; dateRange: [string, string] | null; min: number | undefined; max: number | undefined };
+type HistoryRow = {
+  key: string; source: 'registration' | 'transaction'; savedAt?: string; recordType: string;
+  operatorName?: string; studentName?: string; courseName?: string; className?: string; grade?: string;
+  paymentMethod?: string; paymentStatus?: string; amountDue?: number; cashMovement: number;
+  referenceNo?: string; note?: string; orderId?: string | number; studentId?: string | number;
+  internalTransfer?: boolean; internalAmount?: number; voided?: boolean;
+};
 
 const columns: Column[] = [
   { key: 'savedAt', label: 'Time (ET)', width: 165, filterType: 'date' },
+  { key: 'recordType', label: 'Record', width: 140, filterType: 'select' },
   { key: 'operatorName', label: 'Handled by', width: 155, filterType: 'select' },
-  { key: 'studentName', label: 'Student', width: 155, filterType: 'text' },
-  { key: 'courseName', label: 'Course', width: 200, filterType: 'text' },
+  { key: 'studentName', label: 'Student / teacher', width: 175, filterType: 'text' },
+  { key: 'courseName', label: 'Course / details', width: 220, filterType: 'text' },
   { key: 'grade', label: 'Grade', width: 90, filterType: 'select' },
   { key: 'className', label: 'Class', width: 180, filterType: 'text' },
   { key: 'paymentMethod', label: 'Pay method', width: 125, filterType: 'select' },
-  { key: 'paymentStatus', label: 'Payment status', width: 135, filterType: 'select' },
+  { key: 'paymentStatus', label: 'Status', width: 130, filterType: 'select' },
   { key: 'amountDue', label: 'Amount due', width: 120, filterType: 'number' },
-  { key: 'amountCollected', label: 'Collected', width: 120, filterType: 'number' },
-  { key: 'outstandingAmount', label: 'Outstanding', width: 125, filterType: 'number' },
+  { key: 'cashMovement', label: 'Amount', width: 140, filterType: 'number' },
+  { key: 'referenceNo', label: 'Reference / note', width: 230, filterType: 'text' },
 ];
 
 const selectedDate = ref(todayInNewYork());
@@ -278,6 +275,7 @@ const appStore = useAppStore();
 const mobileFiltersExpanded = ref(false);
 const operatorUserId = ref('');
 const report = ref<DailyRegistrationReport>();
+const cashFlowReport = ref<DailyCashFlowReport>();
 const operatorOptions = ref<DailyRegistrationOperatorSummary[]>([]);
 const loading = ref(false);
 const operatorScrollRef = ref<HTMLElement | null>(null);
@@ -287,13 +285,38 @@ const { scale: historyTableScale } = useMobileTablePinchZoom(historyScrollRef, c
 let latestRequestId = 0;
 const sortState = ref<{ key: ColumnKey; direction: 'asc' | 'desc' }>({ key: 'savedAt', direction: 'desc' });
 const columnFilters = reactive<Record<ColumnKey, ColumnFilter>>({
-  savedAt: emptyFilter(), studentName: emptyFilter(), courseName: emptyFilter(), className: emptyFilter(),
+  savedAt: emptyFilter(), recordType: emptyFilter(), studentName: emptyFilter(), courseName: emptyFilter(), className: emptyFilter(),
   grade: emptyFilter(), operatorName: emptyFilter(), paymentMethod: emptyFilter(), paymentStatus: emptyFilter(),
-  amountDue: emptyFilter(), amountCollected: emptyFilter(), outstandingAmount: emptyFilter(),
+  amountDue: emptyFilter(), cashMovement: emptyFilter(), referenceNo: emptyFilter(),
 });
 
-const sourceRows = computed(() => report.value?.rows ?? []);
+const cashFlowRows = computed(() => cashFlowReport.value?.rows ?? []);
+const sourceRows = computed<HistoryRow[]>(() => [
+  ...(report.value?.rows ?? []).map((row, index): HistoryRow => ({
+    key: `registration:${rowKey(row)}:${index}`, source: 'registration', savedAt: row.savedAt,
+    recordType: 'Registration', operatorName: row.operatorName, studentName: row.studentName,
+    courseName: row.courseName, className: row.className, grade: row.grade,
+    paymentMethod: row.paymentMethod, paymentStatus: row.paymentStatus,
+    amountDue: Number(row.amountDue ?? 0), cashMovement: 0,
+    referenceNo: row.orderId == null ? undefined : `Order ${row.orderId}`,
+    orderId: row.orderId, studentId: row.studentId,
+  })),
+  ...cashFlowRows.value.map((row): HistoryRow => ({
+    key: `transaction:${row.transactionId}`, source: 'transaction', savedAt: row.happenedAt,
+    recordType: cashFlowType(row), operatorName: row.handledByName,
+    studentName: row.counterpartyName,
+    courseName: row.transactionType === 'TEACHER_PAYMENT' ? 'Teacher payroll' : row.note,
+    paymentMethod: row.internalTransfer ? 'Student Credit' : row.paymentMethod,
+    paymentStatus: row.voided ? 'Voided' : row.status || 'Recorded',
+    amountDue: undefined,
+    cashMovement: (row.direction === 'OUT' ? -1 : 1) * Math.abs(Number(row.amount ?? 0)),
+    referenceNo: [row.referenceNo, row.note].filter(Boolean).join(' · ') || undefined,
+    internalTransfer: row.internalTransfer, internalAmount: row.internalTransfer ? Math.abs(Number(row.amount ?? 0)) : 0, voided: row.voided,
+  })),
+].sort((left, right) => (right.savedAt ?? '').localeCompare(left.savedAt ?? '') || left.key.localeCompare(right.key)));
+const exportDisabled = computed(() => filteredRows.value.length === 0);
 const hasAnyColumnFilter = computed(() => columns.some((column) => hasColumnFilter(column.key)));
+const hasActiveReportFilters = hasAnyColumnFilter;
 const selectOptions = computed(() => Object.fromEntries(
   columns.filter((column) => column.filterType === 'select').map((column) => [
     column.key,
@@ -307,7 +330,7 @@ const filteredSortedRows = computed(() => {
   return [...filteredRows.value].sort((left, right) => compareRows(left, right, key) * (direction === 'asc' ? 1 : -1));
 });
 const groupedRows = computed(() => {
-  const groups = new Map<string, { key: string; label: string; rows: DailyRegistrationRow[] }>();
+  const groups = new Map<string, { key: string; label: string; rows: HistoryRow[] }>();
   for (const row of filteredSortedRows.value) {
     const day = savedDateKey(row.savedAt) || 'unknown';
     const group = groups.get(day) ?? { key: day, label: day === 'unknown' ? 'Date not recorded' : formatDay(day), rows: [] };
@@ -320,16 +343,24 @@ const visibleOperators = computed(() => {
   if (!operatorUserId.value) return report.value?.operators ?? [];
   return (report.value?.operators ?? []).filter((operator) => String(operator.operatorUserId ?? '') === operatorUserId.value);
 });
-const filteredStats = computed(() => {
-  const rows = filteredRows.value;
-  return {
-    courses: rows.length,
-    orders: new Set(rows.map((row) => String(row.orderId))).size,
-    students: new Set(rows.map((row) => row.studentId == null ? '' : String(row.studentId)).filter(Boolean)).size,
-    due: rows.reduce((sum, row) => sum + Number(row.amountDue ?? 0), 0),
-    collected: rows.reduce((sum, row) => sum + Number(row.amountCollected ?? 0), 0),
-    outstanding: rows.reduce((sum, row) => sum + Number(row.outstandingAmount ?? 0), 0),
-  };
+const historyStats = computed(() => ({ registrations: filteredRows.value.filter((row) => row.source === 'registration').length }));
+const cashStats = computed(() => {
+  let incoming = 0;
+  let outgoing = 0;
+  let internal = 0;
+  let count = 0;
+  for (const row of filteredRows.value.filter((item) => item.source === 'transaction')) {
+    const amount = Math.abs(Number(row.cashMovement ?? 0));
+    if (row.voided) continue;
+    if (row.internalTransfer) {
+      internal += Number(row.internalAmount ?? 0);
+      continue;
+    }
+    count += 1;
+    if (row.cashMovement > 0) incoming += amount;
+    else if (row.cashMovement < 0) outgoing += amount;
+  }
+  return { count, incoming, outgoing, net: incoming - outgoing, internal };
 });
 
 onMounted(loadReport);
@@ -342,16 +373,34 @@ async function loadReport() {
   const requestId = ++latestRequestId;
   loading.value = true;
   try {
-    const response = await fetchDailyRegistrations({
+    const params = {
       fromDate: selectedDate.value,
       toDate: selectedDate.value,
       ...(operatorUserId.value ? { operatorUserId: operatorUserId.value } : {}),
-    });
+    };
+    const [registrationResponse, cashFlowResponse] = await Promise.all([
+      fetchDailyRegistrations(params), fetchDailyCashFlow(params),
+    ]);
     if (requestId !== latestRequestId) return;
-    report.value = response.data.data;
-    if (!operatorUserId.value) operatorOptions.value = response.data.data.operators;
+    report.value = registrationResponse.data.data;
+    cashFlowReport.value = cashFlowResponse.data.data;
+    if (!operatorUserId.value) {
+      const options = new Map<string, DailyRegistrationOperatorSummary>();
+      for (const operator of registrationResponse.data.data.operators) {
+        options.set(String(operator.operatorUserId ?? operator.operatorName), operator);
+      }
+      for (const row of cashFlowResponse.data.data.rows) {
+        if (row.handledByUserId == null && !row.handledByName) continue;
+        const key = String(row.handledByUserId ?? row.handledByName);
+        if (!options.has(key)) options.set(key, {
+          operatorUserId: row.handledByUserId, operatorName: row.handledByName,
+          courseRegistrationCount: 0, orderCount: 0, uniqueStudentCount: 0, amountDue: 0, amountCollected: 0,
+        });
+      }
+      operatorOptions.value = [...options.values()].sort((left, right) => naturalCompare(left.operatorName ?? '', right.operatorName ?? ''));
+    }
   } catch (error) {
-    if (requestId === latestRequestId) ElMessage.error(extractErrorMessage(error, 'Failed to load registration history.'));
+    if (requestId === latestRequestId) ElMessage.error(extractErrorMessage(error, 'Failed to load the daily report.'));
   } finally {
     if (requestId === latestRequestId) loading.value = false;
   }
@@ -369,7 +418,7 @@ function shiftSelectedDate(offset: number) {
   loadReport();
 }
 
-function matchesColumnFilters(row: DailyRegistrationRow) {
+function matchesColumnFilters(row: HistoryRow) {
   return columns.every(({ key, filterType }) => {
     const filter = columnFilters[key];
     const value = row[key];
@@ -389,7 +438,7 @@ function matchesColumnFilters(row: DailyRegistrationRow) {
   });
 }
 
-function compareRows(left: DailyRegistrationRow, right: DailyRegistrationRow, key: ColumnKey) {
+function compareRows(left: HistoryRow, right: HistoryRow, key: ColumnKey) {
   const leftValue = left[key];
   const rightValue = right[key];
   if (typeof leftValue === 'number' || typeof rightValue === 'number') {
@@ -425,6 +474,10 @@ function clearColumnFilter(key: ColumnKey) {
 
 function clearAllFilters() {
   columns.forEach((column) => clearColumnFilter(column.key));
+  if (operatorUserId.value) {
+    operatorUserId.value = '';
+    loadReport();
+  }
 }
 
 function emptyFilter(): ColumnFilter {
@@ -440,13 +493,13 @@ function exportExcel() {
   for (const row of filteredSortedRows.value) {
     sheetRows.push(columns.map((column) => {
       const value = row[column.key];
-      return ['amountDue', 'amountCollected', 'outstandingAmount'].includes(column.key)
-        ? Number(value ?? 0)
+      return ['amountDue', 'cashMovement'].includes(column.key)
+        ? (column.key === 'amountDue' && row.source !== 'registration' ? '—' : Number(value ?? 0))
         : column.key === 'savedAt' ? dateTime(row.savedAt) : textValue(value) || '—';
     }));
   }
   const sheet = XLSX.utils.aoa_to_sheet(sheetRows);
-  [8, 9, 10].forEach((columnIndex) => {
+  [9, 10].forEach((columnIndex) => {
     for (let rowIndex = 1; rowIndex < sheetRows.length; rowIndex += 1) {
       const cell = sheet[XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex })];
       if (cell) cell.z = '$#,##0.00;-$#,##0.00';
@@ -454,8 +507,19 @@ function exportExcel() {
   });
   sheet['!cols'] = columns.map((column) => ({ wch: Math.max(10, Math.round(column.width / 7)) }));
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, sheet, 'Daily Registrations');
-  XLSX.writeFile(workbook, `Daily_Registrations_${selectedDate.value}.xlsx`);
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Registration History');
+  XLSX.writeFile(workbook, `Registration_History_${selectedDate.value}.xlsx`);
+}
+
+function cashFlowType(row: DailyCashFlowRow) {
+  if (row.voided) return 'Voided entry';
+  if (row.internalTransfer) return 'Internal Credit';
+  if (row.transactionType === 'TEACHER_PAYMENT') return 'Teacher payroll';
+  return row.transactionType === 'REFUND' ? 'Refund' : 'Receipt';
+}
+
+function signedAmount(value: number) {
+  return `${value < 0 ? '−' : '+'}${money(Math.abs(value))}`;
 }
 
 function handleMobileAction(command: string) {
@@ -505,14 +569,6 @@ function paymentMethodClass(value?: string) {
   return method ? 'workbook-pill--method' : '';
 }
 
-function paymentStatusClass(value?: string) {
-  const status = value?.trim().toUpperCase() ?? '';
-  if (status === 'PAID') return 'workbook-pill--cash';
-  if (status === 'REFUNDED') return 'daily-registration-pill--refunded';
-  if (status === 'PARTIAL' || status === 'PARTIALLY_PAID') return 'workbook-pill--check';
-  return 'workbook-pill--zelle';
-}
-
 function naturalCompare(left: string, right: string) {
   return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
 }
@@ -554,10 +610,12 @@ function rowKey(row: DailyRegistrationRow) {
 .daily-workbook-page .workbook-sort-indicator { font-size: 10px; }
 .history-sheet { display: flex; min-height: 0; flex: 1; flex-direction: column; }
 .history-sheet__scroll { flex: 1; min-height: 0; }
+.history-amount--incoming { color: #176d47; font-weight: 700; }
+.history-amount--outgoing { color: #b42332; font-weight: 700; }
+.history-row--voided td { background: #f4f4f5 !important; color: #8c8c91; text-decoration: line-through; }
+.history-row--internal td { background: #f5f8fc !important; }
 .daily-date-group td.daily-date-group__cell { height: 28px; padding: 5px 8px; border-right: 0; background: #edf4f1; color: #315b49; font-weight: 700; }
 .daily-date-group span { margin-left: 10px; color: #76857f; font-size: 11px; font-weight: 500; }
-.daily-registration-outstanding { color: #bd2431; font-weight: 700; }
-.daily-registration-pill--refunded { background: #6b7280; color: #fff; }
 @media (max-width: 900px) {
   .daily-workbook-page { height: auto; min-height: calc(100vh - 88px); }
   .daily-workbook-layout { min-height: 60vh; }

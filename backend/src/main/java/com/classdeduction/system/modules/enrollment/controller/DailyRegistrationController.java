@@ -5,6 +5,7 @@ import com.classdeduction.system.modules.auth.annotation.RequireRoles;
 import com.classdeduction.system.modules.enrollment.dto.DailyRegistrationQuery;
 import com.classdeduction.system.modules.enrollment.service.DailyRegistrationService;
 import com.classdeduction.system.modules.enrollment.vo.DailyRegistrationResponseVO;
+import com.classdeduction.system.modules.enrollment.vo.DailyCashFlowResponseVO;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
@@ -25,5 +26,10 @@ public class DailyRegistrationController {
     @GetMapping
     public ApiResponse<DailyRegistrationResponseVO> query(@ParameterObject @Valid DailyRegistrationQuery query) {
         return ApiResponse.success(dailyRegistrationService.query(query));
+    }
+
+    @GetMapping("/cash-flow")
+    public ApiResponse<DailyCashFlowResponseVO> queryCashFlow(@ParameterObject @Valid DailyRegistrationQuery query) {
+        return ApiResponse.success(dailyRegistrationService.queryCashFlow(query));
     }
 }

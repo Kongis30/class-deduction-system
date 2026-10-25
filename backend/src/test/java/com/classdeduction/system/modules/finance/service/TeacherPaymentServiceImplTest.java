@@ -141,6 +141,23 @@ class TeacherPaymentServiceImplTest {
     }
 
     @Test
+    void shouldExposeTeacherPayrollAsHistoryOnlyAfterItIsMarkedPaid() {
+        TeacherPaymentEntity payment = new TeacherPaymentEntity();
+        payment.setId(901L);
+        payment.setStatus("PENDING");
+        when(paymentMapper.selectById(901L)).thenReturn(payment);
+        when(paymentMapper.updateById(any(TeacherPaymentEntity.class))).thenReturn(1);
+
+        teacherPaymentService.confirmPayment(901L, 88L);
+
+        ArgumentCaptor<TeacherPaymentEntity> paymentCaptor = ArgumentCaptor.forClass(TeacherPaymentEntity.class);
+        verify(paymentMapper).updateById(paymentCaptor.capture());
+        assertThat(paymentCaptor.getValue().getStatus()).isEqualTo("PAID");
+        assertThat(paymentCaptor.getValue().getPaidBy()).isEqualTo(88L);
+        assertThat(paymentCaptor.getValue().getPaidAt()).isNotNull();
+    }
+
+    @Test
     void shouldQueryOnlyConfirmedRecordsForUnpaidLessons() {
         UnpaidLessonQuery query = new UnpaidLessonQuery();
         query.setTeacherId(701L);

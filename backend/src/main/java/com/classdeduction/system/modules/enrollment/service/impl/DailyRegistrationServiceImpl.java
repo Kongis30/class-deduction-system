@@ -5,6 +5,9 @@ import com.classdeduction.system.modules.enrollment.dto.DailyRegistrationQuery;
 import com.classdeduction.system.modules.enrollment.dto.DataSummaryQuery;
 import com.classdeduction.system.modules.enrollment.service.DailyRegistrationService;
 import com.classdeduction.system.modules.enrollment.service.DataSummaryService;
+import com.classdeduction.system.modules.enrollment.mapper.DailyCashFlowMapper;
+import com.classdeduction.system.modules.enrollment.vo.DailyCashFlowResponseVO;
+import com.classdeduction.system.modules.enrollment.vo.DailyCashFlowRow;
 import com.classdeduction.system.modules.enrollment.vo.DailyRegistrationResponseVO;
 import com.classdeduction.system.modules.enrollment.vo.DataSummaryResponseVO;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +30,32 @@ public class DailyRegistrationServiceImpl implements DailyRegistrationService {
     private static final BigDecimal ZERO = BigDecimal.ZERO;
 
     private final DataSummaryService dataSummaryService;
+    private final DailyCashFlowMapper dailyCashFlowMapper;
+
+    @Override
+    public DailyCashFlowResponseVO queryCashFlow(DailyRegistrationQuery query) {
+        LocalDateTime fromTime = startOfDay(query.getFromDate());
+        LocalDateTime toTime = startOfDay(query.getToDate().plusDays(1));
+        List<DailyCashFlowRow> rows = dailyCashFlowMapper.selectByPeriod(
+                fromTime, toTime, query.getOperatorUserId());
+        BigDecimal incoming = ZERO;
+        BigDecimal outgoing = ZERO;
+        BigDecimal internal = ZERO;
+        long count = 0;
+        for (DailyCashFlowRow row : rows) {
+            BigDecimal amount = value(row.getAmount()).abs();
+            if (row.isInternalTransfer()) {
+                if (!row.isVoided()) internal = internal.add(amount);
+                continue;
+            }
+            if (row.isVoided()) continue;
+            count++;
+            if ("IN".equals(row.getDirection())) incoming = incoming.add(amount);
+            else outgoing = outgoing.add(amount);
+        }
+        return new DailyCashFlowResponseVO(query.getFromDate(), query.getToDate(), count,
+                incoming, outgoing, incoming.subtract(outgoing), internal, rows);
+    }
 
     @Override
     public DailyRegistrationResponseVO query(DailyRegistrationQuery query) {

@@ -1178,7 +1178,7 @@ class EnrollmentOrderServiceImplTest {
         verify(notificationLogMapper, atLeastOnce()).delete(any());
         verify(packageTeacherAssignmentMapper).delete(any());
         verify(packageBalanceSnapshotMapper).deleteById(3001L);
-        verify(paymentRecordMapper).delete(any());
+        verify(paymentRecordMapper, never()).delete(any());
         verify(receiptRecordMapper).delete(any());
         verify(enrollmentOrderMapper).update(org.mockito.ArgumentMatchers.isNull(), any());
         verify(enrollmentOrderMapper).deleteById(2001L);
@@ -1235,6 +1235,7 @@ class EnrollmentOrderServiceImplTest {
         when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment));
         when(paymentAllocationMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(enrollmentOrderMapper.updateById(order)).thenReturn(1);
+        when(enrollmentOrderMapper.deleteById(2001L)).thenReturn(1);
         when(studentCreditService.reverseTopUpUpToAvailable(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new BigDecimal("100.00"));
 
@@ -1245,7 +1246,7 @@ class EnrollmentOrderServiceImplTest {
         assertThat(transactionDeleted).isTrue();
         verify(studentCreditService).reverseTopUpUpToAvailable(101L, 2001L, new BigDecimal("100.00"),
                 new BigDecimal("100.00"), 9L, "Admin", "Deleted Credit top-up receipt RCP202610120001");
-        verify(paymentRecordMapper).delete(any());
+        verify(paymentRecordMapper, never()).delete(any());
         verify(receiptRecordMapper).delete(any());
         verify(enrollmentOrderParticipantMapper).delete(any());
         verify(enrollmentOrderMapper).deleteById(2001L);
@@ -1284,6 +1285,7 @@ class EnrollmentOrderServiceImplTest {
         when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(List.of(participant));
         when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment));
         when(paymentAllocationMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(enrollmentOrderMapper.deleteById(2001L)).thenReturn(1);
         when(studentCreditService.reverseTopUpUpToAvailable(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new BigDecimal("30.00"));
         when(receiptRecordMapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
@@ -1298,7 +1300,7 @@ class EnrollmentOrderServiceImplTest {
         verify(receiptRecordMapper).deleteById(3001L);
         verify(paymentRecordMapper, never()).delete(any());
         verify(enrollmentOrderParticipantMapper, never()).delete(any());
-        verify(enrollmentOrderMapper, never()).deleteById(2001L);
+        verify(enrollmentOrderMapper).deleteById(2001L);
     }
 
     @Test
@@ -1777,6 +1779,58 @@ class EnrollmentOrderServiceImplTest {
         verify(coursePackageMapper, never()).selectList(any());
         verify(paymentRecordMapper, never()).insert(any(PaymentRecordEntity.class));
         verify(enrollmentOrderMapper, never()).updateById(any(EnrollmentOrderEntity.class));
+    }
+
+    @Test
+    void shouldKeepUndoneRefundAsVoidedAuditRecord() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setOrderStatus("CANCELLED");
+        order.setPaymentStatus("REFUNDED");
+        order.setOriginalAmount(new BigDecimal("100.00"));
+        order.setAmountDue(new BigDecimal("100.00"));
+        order.setReceivedAmount(BigDecimal.ZERO);
+        order.setDiscountAmount(BigDecimal.ZERO);
+
+        ReceiptRecordEntity receipt = new ReceiptRecordEntity();
+        receipt.setId(9002L);
+        receipt.setEnrollmentOrderId(2001L);
+        receipt.setPaymentRecordId(8001L);
+        receipt.setTemplateCode("REFUND_RECEIPT");
+
+        PaymentRecordEntity refund = new PaymentRecordEntity();
+        refund.setId(8001L);
+        refund.setEnrollmentOrderId(2001L);
+        refund.setPaymentType("REFUND");
+        refund.setPaymentStatus("REFUNDED");
+        refund.setAmount(new BigDecimal("-100.00"));
+
+        PaymentRecordEntity originalPayment = new PaymentRecordEntity();
+        originalPayment.setId(8000L);
+        originalPayment.setEnrollmentOrderId(2001L);
+        originalPayment.setPaymentType("PAYMENT");
+        originalPayment.setPaymentStatus("PAID");
+        originalPayment.setAmount(new BigDecimal("100.00"));
+
+        when(receiptRecordMapper.selectById(9002L)).thenReturn(receipt);
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+        when(paymentRecordMapper.selectById(8001L)).thenReturn(refund);
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(originalPayment));
+        when(paymentRecordMapper.deleteById(8001L)).thenReturn(1);
+        when(receiptRecordMapper.deleteById(9002L)).thenReturn(1);
+
+        enrollmentOrderService.deleteRefundReceipt(9002L,
+                new CurrentUserResponse(9L, "admin", "Admin", "STAFF", null, null, List.of("STAFF")));
+
+        verify(paymentRecordMapper).updateById(paymentCaptor.capture());
+        assertThat(paymentCaptor.getValue().getPaymentStatus()).isEqualTo("VOIDED");
+        assertThat(paymentCaptor.getValue().getAmount()).isEqualByComparingTo("-100.00");
+        verify(paymentRecordMapper).deleteById(8001L);
+        verify(enrollmentOrderMapper).updateById(orderCaptor.capture());
+        assertThat(orderCaptor.getValue().getReceivedAmount()).isEqualByComparingTo("100.00");
+        assertThat(orderCaptor.getValue().getPaymentStatus()).isEqualTo("PAID");
+        assertThat(orderCaptor.getValue().getOrderStatus()).isEqualTo("ACTIVE");
     }
 
     @Test

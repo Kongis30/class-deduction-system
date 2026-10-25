@@ -666,6 +666,9 @@ class RegistrationIntakeServiceImplTest {
     void shouldSaveCourseDiscountAndInitialPaymentAllocation() {
         stubSuccessfulIntake(false);
         when(paymentMethodMapper.selectOne(any())).thenReturn(new PaymentMethodEntity());
+        EnrollmentOrderItemEntity savedItem = new EnrollmentOrderItemEntity();
+        savedItem.setId(2101L);
+        when(enrollmentOrderItemMapper.selectById(2101L)).thenReturn(savedItem);
         when(paymentRecordMapper.insert(any(PaymentRecordEntity.class))).thenAnswer(invocation -> {
             PaymentRecordEntity payment = invocation.getArgument(0);
             payment.setId(7101L);
@@ -684,6 +687,10 @@ class RegistrationIntakeServiceImplTest {
         RegistrationIntakeRequest.PaymentPayload payment = new RegistrationIntakeRequest.PaymentPayload();
         payment.setPaymentMethod("CASH");
         payment.setAmount(new BigDecimal("100.00"));
+        payment.setPaidAt(java.time.LocalDateTime.of(2026, 10, 25, 14, 30));
+        payment.setHandledByUserId(88L);
+        payment.setHandledByName("Amy");
+        payment.setRemark("Cash received at front desk");
         RegistrationIntakeRequest.CoursePaymentAllocationPayload allocation =
                 new RegistrationIntakeRequest.CoursePaymentAllocationPayload();
         allocation.setOrderItemLineNo(1);
@@ -698,6 +705,16 @@ class RegistrationIntakeServiceImplTest {
         assertThat(orderItemCaptor.getValue().getAmountDue()).isEqualByComparingTo("725.00");
         assertThat(orderItemCaptor.getValue().getPaidAmount()).isEqualByComparingTo("100.00");
         assertThat(orderItemCaptor.getValue().getBalanceAmount()).isEqualByComparingTo("625.00");
+        ArgumentCaptor<PaymentRecordEntity> paymentCaptor = ArgumentCaptor.forClass(PaymentRecordEntity.class);
+        verify(paymentRecordMapper).insert(paymentCaptor.capture());
+        assertThat(paymentCaptor.getValue().getEnrollmentOrderId()).isEqualTo(2001L);
+        assertThat(paymentCaptor.getValue().getPaymentType()).isEqualTo("PAYMENT");
+        assertThat(paymentCaptor.getValue().getPaymentStatus()).isEqualTo("PAID");
+        assertThat(paymentCaptor.getValue().getAmount()).isEqualByComparingTo("100.00");
+        assertThat(paymentCaptor.getValue().getPaidAt()).isEqualTo(payment.getPaidAt());
+        assertThat(paymentCaptor.getValue().getHandledByUserId()).isEqualTo(88L);
+        assertThat(paymentCaptor.getValue().getHandledByName()).isEqualTo("Amy");
+        assertThat(paymentCaptor.getValue().getRemark()).isEqualTo("Cash received at front desk");
         verify(paymentAllocationService).recordExplicitAllocations(
                 any(PaymentRecordEntity.class),
                 org.mockito.ArgumentMatchers.eq(2001L),

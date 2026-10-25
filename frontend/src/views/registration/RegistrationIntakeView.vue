@@ -1,6 +1,7 @@
 <template>
   <div
     class="registration-page"
+    :class="{ 'registration-page--print-blocked': !canPrintSavedReceipt }"
     :data-mobile-step="appStore.isMobileViewport && (!isReadOnly || editingCorrection) ? mobileRegistrationStep : 'readonly'"
   >
     <el-alert
@@ -1346,6 +1347,7 @@
       <el-input v-if="receiptEditingEnabled && !isPrivateAllReceiptView" v-model="form.remark" placeholder="Registration remark" class="remark-input" />
       <el-button v-if="!isReadOnly" class="action-primary" type="primary" size="large" :loading="submitting" @click="submitForm">Save</el-button>
       <el-button
+        v-if="canPrintSavedReceipt"
         class="action-print"
         size="large"
         :disabled="isReadOnly && (historicalOrderLoading || !historicalOrder)"
@@ -1383,7 +1385,7 @@
           @click="saveCorrection"
         >Save changes</el-button>
         <el-button
-          v-if="isReadOnly && !editingCorrection"
+          v-if="canPrintSavedReceipt"
           class="action-print"
           :disabled="historicalOrderLoading || !historicalOrder"
           @click="printForm"
@@ -1755,6 +1757,11 @@ const savingCorrection = ref(false);
 const correctionBaseline = ref<EnrollmentOrderCorrectionPayload | null>(null);
 const correctionSetupLoading = ref(false);
 const historicalOrder = ref<EnrollmentOrderDetailItem | null>(null);
+// 只有已保存且当前处于查看状态的订单收据可以打印。
+const canPrintSavedReceipt = computed(() => isReadOnly.value
+  && !editingCorrection.value
+  && !historicalOrderLoading.value
+  && historicalOrder.value !== null);
 const correctionDataWarnings = computed(() => (historicalOrder.value?.items ?? []).flatMap((item) => {
   if (!item.packageUnit || item.packageQuantity == null || item.entitlementPurchasedQuantity == null
       || Number(item.packageQuantity) === Number(item.entitlementPurchasedQuantity)) return [];
@@ -5639,8 +5646,8 @@ function notifyRegistrationSaved(saved: RegistrationIntakeResult) {
 }
 
 async function printForm() {
-  if (isReadOnly.value && (historicalOrderLoading.value || !historicalOrder.value)) {
-    ElMessage.warning('Wait for the saved receipt to load before printing.');
+  if (!canPrintSavedReceipt.value) {
+    ElMessage.warning('Save the registration and finish editing before printing the receipt.');
     return;
   }
   await nextTick();
@@ -9793,6 +9800,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 @media print {
+  /* 浏览器快捷键打印也必须遵守与 Print 按钮相同的保存状态限制。 */
+  .registration-page--print-blocked {
+    display: none !important;
+  }
+
   /* 打印页按纸张分页，不继承屏幕窄视口触发的滚动布局。 */
   .no-print,
   .screen-only,
