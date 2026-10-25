@@ -114,7 +114,9 @@ const saving = ref(false);
 const previewing = ref(false);
 const isCreate = ref(false);
 const expandedKey = ref<number | null>(null);
-const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+function todayInNewYork() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
 const initialFingerprint = ref('');
 const isDirty = computed(() => JSON.stringify(segments.value) !== initialFingerprint.value);
 let nextKey = 1;
@@ -162,6 +164,7 @@ watch(segments, () => { preview.value = null; previewError.value = ''; }, { deep
 
 // 旧周课表包装成单段；跨越今天的段拆出只读历史，避免编辑未来时重算过去的报名日期。
 function periodsFromClass(item: ClassGroupItem): EditablePeriod[] {
+  const today = todayInNewYork();
   const baseEnd = item.scheduleBaseEndDate || item.endDate || '';
   const grouped = new Map<string, EditablePeriod>();
   for (const slot of item.scheduleSlots || []) {
@@ -199,7 +202,7 @@ function periodsFromClass(item: ClassGroupItem): EditablePeriod[] {
   });
 }
 
-function isPastPeriod(period: EditablePeriod) { return Boolean(period.endDate && period.endDate < today); }
+function isPastPeriod(period: EditablePeriod) { return Boolean(period.endDate && period.endDate < todayInNewYork()); }
 function slotLabel(slot: SlotDef) {
   return `${['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][slot.weekday] || '?'} ${slot.startTime}–${slot.endTime}`;
 }
