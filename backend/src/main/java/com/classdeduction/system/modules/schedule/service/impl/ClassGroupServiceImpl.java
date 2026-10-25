@@ -1865,6 +1865,14 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             if (segmentSlots.isEmpty()) {
                 throw new BusinessException("CLASS_SCHEDULE_REQUIRED", "Add a weekly time to every schedule period.");
             }
+            boolean hasScheduledDay = segmentSlots.stream().anyMatch(slot -> {
+                LocalDate first = ClassSlotRotation.firstDateOnOrAfter(start, slot.getWeekday());
+                return first != null && !first.isAfter(end);
+            });
+            if (!hasScheduledDay) {
+                throw new BusinessException("CLASS_SCHEDULE_EMPTY_PERIOD",
+                        "A schedule period must include at least one selected weekday.");
+            }
             for (ClassGroupScheduleSlotEntity slot : segmentSlots) {
                 slot.setEffectiveStartDate(start);
                 slot.setEffectiveEndDate(end);

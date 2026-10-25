@@ -743,7 +743,6 @@ import {
 } from '@/api/schedule';
 import GroupClassScheduleEditor from '@/components/GroupClassScheduleEditor.vue';
 import GroupCourseModelPanel from '@/views/system/GroupCourseModelPanel.vue';
-import { scheduleEndTimeForApi, scheduleDurationMinutes } from '@/utils/schedule-time';
 import type { CampusItem, ClassGroupItem, ClassroomItem, CoursePriceOptionItem, CourseProductItem, EntityId, TeacherItem } from '@/types/domain';
 
 type CourseMode = 'ONE_ON_ONE' | 'GROUP';
@@ -952,21 +951,6 @@ const form = reactive({
   halfDayPrice: undefined as number | undefined,
   courseProductId: undefined as EntityId | undefined,
   actualClasses: [] as string[],
-  groupClassroomId: undefined as EntityId | undefined,
-  groupScheduleSlots: [] as Array<{
-    teacherId?: EntityId;
-    subjectName?: string;
-    alternateTeacherId?: EntityId;
-    alternateSubjectName?: string;
-    alternateClassroomId?: EntityId;
-    alternateDeliveryMode?: 'IN_PERSON' | 'ONLINE' | string;
-    rotationAnchorDate?: string;
-    weekday: number;
-    startTime: string;
-    endTime: string;
-    plannedUnits: number;
-    attendanceOptions?: string;
-  }>,
   groupStartDate: '',
   groupEndDate: '',
   groupTotalSessions: 13 as number | undefined,
@@ -1580,12 +1564,6 @@ function openDialog(option?: CoursePriceOptionItem, gradeLabel = '') {
   form.actualClasses = option?.actualClasses?.map(item => item.actualClass || item.className).filter(Boolean) as string[]
     ?? existingActualClassNames(form.courseProductId, form.gradeBand)
     ?? expandGradeBand(form.gradeBand);
-  form.groupClassroomId = option?.groupClassroomId;
-  form.groupScheduleSlots = (option?.groupScheduleSlots ?? []).map(slot => ({
-    ...slot,
-    plannedUnits: Math.round(scheduleDurationMinutes(slot.startTime, slot.endTime) / 30),
-    attendanceOptions: normalizeSlotAttendance(slot.attendanceOptions),
-  }));
   form.groupStartDate = option?.groupStartDate ?? '';
   form.groupEndDate = option?.groupEndDate ?? '';
   form.groupTotalSessions = Number(form.packageQuantity ?? option?.groupTotalSessions ?? 13);
@@ -1699,24 +1677,6 @@ function buildPayload(status = form.status): CoursePriceOptionSavePayload {
     courseProductId: form.courseProductId,
     actualClasses: resolvePayloadActualClasses(),
     groupTeacherId: undefined,
-    groupClassroomId: canEditActualClassesInOptionForm.value ? form.groupClassroomId : undefined,
-    groupScheduleSlots: canEditActualClassesInOptionForm.value
-      ? form.groupScheduleSlots.map(({ teacherId, subjectName, alternateTeacherId, alternateSubjectName,
-        alternateClassroomId, alternateDeliveryMode,
-        rotationAnchorDate, weekday, startTime, endTime, attendanceOptions }) => ({
-          teacherId,
-          subjectName: subjectName?.trim() || undefined,
-          alternateTeacherId,
-          alternateSubjectName: alternateSubjectName?.trim() || undefined,
-          alternateClassroomId,
-          alternateDeliveryMode,
-          rotationAnchorDate,
-          weekday,
-          startTime,
-          endTime: scheduleEndTimeForApi(endTime),
-          attendanceOptions: normalizeSlotAttendance(attendanceOptions),
-        }))
-      : undefined,
     groupBillingType: formTeachingMode.value === 'GROUP' ? packageUnit : undefined,
     groupStartDate: formTeachingMode.value === 'GROUP' && fixedDateGroup.value ? form.groupStartDate || undefined : undefined,
     groupEndDate: formTeachingMode.value === 'GROUP' && fixedDateGroup.value ? form.groupEndDate || undefined : undefined,
@@ -1751,8 +1711,6 @@ function payloadFromRow(row: CoursePriceOptionItem, status: string): CoursePrice
     classId: row.classId,
     actualClasses: row.actualClasses?.map(item => item.actualClass || item.className).filter(Boolean),
     groupTeacherId: undefined,
-    groupClassroomId: row.groupClassroomId,
-    groupScheduleSlots: row.groupScheduleSlots,
     groupBillingType: row.groupBillingType,
     groupStartDate: row.groupStartDate,
     groupEndDate: row.groupEndDate,
@@ -2225,14 +2183,6 @@ function formatHours(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
-function plannedUnitsForSlot(startTime: string, endTime: string) {
-  return Math.max(1, Math.round(scheduleDurationMinutes(startTime, endTime) / 30));
-}
-
-function normalizeSlotAttendance(value?: string) {
-  const normalized = String(value || '').trim().toUpperCase();
-  return normalized === 'MORNING' || normalized === 'AFTERNOON' ? normalized : 'ALL';
-}
 </script>
 
 <style scoped>
@@ -2990,34 +2940,6 @@ function normalizeSlotAttendance(value?: string) {
   font-size: 12px;
 }
 
-.slot-teacher-list {
-  display: grid;
-  gap: 8px;
-}
-
-.weekly-schedule-panel {
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-bottom: 4px;
-}
-
-.weekly-schedule-panel :deep(.weekly-time-selector) {
-  min-width: 760px;
-}
-
-.slot-teacher-row {
-  display: grid;
-  grid-template-columns: minmax(130px, 0.8fr) minmax(130px, 0.75fr) minmax(160px, 1fr) minmax(160px, 1fr) minmax(112px, 0.65fr);
-  align-items: end;
-  gap: 10px;
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid #dbeafe;
-  border-radius: 8px;
-  background: #fbfdff;
-}
-
 .custom-hours {
   display: flex;
   align-items: center;
@@ -3119,10 +3041,6 @@ function normalizeSlotAttendance(value?: string) {
     grid-template-columns: 1fr;
   }
 
-  .slot-teacher-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
 }
 
 @media (max-width: 640px) {
@@ -3159,10 +3077,6 @@ function normalizeSlotAttendance(value?: string) {
 
   .registration-option-dialog :deep(.el-dialog__body) {
     padding: 12px;
-  }
-
-  .slot-teacher-row {
-    grid-template-columns: 1fr;
   }
 
 }
