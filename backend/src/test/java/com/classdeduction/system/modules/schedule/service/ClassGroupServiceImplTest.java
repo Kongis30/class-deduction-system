@@ -34,6 +34,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.impl.ClassGroupServiceImpl;
+import com.classdeduction.system.modules.schedule.service.ClassAdjustedSlotReservations;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeAll;
@@ -84,6 +85,9 @@ class ClassGroupServiceImplTest {
 
     @Mock
     private ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
+
+    @Mock
+    private ClassAdjustedSlotReservations adjustedSlotReservations;
 
     @Mock
     private StudentMapper studentMapper;
@@ -152,12 +156,15 @@ class ClassGroupServiceImplTest {
                 });
         lenient().when(lessonOccurrenceMapper.selectByIdForUpdate(any()))
                 .thenAnswer(invocation -> lessonOccurrenceMapper.selectById(invocation.getArgument(0)));
+        lenient().when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of());
+        lenient().when(adjustedSlotReservations.load(any())).thenReturn(java.util.Set.of());
         classGroupService = new ClassGroupServiceImpl(
                 classGroupMapper,
                 classEnrollmentMapper,
                 lessonOccurrenceMapper,
                 lessonRecordMapper,
                 classGroupScheduleSlotMapper,
+                adjustedSlotReservations,
                 studentMapper,
                 teacherMapper,
                 classroomMapper,
@@ -525,9 +532,11 @@ class ClassGroupServiceImplTest {
         when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
         when(lessonRecordMapper.selectOne(any())).thenReturn(null);
-        when(lessonOccurrenceMapper.selectCount(any())).thenAnswer(invocation ->
-                invocation.<com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<LessonOccurrenceEntity>>
-                        getArgument(0).getSqlSegment().contains("plannedTeacherId") ? 1L : 0L);
+        LessonOccurrenceEntity teacherConflict = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 10, 15));
+        teacherConflict.setId(2001L);
+        teacherConflict.setClassGroupId(999L);
+        teacherConflict.setPlannedTeacherId(702L);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(teacherConflict));
 
         assertThatThrownBy(() -> classGroupService.confirmLesson(501L, 1001L, Map.of(
                 "actualTeacherId", 702L,
@@ -566,9 +575,12 @@ class ClassGroupServiceImplTest {
                 LocalDate.of(2026, 1, 1), LocalDate.of(2026, 4, 30));
         when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
-        when(lessonOccurrenceMapper.selectCount(any())).thenAnswer(invocation ->
-                invocation.<LambdaQueryWrapper<LessonOccurrenceEntity>>getArgument(0)
-                        .getSqlSegment().contains("studentId") ? 1L : 0L);
+        LessonOccurrenceEntity studentConflict = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 9, 45));
+        studentConflict.setId(2001L);
+        studentConflict.setStudentId(601L);
+        studentConflict.setClassGroupId(null);
+        studentConflict.setPlannedEndAt(LocalDateTime.of(2026, 4, 12, 10, 0));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(studentConflict));
 
         assertThatThrownBy(() -> classGroupService.confirmLesson(501L, 1001L, Map.of(
                 "actualStartAt", "2026-04-12T09:30:00",
@@ -875,6 +887,116 @@ class ClassGroupServiceImplTest {
     }
 
     @Test
+    void shouldSwitchTeacherForOnePeriodAndAddSlotWithoutSchedulingTheGap() {
+        LocalDate firstMonday = AppTime.nowLocalDateTime().toLocalDate().plusDays(1);
+        while (firstMonday.getDayOfWeek().getValue() != 1) firstMonday = firstMonday.plusDays(1);
+        LocalDate firstPeriodEnd = firstMonday.plusDays(6);
+        LocalDate secondPeriodStart = firstMonday.plusDays(14);
+        LocalDate secondPeriodEnd = secondPeriodStart.plusDays(6);
+        LocalDate movedSecondPeriodStart = secondPeriodStart.plusDays(7);
+        LocalDate movedSecondPeriodEnd = movedSecondPeriodStart.plusDays(6);
+
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setStatus("ACTIVE");
+        classGroup.setStartDate(firstMonday);
+        classGroup.setEndDate(movedSecondPeriodEnd);
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+        when(teacherMapper.selectById(702L)).thenReturn(activeTeacher(702L));
+        when(teacherMapper.selectById(703L)).thenReturn(activeTeacher(703L));
+        when(teacherMapper.selectById(704L)).thenReturn(activeTeacher(704L));
+
+        ClassGroupScheduleSlotEntity firstExistingSlot = classSlot(801L, 702L, firstMonday, firstPeriodEnd, 1, "10:00", "12:00");
+        ClassGroupScheduleSlotEntity secondExistingSlot = classSlot(802L, 702L, secondPeriodStart, secondPeriodEnd, 1, "10:00", "12:00");
+        ClassGroupScheduleSlotEntity removedWednesdaySlot = classSlot(803L, 704L, secondPeriodStart, secondPeriodEnd, 3, "14:00", "16:00");
+        when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(firstExistingSlot, secondExistingSlot, removedWednesdaySlot));
+        LessonOccurrenceEntity oldFirstPeriodLesson = scheduledOccurrence(firstMonday.atTime(10, 0));
+        oldFirstPeriodLesson.setId(900L);
+        oldFirstPeriodLesson.setOccurrenceType("REGULAR");
+        oldFirstPeriodLesson.setPlannedEndAt(firstMonday.atTime(12, 0));
+        LessonOccurrenceEntity oldSecondPeriodLesson = scheduledOccurrence(secondPeriodStart.atTime(10, 0));
+        oldSecondPeriodLesson.setId(901L);
+        oldSecondPeriodLesson.setOccurrenceType("REGULAR");
+        oldSecondPeriodLesson.setPlannedEndAt(secondPeriodStart.atTime(12, 0));
+        LessonOccurrenceEntity oldRemovedSlotLesson = scheduledOccurrence(secondPeriodStart.plusDays(2).atTime(14, 0));
+        oldRemovedSlotLesson.setId(902L);
+        oldRemovedSlotLesson.setOccurrenceType("REGULAR");
+        oldRemovedSlotLesson.setPlannedEndAt(secondPeriodStart.plusDays(2).atTime(16, 0));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(
+                List.of(oldFirstPeriodLesson, oldSecondPeriodLesson, oldRemovedSlotLesson), List.of());
+        when(lessonOccurrenceMapper.delete(any())).thenReturn(3);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of());
+        when(classHolidayService.listHolidays(any())).thenReturn(List.of());
+
+        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
+                "segments", List.of(
+                        Map.of("startDate", firstMonday.toString(), "endDate", firstPeriodEnd.toString(), "slots", List.of(
+                                Map.of("slotLineageId", 801L, "teacherId", 702L, "weekday", 1, "startTime", "10:00", "endTime", "12:00")
+                        )),
+                        Map.of("startDate", movedSecondPeriodStart.toString(), "endDate", movedSecondPeriodEnd.toString(), "slots", List.of(
+                                Map.of("slotLineageId", 802L, "teacherId", 703L, "weekday", 1, "startTime", "10:00", "endTime", "12:00"),
+                                Map.of("teacherId", 704L, "weekday", 4, "startTime", "12:00", "endTime", "14:00")
+                        ))
+                )
+        ));
+
+        ArgumentCaptor<ClassGroupScheduleSlotEntity> savedSlots = ArgumentCaptor.forClass(ClassGroupScheduleSlotEntity.class);
+        verify(classGroupScheduleSlotMapper, times(3)).insert(savedSlots.capture());
+        assertThat(savedSlots.getAllValues()).extracting(ClassGroupScheduleSlotEntity::getTeacherId)
+                .containsExactly(702L, 703L, 704L);
+        assertThat(savedSlots.getAllValues().get(1).getEffectiveStartDate()).isEqualTo(movedSecondPeriodStart);
+        assertThat(savedSlots.getAllValues().get(2).getEffectiveStartDate()).isEqualTo(movedSecondPeriodStart);
+
+        verify(lessonOccurrenceMapper, times(3)).insert(occurrenceCaptor.capture());
+        assertThat(occurrenceCaptor.getAllValues())
+                .extracting(LessonOccurrenceEntity::getPlannedStartAt)
+                .containsExactly(firstMonday.atTime(10, 0), movedSecondPeriodStart.atTime(10, 0), movedSecondPeriodStart.plusDays(3).atTime(12, 0));
+        assertThat(occurrenceCaptor.getAllValues()).extracting(LessonOccurrenceEntity::getPlannedTeacherId)
+                .containsExactly(702L, 703L, 704L);
+        assertThat(result.get("generatedOccurrences")).isEqualTo(3);
+        assertThat(result.get("cancelledFutureOccurrences")).isEqualTo(3);
+    }
+
+    @Test
+    void shouldRejectOverlappingPeriodsWithActionableFeedbackBeforeChangingSchedule() {
+        LocalDate start = AppTime.nowLocalDateTime().toLocalDate().plusDays(1);
+        while (start.getDayOfWeek().getValue() != 1) start = start.plusDays(1);
+        LocalDate periodStart = start;
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setStatus("ACTIVE");
+        classGroup.setStartDate(start);
+        classGroup.setEndDate(start.plusDays(13));
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+
+        assertThatThrownBy(() -> classGroupService.updateClassSchedule(501L, Map.of("segments", List.of(
+                Map.of("startDate", periodStart.toString(), "endDate", periodStart.plusDays(6).toString(), "slots", List.of(
+                        Map.of("weekday", 1, "startTime", "10:00", "endTime", "12:00"))),
+                Map.of("startDate", periodStart.plusDays(6).toString(), "endDate", periodStart.plusDays(13).toString(), "slots", List.of(
+                        Map.of("weekday", 1, "startTime", "10:00", "endTime", "12:00")))
+        ))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Schedule periods cannot overlap.");
+
+        verify(classGroupMapper, never()).updateById(any(ClassGroupEntity.class));
+        verify(classGroupScheduleSlotMapper, never()).delete(any());
+    }
+
+    private ClassGroupScheduleSlotEntity classSlot(Long id, Long teacherId, LocalDate start, LocalDate end,
+                                                   int weekday, String startTime, String endTime) {
+        ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
+        slot.setId(id);
+        slot.setSlotLineageId(id);
+        slot.setTeacherId(teacherId);
+        slot.setEffectiveStartDate(start);
+        slot.setEffectiveEndDate(end);
+        slot.setWeekday(weekday);
+        slot.setStartTime(LocalTime.parse(startTime));
+        slot.setEndTime(LocalTime.parse(endTime));
+        return slot;
+    }
+
+    @Test
     void shouldPersistTeacherAndClassroomIndependentlyForEachWeeklySlot() {
         LocalDate futureDate = AppTime.nowLocalDateTime().toLocalDate().plusDays(1);
         ClassGroupEntity classGroup = new ClassGroupEntity();
@@ -974,6 +1096,7 @@ class ClassGroupServiceImplTest {
         conflict.setClassGroupId(null);
         conflict.setPackageId(800L);
         conflict.setStudentId(601L);
+        conflict.setPlannedTeacherId(702L);
         TeacherEntity teacher = new TeacherEntity();
         teacher.setTeacherName("Derek Wong");
         CoursePackageEntity coursePackage = new CoursePackageEntity();

@@ -11,6 +11,7 @@ import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMa
 import com.classdeduction.system.modules.enrollment.entity.ReceiptRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
+import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.enrollment.service.impl.ReceiptServiceImpl;
 import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,12 +47,15 @@ class ReceiptServiceImplTest {
     @Mock
     private EnrollmentOrderItemMapper enrollmentOrderItemMapper;
 
+    @Mock
+    private JsonHelper jsonHelper;
+
     private ReceiptServiceImpl receiptService;
 
     @BeforeEach
     void setUp() {
         receiptService = new ReceiptServiceImpl(
-                receiptRecordMapper, studentMapper, enrollmentOrderMapper, enrollmentOrderItemMapper);
+                receiptRecordMapper, studentMapper, enrollmentOrderMapper, enrollmentOrderItemMapper, jsonHelper);
     }
 
     @Test

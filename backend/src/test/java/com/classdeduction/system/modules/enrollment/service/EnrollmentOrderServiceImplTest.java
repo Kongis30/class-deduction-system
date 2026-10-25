@@ -58,6 +58,7 @@ import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEn
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassHolidayMapper;
+import com.classdeduction.system.modules.schedule.service.ClassAdjustedSlotReservations;
 import com.classdeduction.system.modules.schedule.mapper.LessonAdjustmentLogMapper;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import com.classdeduction.system.modules.systemconfig.entity.NotificationLogEntity;
@@ -77,11 +78,13 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -190,6 +193,9 @@ class EnrollmentOrderServiceImplTest {
     private ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
 
     @Mock
+    private ClassAdjustedSlotReservations adjustedSlotReservations;
+
+    @Mock
     private ClassHolidayMapper classHolidayMapper;
 
     @Mock
@@ -256,6 +262,7 @@ class EnrollmentOrderServiceImplTest {
                         new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<>()));
         lenient().when(classGroupMapper.selectByIdForUpdate(any()))
                 .thenAnswer(invocation -> classGroupMapper.selectById(invocation.getArgument(0)));
+        lenient().when(adjustedSlotReservations.load(any())).thenReturn(Set.of());
         lenient().when(groupCourseProjectMapper.selectByIdForUpdate(any()))
                 .thenAnswer(invocation -> groupCourseProjectMapper.selectById(invocation.getArgument(0)));
         lenient().when(groupRegistrationPlanMapper.selectByIdForUpdate(any()))
@@ -299,6 +306,7 @@ class EnrollmentOrderServiceImplTest {
                 classGroupMapper,
                 classEnrollmentMapper,
                 classGroupScheduleSlotMapper,
+                adjustedSlotReservations,
                 classHolidayMapper,
                 groupCourseProjectMapper,
                 groupRegistrationPlanMapper,
@@ -372,6 +380,56 @@ class EnrollmentOrderServiceImplTest {
         assertThat(inserted).isZero();
         verify(classGroupMapper).selectByIdForUpdate(901L);
         verify(classGroupScheduleSlotMapper).selectList(any());
+    }
+
+    @Test
+    void shouldRenewOnlyOccurrencesInsideSegmentedSchedulePeriods() {
+        LocalDate firstMonday = LocalDate.now(com.classdeduction.system.common.time.AppTime.APP_ZONE_ID).plusDays(1);
+        while (firstMonday.getDayOfWeek().getValue() != 1) firstMonday = firstMonday.plusDays(1);
+        LocalDate firstPeriodEnd = firstMonday.plusDays(6);
+        LocalDate secondPeriodStart = firstMonday.plusDays(14);
+        LocalDate secondPeriodEnd = secondPeriodStart.plusDays(6);
+
+        ClassGroupEntity group = new ClassGroupEntity();
+        group.setId(901L);
+        group.setStatus("ACTIVE");
+        group.setBillingType("MONTHLY");
+        group.setStartMonth(firstMonday);
+        group.setEndMonth(secondPeriodEnd);
+        group.setStartDate(firstMonday);
+        group.setEndDate(secondPeriodEnd);
+        group.setScheduleBaseEndDate(secondPeriodEnd);
+        when(classGroupMapper.selectList(any())).thenReturn(List.of(group));
+        when(classGroupMapper.selectById(901L)).thenReturn(group);
+
+        ClassGroupScheduleSlotEntity firstSlot = segmentedSlot(801L, 702L, firstMonday, firstPeriodEnd, 1);
+        ClassGroupScheduleSlotEntity secondSlot = segmentedSlot(802L, 703L, secondPeriodStart, secondPeriodEnd, 1);
+        when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(firstSlot, secondSlot));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
+        when(classHolidayService.listHolidays((Long) null)).thenReturn(List.of());
+
+        int inserted = enrollmentOrderService.renewActiveClassOccurrences();
+
+        ArgumentCaptor<LessonOccurrenceEntity> occurrences = ArgumentCaptor.forClass(LessonOccurrenceEntity.class);
+        verify(lessonOccurrenceMapper, times(2)).insert(occurrences.capture());
+        assertThat(inserted).isEqualTo(2);
+        assertThat(occurrences.getAllValues()).extracting(LessonOccurrenceEntity::getPlannedStartAt)
+                .containsExactly(firstMonday.atTime(10, 0), secondPeriodStart.atTime(10, 0));
+        assertThat(occurrences.getAllValues()).extracting(LessonOccurrenceEntity::getPlannedTeacherId)
+                .containsExactly(702L, 703L);
+    }
+
+    private ClassGroupScheduleSlotEntity segmentedSlot(Long id, Long teacherId, LocalDate start, LocalDate end, int weekday) {
+        ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
+        slot.setId(id);
+        slot.setSlotLineageId(id);
+        slot.setTeacherId(teacherId);
+        slot.setWeekday(weekday);
+        slot.setStartTime(LocalTime.of(10, 0));
+        slot.setEndTime(LocalTime.of(12, 0));
+        slot.setEffectiveStartDate(start);
+        slot.setEffectiveEndDate(end);
+        return slot;
     }
 
     @Test

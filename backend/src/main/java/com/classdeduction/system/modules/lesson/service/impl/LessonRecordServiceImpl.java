@@ -538,15 +538,31 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             throw new BusinessException("REJECT_REASON_REQUIRED", "Reject reason is required.");
         }
         LessonRecordEntity record = requireRecord(recordId);
+        // 与改排课、最终确认共用 occurrence → record 的锁顺序，避免拒绝提交和回收同时覆盖状态。
+        LessonOccurrenceEntity occurrence = lessonOccurrenceMapper.selectByIdForUpdate(record.getOccurrenceId());
+        if (occurrence == null) {
+            throw new BusinessException("LESSON_OCCURRENCE_NOT_FOUND", "Lesson occurrence not found.");
+        }
+        record = lessonRecordMapper.selectByIdForUpdate(recordId);
+        if (record == null) {
+            throw new BusinessException("LESSON_RECORD_NOT_FOUND", "Lesson record not found.");
+        }
         if (!CONFIRM_STAGE_PENDING_ADMIN.equals(record.getConfirmStage())) {
             throw new BusinessException("INVALID_CONFIRM_STAGE", "Only pending lesson records can be rejected.");
         }
-        LessonOccurrenceEntity occurrence = lessonOccurrenceMapper.selectById(record.getOccurrenceId());
         if (occurrence != null && occurrence.getPrivateLessonGroupId() != null) {
             List<LessonRecordEntity> groupRecords = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
                     .eq(LessonRecordEntity::getOccurrenceId, occurrence.getId())
                     .eq(LessonRecordEntity::getConfirmStage, CONFIRM_STAGE_PENDING_ADMIN)
                     .eq(LessonRecordEntity::getIsDeleted, 0));
+            groupRecords = lessonRecordMapper.selectByIdsForUpdate(groupRecords.stream()
+                    .map(LessonRecordEntity::getId).sorted().toList());
+            groupRecords = groupRecords.stream()
+                    .filter(item -> CONFIRM_STAGE_PENDING_ADMIN.equals(item.getConfirmStage()))
+                    .toList();
+            if (groupRecords.isEmpty()) {
+                throw new BusinessException("INVALID_CONFIRM_STAGE", "Only pending lesson records can be rejected.");
+            }
             LocalDateTime rejectedAt = AppTime.nowLocalDateTime();
             for (LessonRecordEntity groupRecord : groupRecords) {
                 groupRecord.setConfirmStage(CONFIRM_STAGE_REJECTED);
@@ -1897,7 +1913,11 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     }
 
     private LessonOccurrenceEntity requireConfirmableOccurrence(Long id) {
-        LessonOccurrenceEntity occurrence = requireOccurrence(id);
+        // 教师提交和管理员确认先锁 occurrence，使改排课能原子判断、回收待处理提交。
+        LessonOccurrenceEntity occurrence = lessonOccurrenceMapper.selectByIdForUpdate(id);
+        if (occurrence == null) {
+            throw new BusinessException("LESSON_OCCURRENCE_NOT_FOUND", "Lesson occurrence not found.");
+        }
         if (NON_CONFIRMABLE_PLANNING_STATUSES.contains(occurrence.getPlanningStatus())) {
             throw new BusinessException("LESSON_OCCURRENCE_NOT_CONFIRMABLE", "This planned lesson cannot be confirmed in its current planning status.");
         }

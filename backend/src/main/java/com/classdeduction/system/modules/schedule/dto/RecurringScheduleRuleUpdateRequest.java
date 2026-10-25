@@ -10,7 +10,8 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * 周期排课规则更新请求：修改规则、替换时段并重新生成未来未确认的计划课次。
+ * 周期排课规则更新请求：修改规则、替换时段并重新生成未开始的计划课次。
+ * 管理员可以显式选择回收已结束且未最终确认的私教课次。
  * 注意：packageId 不可变更，规则始终绑定原始课程包。
  */
 @Data
@@ -35,6 +36,9 @@ public class RecurringScheduleRuleUpdateRequest {
 
     @Schema(description = "Rule notes")
     private String notes;
+
+    @Schema(description = "Admin explicitly chose to reclaim ended, unconfirmed private lessons while editing the schedule")
+    private Boolean reclaimEndedUnconfirmedLessons;
 
     @Valid
     @NotEmpty(message = "At least one recurring slot is required")

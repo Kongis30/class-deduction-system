@@ -45,7 +45,8 @@ public final class PrivateLessonAllocation {
                         && Objects.equals(historicalSlot.getPlannedUnits(), currentSlot.getPlannedUnits())
                         && Objects.equals(historicalSlot.getAllocatedUnits(), Math.max(0,
                         (currentSlot.getAllocatedUnits() == null ? 0 : currentSlot.getAllocatedUnits())
-                                - leaveCarryoverBySlot.getOrDefault(currentSlot.getId(), 0))));
+                                - (currentSlot.getId() == null ? 0
+                                : leaveCarryoverBySlot.getOrDefault(currentSlot.getId(), 0)))));
     }
 
     /** 分配额或老师调整不改变重复课位的时间身份；旧版本对应课次已由当前快照覆盖。 */

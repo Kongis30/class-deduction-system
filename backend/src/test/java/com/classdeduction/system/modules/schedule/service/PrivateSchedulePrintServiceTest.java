@@ -1,5 +1,6 @@
 package com.classdeduction.system.modules.schedule.service;
 
+import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
@@ -10,6 +11,8 @@ import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEn
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleStartingBalanceMapper;
+import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.LessonAdjustmentLogMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -32,8 +35,11 @@ class PrivateSchedulePrintServiceTest {
     @Mock private RecurringScheduleRuleMapper ruleMapper;
     @Mock private RecurringScheduleSlotMapper slotMapper;
     @Mock private RecurringScheduleStartingBalanceMapper startingBalanceMapper;
+    @Mock private LessonOccurrenceMapper occurrenceMapper;
+    @Mock private LessonAdjustmentLogMapper adjustmentLogMapper;
     @Mock private TeacherMapper teacherMapper;
     @Mock private ClassroomMapper classroomMapper;
+    @Mock private JsonHelper jsonHelper;
 
     @Test
     void printHistoryKeepsLegacySlotWithoutTeacherOrClassroom() {
@@ -56,7 +62,8 @@ class PrivateSchedulePrintServiceTest {
         when(startingBalanceMapper.selectList(any())).thenReturn(List.of());
 
         PrivateSchedulePrintService service = new PrivateSchedulePrintService(coursePackageMapper,
-                groupMemberMapper, ruleMapper, slotMapper, startingBalanceMapper, teacherMapper, classroomMapper);
+                groupMemberMapper, ruleMapper, slotMapper, startingBalanceMapper, occurrenceMapper,
+                adjustmentLogMapper, teacherMapper, classroomMapper, jsonHelper);
         var revisions = service.listRevisions(7L);
 
         assertThat(revisions).hasSize(1);

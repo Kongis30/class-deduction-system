@@ -688,6 +688,7 @@ import type { FormInstance, FormRules } from 'element-plus';
 import dayjs from 'dayjs';
 
 import { extractErrorMessage } from '@/api/http';
+import { showScheduleError } from '@/utils/schedule-conflict-feedback';
 import { fetchAllClassrooms, fetchAllStudents, fetchAllTeachers } from '@/api/base-data';
 import { createScheduleAdjustment, fetchLessonOccurrences, fetchClassGroups, fetchClassStudents, fetchClassOccurrences, confirmClassLesson, rejectClassLesson, deleteClassGroup } from '@/api/schedule';
 import { fetchCoursePackages } from '@/api/enrollment';
@@ -1264,7 +1265,7 @@ async function submitClassConfirm(occId: string | number) {
         confirmSubmitMode.value = 'normal';
       await loadClassOccurrences(selectedClassId.value!);
     } catch (err) {
-      ElMessage.error(extractErrorMessage(err));
+      showScheduleError(err);
     } finally {
       submitting.value = false;
     }
@@ -1471,7 +1472,7 @@ async function submitClassAdjustment() {
       classAdjustDialogVisible.value = false;
       await loadClassOccurrences(selectedClassId.value!);
     } catch (err) {
-      ElMessage.error(extractErrorMessage(err));
+      showScheduleError(err);
     } finally {
       submitting.value = false;
     }
@@ -1665,7 +1666,7 @@ async function submitConfirm() {
 
       if (selectedPackageId.value) await loadPackageOccurrences(selectedPackageId.value);
     } catch (err) {
-      ElMessage.error(extractErrorMessage(err));
+      showScheduleError(err);
     } finally {
       submitting.value = false;
     }

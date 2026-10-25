@@ -58,6 +58,35 @@ class ClassScheduleDatesTest {
                 .containsExactly(LocalDate.of(2026, 10, 3), LocalDate.of(2026, 10, 17));
     }
 
+    @Test
+    void segmentedScheduleLeavesTheGapUnscheduled() {
+        ClassGroupScheduleSlotEntity firstPeriod = mondaySlot();
+        firstPeriod.setEffectiveStartDate(LocalDate.of(2026, 10, 5));
+        firstPeriod.setEffectiveEndDate(LocalDate.of(2026, 10, 11));
+        ClassGroupScheduleSlotEntity secondPeriod = mondaySlot();
+        secondPeriod.setEffectiveStartDate(LocalDate.of(2026, 10, 26));
+        secondPeriod.setEffectiveEndDate(LocalDate.of(2026, 11, 1));
+
+        assertThat(ClassScheduleDates.scheduledDays(LocalDate.of(2026, 10, 5), LocalDate.of(2026, 11, 1),
+                LocalDate.of(2026, 11, 1), List.of(firstPeriod, secondPeriod), date -> false))
+                .containsExactly(LocalDate.of(2026, 10, 5), LocalDate.of(2026, 10, 26));
+    }
+
+    @Test
+    void holidayExtensionContinuesUsingTheLastPeriodSchedule() {
+        ClassGroupScheduleSlotEntity firstPeriod = mondaySlot();
+        firstPeriod.setEffectiveStartDate(LocalDate.of(2026, 10, 5));
+        firstPeriod.setEffectiveEndDate(LocalDate.of(2026, 10, 18));
+        ClassGroupScheduleSlotEntity lastPeriod = mondaySlot();
+        lastPeriod.setEffectiveStartDate(LocalDate.of(2026, 10, 26));
+        lastPeriod.setEffectiveEndDate(LocalDate.of(2026, 11, 1));
+
+        assertThat(ClassScheduleDates.endDateAfterHolidays(LocalDate.of(2026, 10, 5),
+                LocalDate.of(2026, 11, 1), "MONTHLY", null, List.of(firstPeriod, lastPeriod),
+                date -> date.equals(LocalDate.of(2026, 10, 26))))
+                .isEqualTo(LocalDate.of(2026, 11, 2));
+    }
+
     private LocalDate recalculate(Set<LocalDate> holidays) {
         return ClassScheduleDates.endDateAfterHolidays(START, BASE_END,
                 "MONTHLY", null, MONDAY_SCHEDULE, holidays::contains);

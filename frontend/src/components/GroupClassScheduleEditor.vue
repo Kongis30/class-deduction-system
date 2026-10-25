@@ -293,6 +293,7 @@ async function saveChanges() {
 
 <style scoped>
 .class-period-dialog__body { max-height: min(72vh, 820px); overflow: auto; padding-right: 4px; }
+.class-period-dialog :deep(.el-alert__title) { white-space: pre-line; }
 .class-period-dialog__intro { margin: 0 0 14px; color: #66758b; font-size: 13px; }
 .class-period { border: 1px solid #d7e1ec; border-radius: 10px; margin-bottom: 10px; overflow: hidden; background: #fff; }
 .class-period__heading { display: flex; align-items: center; gap: 4px; padding: 6px 12px; background: #f6f9fc; }

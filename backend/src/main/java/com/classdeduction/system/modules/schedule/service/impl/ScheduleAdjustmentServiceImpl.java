@@ -6,10 +6,12 @@ import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
+import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
+import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
@@ -58,6 +60,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Stream;
 import java.util.stream.Collectors;
 
 /**
@@ -83,6 +86,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
+    private final CourseProductMapper courseProductMapper;
     private final JsonHelper jsonHelper;
     private final ClassHolidayService classHolidayService;
     private final RecurringScheduleRuleService recurringScheduleRuleService;
@@ -1186,19 +1190,19 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     private void ensureNoConflicts(LessonOccurrenceEntity target, Long ignoredOccurrenceId) {
         for (Long studentId : studentIdsForOccurrence(target)) {
             if (hasStudentConflict(target, studentId, ignoredOccurrenceId)) {
-                throwConflict("STUDENT", studentId, "Student conflict detected for the adjusted lesson.",
+                throwConflict("STUDENT", studentId,
                         target, LessonOccurrenceEntity::getStudentId, studentId, ignoredOccurrenceId);
             }
         }
         ensureNoClassStudentConflicts(target, ignoredOccurrenceId);
         if (target.getPlannedTeacherId() != null
                 && hasConflict(target, LessonOccurrenceEntity::getPlannedTeacherId, target.getPlannedTeacherId(), ignoredOccurrenceId)) {
-            throwConflict("TEACHER", target.getPlannedTeacherId(), "Teacher conflict detected for the adjusted lesson.",
+            throwConflict("TEACHER", target.getPlannedTeacherId(),
                     target, LessonOccurrenceEntity::getPlannedTeacherId, target.getPlannedTeacherId(), ignoredOccurrenceId);
         }
         if (target.getPlannedClassroomId() != null
                 && hasConflict(target, LessonOccurrenceEntity::getPlannedClassroomId, target.getPlannedClassroomId(), ignoredOccurrenceId)) {
-            throwConflict("CLASSROOM", target.getPlannedClassroomId(), "Classroom conflict detected for the adjusted lesson.",
+            throwConflict("CLASSROOM", target.getPlannedClassroomId(),
                     target, LessonOccurrenceEntity::getPlannedClassroomId, target.getPlannedClassroomId(), ignoredOccurrenceId);
         }
     }
@@ -1209,7 +1213,8 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         }
         for (Long studentId : activeStudentIdsByClassOnDate(target.getClassGroupId(), target.getPlannedStartAt())) {
             if (hasStudentConflict(target, studentId, ignoredOccurrenceId)) {
-                throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected for the adjusted class occurrence.");
+                throwConflict("STUDENT", studentId, target,
+                        LessonOccurrenceEntity::getStudentId, studentId, ignoredOccurrenceId);
             }
         }
     }
@@ -1222,18 +1227,18 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         for (LessonOccurrenceEntity target : targets) {
             for (Long studentId : studentIdsForOccurrence(target)) {
                 if (hasStudentConflict(target, studentId, ignoredOccurrenceIds)) {
-                    throwConflict("STUDENT", studentId, "Student conflict detected for the adjusted lesson.",
+                throwConflict("STUDENT", studentId,
                             target, LessonOccurrenceEntity::getStudentId, studentId, ignoredOccurrenceIds);
                 }
             }
             if (target.getPlannedTeacherId() != null
                     && hasConflict(target, LessonOccurrenceEntity::getPlannedTeacherId, target.getPlannedTeacherId(), ignoredOccurrenceIds)) {
-                throwConflict("TEACHER", target.getPlannedTeacherId(), "Teacher conflict detected for the adjusted lesson.",
+                throwConflict("TEACHER", target.getPlannedTeacherId(),
                         target, LessonOccurrenceEntity::getPlannedTeacherId, target.getPlannedTeacherId(), ignoredOccurrenceIds);
             }
             if (target.getPlannedClassroomId() != null
                     && hasConflict(target, LessonOccurrenceEntity::getPlannedClassroomId, target.getPlannedClassroomId(), ignoredOccurrenceIds)) {
-                throwConflict("CLASSROOM", target.getPlannedClassroomId(), "Classroom conflict detected for the adjusted lesson.",
+                throwConflict("CLASSROOM", target.getPlannedClassroomId(),
                         target, LessonOccurrenceEntity::getPlannedClassroomId, target.getPlannedClassroomId(), ignoredOccurrenceIds);
             }
         }
@@ -1248,13 +1253,18 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
                     continue;
                 }
                 if (!Collections.disjoint(studentIdsForOccurrence(left), studentIdsForOccurrence(right))) {
-                    throw new BusinessException("SCHEDULE_CONFLICT", "Adjusted lessons overlap for the same student.");
+                    Long studentId = studentIdsForOccurrence(left).stream()
+                            .filter(studentIdsForOccurrence(right)::contains).findFirst().orElse(null);
+                    throw new BusinessException("SCHEDULE_CONFLICT",
+                            formatScheduleConflict("Student conflict", left, studentId));
                 }
                 if (left.getPlannedTeacherId() != null && Objects.equals(left.getPlannedTeacherId(), right.getPlannedTeacherId())) {
-                    throw new BusinessException("SCHEDULE_CONFLICT", "Adjusted lessons overlap for the same teacher.");
+                    throw new BusinessException("SCHEDULE_CONFLICT",
+                            formatScheduleConflict("Teacher conflict", left, null));
                 }
                 if (left.getPlannedClassroomId() != null && Objects.equals(left.getPlannedClassroomId(), right.getPlannedClassroomId())) {
-                    throw new BusinessException("SCHEDULE_CONFLICT", "Adjusted lessons overlap for the same classroom.");
+                    throw new BusinessException("SCHEDULE_CONFLICT",
+                            formatScheduleConflict("Classroom conflict", left, null));
                 }
             }
         }
@@ -1359,26 +1369,36 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
 
     private void throwConflict(String resourceType,
                                Long resourceId,
-                               String message,
                                LessonOccurrenceEntity target,
                                com.baomidou.mybatisplus.core.toolkit.support.SFunction<LessonOccurrenceEntity, Long> field,
                                Long fieldValue,
                                Long ignoredOccurrenceId) {
-        LessonOccurrenceEntity existing = findFirstConflict(target, field, fieldValue, ignoredOccurrenceId, null);
-        throw new BusinessException("SCHEDULE_CONFLICT", message,
-                existing == null ? Collections.emptyList() : List.of(buildConflictDetail(resourceType, resourceId, target, existing)));
+        LessonOccurrenceEntity existing = "STUDENT".equals(resourceType)
+                ? findFirstStudentConflict(target, fieldValue, ignoredOccurrenceId, null)
+                : findFirstConflict(target, field, fieldValue, ignoredOccurrenceId, null);
+        String type = conflictTypeLabel(resourceType);
+        throw new BusinessException("SCHEDULE_CONFLICT", formatScheduleConflict(type,
+                existing == null ? target : existing, resourceId),
+                existing == null ? Collections.emptyList()
+                        : List.of(buildConflictDetail(resourceType, resourceId,
+                        "STUDENT".equals(resourceType) ? resolveStudentName(resourceId) : null, target, existing)));
     }
 
     private void throwConflict(String resourceType,
                                Long resourceId,
-                               String message,
                                LessonOccurrenceEntity target,
                                com.baomidou.mybatisplus.core.toolkit.support.SFunction<LessonOccurrenceEntity, Long> field,
                                Long fieldValue,
                                Set<Long> ignoredOccurrenceIds) {
-        LessonOccurrenceEntity existing = findFirstConflict(target, field, fieldValue, null, ignoredOccurrenceIds);
-        throw new BusinessException("SCHEDULE_CONFLICT", message,
-                existing == null ? Collections.emptyList() : List.of(buildConflictDetail(resourceType, resourceId, target, existing)));
+        LessonOccurrenceEntity existing = "STUDENT".equals(resourceType)
+                ? findFirstStudentConflict(target, fieldValue, null, ignoredOccurrenceIds)
+                : findFirstConflict(target, field, fieldValue, null, ignoredOccurrenceIds);
+        String type = conflictTypeLabel(resourceType);
+        throw new BusinessException("SCHEDULE_CONFLICT", formatScheduleConflict(type,
+                existing == null ? target : existing, resourceId),
+                existing == null ? Collections.emptyList()
+                        : List.of(buildConflictDetail(resourceType, resourceId,
+                        "STUDENT".equals(resourceType) ? resolveStudentName(resourceId) : null, target, existing)));
     }
 
     private LessonOccurrenceEntity findFirstConflict(LessonOccurrenceEntity target,
@@ -1403,13 +1423,43 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         return conflicts == null || conflicts.isEmpty() ? null : conflicts.get(0);
     }
 
-    private ScheduleConflictDetailVO buildConflictDetail(String resourceType, Long resourceId,
+    private LessonOccurrenceEntity findFirstStudentConflict(LessonOccurrenceEntity target, Long studentId,
+                                                              Long ignoredOccurrenceId,
+                                                              Set<Long> ignoredOccurrenceIds) {
+        List<Long> classIds = classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getStudentId, studentId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0))
+                .stream().map(ClassEnrollmentEntity::getClassId).filter(Objects::nonNull).distinct().toList();
+        List<Long> privateGroupIds = privateGroupIdsForStudent(studentId);
+        LambdaQueryWrapper<LessonOccurrenceEntity> wrapper = new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                .lt(LessonOccurrenceEntity::getPlannedStartAt, target.getPlannedEndAt())
+                .gt(LessonOccurrenceEntity::getPlannedEndAt, target.getPlannedStartAt())
+                .and(nested -> nested.eq(LessonOccurrenceEntity::getStudentId, studentId)
+                        .or(!classIds.isEmpty(), inner -> inner.in(LessonOccurrenceEntity::getClassGroupId, classIds))
+                        .or(!privateGroupIds.isEmpty(), inner -> inner.in(
+                                LessonOccurrenceEntity::getPrivateLessonGroupId, privateGroupIds)))
+                .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt)
+                .last("LIMIT 1");
+        if (ignoredOccurrenceId != null) wrapper.ne(LessonOccurrenceEntity::getId, ignoredOccurrenceId);
+        if (ignoredOccurrenceIds != null && !ignoredOccurrenceIds.isEmpty()) {
+            wrapper.notIn(LessonOccurrenceEntity::getId, ignoredOccurrenceIds);
+        }
+        List<LessonOccurrenceEntity> conflicts = lessonOccurrenceMapper.selectList(wrapper);
+        return conflicts == null || conflicts.isEmpty() ? null : conflicts.get(0);
+    }
+
+    private ScheduleConflictDetailVO buildConflictDetail(String resourceType, Long resourceId, String studentName,
                                                          LessonOccurrenceEntity target,
                                                          LessonOccurrenceEntity existing) {
         return ScheduleConflictDetailVO.builder()
                 .resourceType(resourceType)
                 .resourceId(resourceId)
                 .resourceName(resolveResourceName(resourceType, resourceId))
+                .courseName(resolveOccurrenceCourseName(existing))
+                .studentName(StringUtils.hasText(studentName) ? studentName : resolveOccurrenceStudentName(existing))
+                .teacherName(resolveTeacherName(existing.getPlannedTeacherId()))
                 .requestedStartAt(target.getPlannedStartAt())
                 .requestedEndAt(target.getPlannedEndAt())
                 .conflictStartAt(existing.getPlannedStartAt())
@@ -1417,6 +1467,81 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
                 .existingOccurrenceId(existing.getId())
                 .existingLessonNo(existing.getLessonNo())
                 .build();
+    }
+
+    private String formatScheduleConflict(String conflictType, LessonOccurrenceEntity existing,
+                                          Long conflictingStudentId) {
+        String studentName = conflictingStudentId == null
+                ? resolveOccurrenceStudentName(existing) : resolveStudentName(conflictingStudentId);
+        return "Schedule conflict detected.\n"
+                + "Conflict type: " + conflictType + ".\n"
+                + "Conflicting course: " + displayValue(resolveOccurrenceCourseName(existing)) + "\n"
+                + "Date: " + existing.getPlannedStartAt().toLocalDate() + "\n"
+                + "Time: " + existing.getPlannedStartAt().toLocalTime() + "–" + existing.getPlannedEndAt().toLocalTime() + "\n"
+                + "Teacher: " + displayValue(resolveTeacherName(existing.getPlannedTeacherId())) + "\n"
+                + "Student: " + displayValue(studentName);
+    }
+
+    private String conflictTypeLabel(String resourceType) {
+        return switch (resourceType) {
+            case "STUDENT" -> "Student schedule conflict";
+            case "TEACHER" -> "Teacher schedule conflict";
+            case "CLASSROOM" -> "Classroom schedule conflict";
+            default -> "Schedule conflict";
+        };
+    }
+
+    private String displayValue(String value) {
+        return StringUtils.hasText(value) ? value : "Not recorded";
+    }
+
+    private String resolveOccurrenceCourseName(LessonOccurrenceEntity occurrence) {
+        if (StringUtils.hasText(occurrence.getSubjectName())) {
+            return occurrence.getSubjectName();
+        }
+        if (occurrence.getClassGroupId() != null) {
+            ClassGroupEntity classGroup = classGroupMapper.selectById(occurrence.getClassGroupId());
+            if (classGroup != null) {
+                CourseProductEntity product = classGroup.getProductId() == null
+                        ? null : courseProductMapper.selectById(classGroup.getProductId());
+                String productName = product == null ? null : product.getProductName();
+                String actualClass = StringUtils.hasText(classGroup.getActualClass())
+                        ? classGroup.getActualClass() : classGroup.getClassName();
+                return Stream.of(productName, classGroup.getGradeBand(), actualClass)
+                        .filter(StringUtils::hasText).distinct().collect(Collectors.joining(" / "));
+            }
+        }
+        CoursePackageEntity coursePackage = occurrence.getPackageId() == null
+                ? null : coursePackageMapper.selectById(occurrence.getPackageId());
+        CourseProductEntity product = coursePackage == null || coursePackage.getCourseProductId() == null
+                ? null : courseProductMapper.selectById(coursePackage.getCourseProductId());
+        String productName = product == null ? null : product.getProductName();
+        if (StringUtils.hasText(productName)) {
+            return productName;
+        }
+        return coursePackage == null ? null : coursePackage.getPackageName();
+    }
+
+    private String resolveOccurrenceStudentName(LessonOccurrenceEntity occurrence) {
+        if (occurrence.getStudentId() != null) {
+            return resolveStudentName(occurrence.getStudentId());
+        }
+        if (occurrence.getClassGroupId() != null) {
+            return activeStudentIdsByClassOnDate(occurrence.getClassGroupId(), occurrence.getPlannedStartAt())
+                    .stream().map(this::resolveStudentName)
+                    .filter(StringUtils::hasText).distinct().collect(Collectors.joining(", "));
+        }
+        return null;
+    }
+
+    private String resolveStudentName(Long studentId) {
+        StudentEntity student = studentId == null ? null : studentMapper.selectById(studentId);
+        return student == null ? null : student.getStudentName();
+    }
+
+    private String resolveTeacherName(Long teacherId) {
+        TeacherEntity teacher = teacherId == null ? null : teacherMapper.selectById(teacherId);
+        return teacher == null ? null : teacher.getTeacherName();
     }
 
     private String resolveResourceName(String resourceType, Long resourceId) {

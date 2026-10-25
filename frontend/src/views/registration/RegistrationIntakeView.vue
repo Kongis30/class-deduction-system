@@ -5539,7 +5539,12 @@ async function submitForm() {
       }
       try {
         await ElMessageBox.confirm(
-          `${extractErrorMessage(error)} Registration has not been saved. Continue anyway?`,
+          h('div', { style: { display: 'grid', gap: '8px' } }, [
+            ...extractErrorMessage(error).split('\n').filter(Boolean)
+              .map((line, index) => h('p', { key: index, style: { margin: '0', lineHeight: '1.5' } }, line)),
+            h('p', { style: { margin: '8px 0 0', lineHeight: '1.5' } },
+              'Registration has not been saved. Continue anyway?'),
+          ]),
           'Schedule conflict detected',
           {
             confirmButtonText: 'Continue anyway',

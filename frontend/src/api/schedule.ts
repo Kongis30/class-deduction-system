@@ -128,6 +128,7 @@ export interface RecurringScheduleRuleUpdatePayload {
   ruleStatus?: string;
   startDate: string;
   notes?: string;
+  reclaimEndedUnconfirmedLessons?: boolean;
   slots: RecurringScheduleSlotPayload[];
 }
 
@@ -140,6 +141,7 @@ export interface ScheduleRuleUpdateResult {
   confirmedOccurrenceCount: number;
   firstGeneratedStartAt?: string;
   lastGeneratedEndAt?: string;
+  reclaimedOccurrenceCount?: number;
 }
 
 export function updateRecurringScheduleRule(id: EntityId, data: RecurringScheduleRuleUpdatePayload) {

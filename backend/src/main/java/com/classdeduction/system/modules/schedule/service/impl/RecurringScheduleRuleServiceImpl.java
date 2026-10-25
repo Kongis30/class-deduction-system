@@ -673,14 +673,16 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         }
 
         // f) Classify existing occurrences BEFORE deleting slots (FK constraint)
-        List<LessonOccurrenceEntity> allOccurrences = lessonOccurrenceMapper.selectList(
+        List<LessonOccurrenceEntity> allOccurrences = new ArrayList<>(lessonOccurrenceMapper.selectList(
                 new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                        .eq(LessonOccurrenceEntity::getScheduleRuleId, id));
+                        .eq(LessonOccurrenceEntity::getScheduleRuleId, id)));
         List<RecurringScheduleSlotEntity> existingSlots = recurringScheduleSlotMapper.selectList(
                 new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
                         .eq(RecurringScheduleSlotEntity::getRuleId, id));
         preserveUnambiguousEditedSlotLineages(request.getSlots(), existingSlots, allOccurrences);
-        if (isCourseDetailsOnlyChange(existingRule, existingSlots, request, privateLessonGroupId, newStatus)) {
+        boolean reclaimEndedUnconfirmed = Boolean.TRUE.equals(request.getReclaimEndedUnconfirmedLessons());
+        if (!reclaimEndedUnconfirmed
+                && isCourseDetailsOnlyChange(existingRule, existingSlots, request, privateLessonGroupId, newStatus)) {
             Set<Long> existingOccurrenceIds = allOccurrences.stream()
                     .map(LessonOccurrenceEntity::getId).collect(Collectors.toSet());
             Map<Long, LessonRecordEntity> existingRecords = latestRecordsForPackage(
@@ -688,7 +690,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             return updateCourseDetailsOnly(existingRule, existingSlots, allOccurrences, existingRecords,
                     request, coursePackage, student.getId(), privateLessonGroupId);
         }
-        if (allowNewPeriod && isSamePeriodAllocationChange(existingRule, existingSlots, request,
+        if (!reclaimEndedUnconfirmed && allowNewPeriod && isSamePeriodAllocationChange(existingRule, existingSlots, request,
                 privateLessonGroupId, newStatus)) {
             Set<Long> occurrenceIds = allOccurrences.stream()
                     .map(LessonOccurrenceEntity::getId).collect(Collectors.toSet());
@@ -698,6 +700,10 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             return updateAllocationWithinPeriod(existingRule, existingSlots, allOccurrences, records,
                     request, coursePackage, detailsResult);
         }
+        LocalDateTime effectiveAt = AppTime.nowLocalDateTime();
+        int reclaimedOccurrenceCount = allowNewPeriod
+                ? reclaimEndedUnconfirmedOccurrences(id, allOccurrences, reclaimEndedUnconfirmed, effectiveAt)
+                : 0;
         boolean startsNewPeriod = allowNewPeriod
                 && !"ENDED".equals(newStatus)
                 && hasScheduleDefinitionChanged(existingRule, existingSlots, request, privateLessonGroupId);
@@ -726,8 +732,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 latestRecordsForPackage(occIds, coursePackage.getId());
         Set<Long> recordedOccIds = recordByOccurrenceId.keySet();
 
-        // 保留已经开始的课次；同一天内尚未开始的普通课次仍随新周期重新生成。
-        LocalDateTime effectiveAt = AppTime.nowLocalDateTime();
+        // 回收动作已先移除过期未确认课次；其余确认历史、单次例外和当前进行中的课次仍保留。
         List<LessonOccurrenceEntity> toDelete = new ArrayList<>();
         List<LessonOccurrenceEntity> toPreserve = new ArrayList<>();
         for (LessonOccurrenceEntity occ : allOccurrences) {
@@ -929,7 +934,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         LocalDateTime lastEnd = newOccurrences.stream().map(LessonOccurrenceEntity::getPlannedEndAt).max(LocalDateTime::compareTo).orElse(null);
         return new ScheduleRuleUpdateResultVO(
                 targetRule.getId(), newSlots.size(), toPreserve.size(), toDelete.size(),
-                newOccurrences.size(), confirmedCount, firstStart, lastEnd);
+                newOccurrences.size(), confirmedCount, firstStart, lastEnd, reclaimedOccurrenceCount);
     }
 
     /** 课程名称、教室和备注仅更新未来课次；更换老师必须建立新排课版本。 */
@@ -1111,7 +1116,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .filter(record -> "CONFIRMED".equals(record.getConfirmStage())).count();
         return new ScheduleRuleUpdateResultVO(rule.getId(), currentSlots.size(),
                 detailsResult.preservedOccurrenceCount(),
-                0, generatedCount, confirmedCount, null, null);
+                0, generatedCount, confirmedCount, null, null, 0);
     }
 
     /** 只同步未来、未开始且未进入消课流程的课次，不删除或重建课次、不改变分配额。 */
@@ -1223,7 +1228,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         int confirmedCount = (int) records.values().stream()
                 .filter(record -> "CONFIRMED".equals(record.getConfirmStage())).count();
         return new ScheduleRuleUpdateResultVO(rule.getId(), currentSlots.size(), occurrences.size(), 0,
-                0, confirmedCount, null, null);
+                0, confirmedCount, null, null, 0);
     }
 
     /** 旧课次缺少独立字段时，先固化旧时段信息，再允许修改或替换时段。 */
@@ -1475,7 +1480,9 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                         .toList());
                 if (conflict != null) {
                     throw new BusinessException("SCHEDULE_CONFLICT",
-                            "Classroom conflict at " + update.getPlannedStartAt());
+                            formatConflictMessage("Classroom schedule conflict", conflict, null),
+                            List.of(buildConflictDetail("CLASSROOM", update.getPlannedClassroomId(),
+                                    resolveClassroomName(update.getPlannedClassroomId()), update, conflict)));
                 }
             }
         }
@@ -1504,7 +1511,9 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 if (left.getPlannedStartAt().isBefore(right.getPlannedEndAt())
                         && left.getPlannedEndAt().isAfter(right.getPlannedStartAt())) {
                     throw new BusinessException("SCHEDULE_CONFLICT",
-                            "Classroom conflict at " + left.getPlannedStartAt());
+                            formatConflictMessage("Classroom schedule conflict", left, null),
+                            List.of(buildConflictDetail("CLASSROOM", left.getPlannedClassroomId(),
+                                    resolveClassroomName(left.getPlannedClassroomId()), right, left)));
                 }
             }
         }
@@ -1688,7 +1697,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         for (LessonOccurrenceEntity candidate : candidates) {
             LessonOccurrenceEntity studentConflict = firstOverlap(candidate, studentOccurrences);
             if (studentConflict != null) {
-                conflicts.add(resolveStudentName(studentId) + " has another lesson at " + candidate.getPlannedStartAt());
+                conflicts.add(formatConflictMessage("Student schedule conflict", studentConflict, studentId));
                 details.add(buildConflictDetail("STUDENT", studentId, resolveStudentName(studentId), candidate, studentConflict));
             }
             Long candidateTeacherId = candidate.getPlannedTeacherId();
@@ -1696,7 +1705,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                     .filter(existing -> Objects.equals(existing.getPlannedTeacherId(), candidateTeacherId))
                     .toList());
             if (candidateTeacherId != null && teacherConflict != null) {
-                conflicts.add("Teacher conflict at " + candidate.getPlannedStartAt());
+                conflicts.add(formatConflictMessage("Teacher schedule conflict", teacherConflict, null));
                 details.add(buildConflictDetail("TEACHER", candidateTeacherId,
                         resolveTeacherName(candidateTeacherId), candidate, teacherConflict));
             }
@@ -1704,7 +1713,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             LessonOccurrenceEntity classroomConflict = candidateClassroomId == null ? null : firstOverlap(candidate, classroomOccurrences.stream()
                     .filter(existing -> Objects.equals(existing.getPlannedClassroomId(), candidateClassroomId)).toList());
             if (candidateClassroomId != null && classroomConflict != null) {
-                conflicts.add("Classroom conflict at " + candidate.getPlannedStartAt());
+                conflicts.add(formatConflictMessage("Classroom schedule conflict", classroomConflict, null));
                 details.add(buildConflictDetail("CLASSROOM", candidateClassroomId, resolveClassroomName(candidateClassroomId), candidate, classroomConflict));
             }
             if (conflicts.size() >= 3) {
@@ -1953,6 +1962,104 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             }
         }
         return new RuleDeductionUnits(confirmed, pending);
+    }
+
+    /** 按管理员明确选择，撤销已结束且未最终确认的私教课次；课包余额从未扣减，因此只释放排课占用。 */
+    private int reclaimEndedUnconfirmedOccurrences(Long ruleId,
+                                                    List<LessonOccurrenceEntity> occurrences,
+                                                    boolean reclaimRequested,
+                                                    LocalDateTime effectiveAt) {
+        if (occurrences.isEmpty()) return 0;
+        List<LessonOccurrenceEntity> endedOccurrences = occurrences.stream()
+                .filter(occurrence -> isEndedPrivateOccurrence(occurrence, effectiveAt))
+                .toList();
+        if (endedOccurrences.isEmpty()) return 0;
+        Map<Long, List<LessonRecordEntity>> existingRecords = lessonRecordMapper.selectList(
+                        new LambdaQueryWrapper<LessonRecordEntity>()
+                                .in(LessonRecordEntity::getOccurrenceId,
+                                        endedOccurrences.stream().map(LessonOccurrenceEntity::getId).toList())
+                                .eq(LessonRecordEntity::getIsDeleted, 0)
+                                .orderByAsc(LessonRecordEntity::getId))
+                .stream().collect(Collectors.groupingBy(LessonRecordEntity::getOccurrenceId));
+        List<LessonOccurrenceEntity> candidates = endedOccurrences.stream()
+                .filter(occurrence -> existingRecords.getOrDefault(occurrence.getId(), List.of()).stream()
+                        .noneMatch(record -> "CONFIRMED".equals(record.getConfirmStage())))
+                .toList();
+        if (candidates.isEmpty()) return 0;
+        if (!reclaimRequested) {
+            throw new BusinessException("UNPROCESSED_LESSONS_REQUIRE_DECISION",
+                    "Ended private lessons still need a decision. Review them first, or explicitly continue and reclaim their schedule hours.");
+        }
+
+        List<LessonOccurrenceEntity> reclaimed = new ArrayList<>();
+        List<Long> unconfirmedRecordIds = new ArrayList<>();
+        Map<Long, List<LessonRecordEntity>> recordsByOccurrence = new LinkedHashMap<>();
+        for (LessonOccurrenceEntity candidate : candidates.stream()
+                .sorted(Comparator.comparing(LessonOccurrenceEntity::getId)).toList()) {
+            LessonOccurrenceEntity locked = lessonOccurrenceMapper.selectByIdForUpdate(candidate.getId());
+            if (!isEndedPrivateOccurrence(locked, effectiveAt)) continue;
+            List<LessonRecordEntity> records = lessonRecordMapper.selectByOccurrenceIdForUpdate(locked.getId());
+            if (records.stream().anyMatch(record -> "CONFIRMED".equals(record.getConfirmStage()))) continue;
+            reclaimed.add(locked);
+            recordsByOccurrence.put(locked.getId(), records);
+        }
+        if (reclaimed.isEmpty()) return 0;
+
+        recordsByOccurrence.values().stream().flatMap(List::stream)
+                .filter(record -> !"CONFIRMED".equals(record.getConfirmStage()))
+                .map(LessonRecordEntity::getId).forEach(unconfirmedRecordIds::add);
+        if (!unconfirmedRecordIds.isEmpty()) {
+            int deletedRecords = lessonRecordMapper.softDeleteUnconfirmedByIds(unconfirmedRecordIds, effectiveAt);
+            if (deletedRecords != unconfirmedRecordIds.size()) {
+                throw new BusinessException("LESSON_CHANGED",
+                        "A lesson entered admin review while the schedule was being edited. Refresh and try again.");
+            }
+        }
+
+        List<Long> reclaimedIds = reclaimed.stream().map(LessonOccurrenceEntity::getId).toList();
+        int deletedOccurrences = lessonOccurrenceMapper.softDeleteEndedUnconfirmedPrivateLessons(reclaimedIds, effectiveAt);
+        if (deletedOccurrences != reclaimedIds.size()) {
+            throw new BusinessException("LESSON_CHANGED",
+                    "A lesson was confirmed while the schedule was being edited. Refresh and try again.");
+        }
+        for (LessonOccurrenceEntity occurrence : reclaimed) {
+            insertScheduleReclaimLog(ruleId, occurrence, recordsByOccurrence.get(occurrence.getId()), effectiveAt);
+        }
+        Set<Long> reclaimedIdSet = new HashSet<>(reclaimedIds);
+        occurrences.removeIf(occurrence -> reclaimedIdSet.contains(occurrence.getId()));
+        return reclaimed.size();
+    }
+
+    private boolean isEndedPrivateOccurrence(LessonOccurrenceEntity occurrence, LocalDateTime effectiveAt) {
+        return occurrence != null && occurrence.getClassGroupId() == null
+                && occurrence.getPlannedEndAt() != null && !occurrence.getPlannedEndAt().isAfter(effectiveAt)
+                && !"CANCELLED".equals(occurrence.getPlanningStatus());
+    }
+
+    /** 将回收决定写入既有排课变更日志，待处理 lesson_record 本身仍以软删除保留审计。 */
+    private void insertScheduleReclaimLog(Long ruleId, LessonOccurrenceEntity occurrence,
+                                          List<LessonRecordEntity> records, LocalDateTime effectiveAt) {
+        Map<String, Object> before = new LinkedHashMap<>();
+        before.put("ruleId", ruleId);
+        before.put("lessonNo", occurrence.getLessonNo());
+        before.put("plannedStartAt", occurrence.getPlannedStartAt());
+        before.put("plannedEndAt", occurrence.getPlannedEndAt());
+        before.put("plannedUnits", occurrence.getPlannedUnits());
+        before.put("plannedTeacherId", occurrence.getPlannedTeacherId());
+        before.put("recordIds", records.stream().map(LessonRecordEntity::getId).toList());
+        before.put("confirmStages", records.stream().map(LessonRecordEntity::getConfirmStage).toList());
+        Map<String, Object> after = new LinkedHashMap<>();
+        after.put("isDeleted", true);
+        after.put("reason", "Admin continued schedule edit and reclaimed an ended, unconfirmed private lesson.");
+
+        LessonAdjustmentLogEntity log = new LessonAdjustmentLogEntity();
+        log.setOccurrenceId(occurrence.getId());
+        log.setAdjustmentType("SCHEDULE_EDIT_RECLAIM");
+        log.setBeforeSnapshot(jsonHelper.toJson(before));
+        log.setAfterSnapshot(jsonHelper.toJson(after));
+        log.setReason("Admin continued schedule edit; ended, unconfirmed lesson and submissions were reclaimed.");
+        log.setAdjustedAt(effectiveAt);
+        lessonAdjustmentLogMapper.insert(log);
     }
 
     /** 待管理员确认的课次仍占用原计划课时，避免老师的请假意见提前释放余额。 */
@@ -2427,6 +2534,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             }
             int remaining = slot.getAllocatedUnits();
             int overlapSkipped = 0;
+            LessonOccurrenceEntity firstSkippedConflict = null;
             for (LocalDate date = generationStart;
                  remaining > 0 && (generationEnd == null || !date.isAfter(generationEnd));
                  date = date.plusDays(1)) {
@@ -2464,8 +2572,10 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 occurrence.setPlanningStatus("SCHEDULED");
                 occurrence.setConflictChecked(1);
                 // 与保留课次冲突时只跳过该日期，不消耗分配额，继续向后寻找可排日期。
-                if (hasOverlap(occurrence, activePreserved)) {
+                LessonOccurrenceEntity overlap = firstOverlap(occurrence, activePreserved);
+                if (overlap != null) {
                     overlapSkipped++;
+                    if (firstSkippedConflict == null) firstSkippedConflict = overlap;
                     continue;
                 }
                 occurrences.add(occurrence);
@@ -2473,7 +2583,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             }
             if (remaining > 0 && overlapSkipped > 0 && generationEnd != null) {
                 throw new BusinessException("SCHEDULE_CONFLICT",
-                        "The schedule end date does not leave enough non-overlapping dates for the allocated hours.");
+                        formatConflictMessage("Existing lesson overlap limits the schedule end date",
+                                firstSkippedConflict, studentId));
             }
         }
         occurrences.sort(Comparator.comparing(LessonOccurrenceEntity::getPlannedStartAt));
@@ -2750,7 +2861,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         for (LessonOccurrenceEntity candidate : generatedOccurrences) {
             LessonOccurrenceEntity studentConflict = firstOverlap(candidate, studentOccurrences);
             if (studentConflict != null) {
-                conflicts.add(resolveStudentName(studentId) + " has another lesson at " + candidate.getPlannedStartAt());
+                conflicts.add(formatConflictMessage("Student schedule conflict", studentConflict, studentId));
                 details.add(buildConflictDetail("STUDENT", studentId, resolveStudentName(studentId), candidate, studentConflict));
             }
             Long candidateTeacherId = candidate.getPlannedTeacherId();
@@ -2758,7 +2869,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                     .filter(existing -> Objects.equals(existing.getPlannedTeacherId(), candidateTeacherId))
                     .toList());
             if (candidateTeacherId != null && teacherConflict != null) {
-                conflicts.add("Teacher conflict at " + candidate.getPlannedStartAt());
+                conflicts.add(formatConflictMessage("Teacher schedule conflict", teacherConflict, null));
                 details.add(buildConflictDetail("TEACHER", candidateTeacherId,
                         resolveTeacherName(candidateTeacherId), candidate, teacherConflict));
             }
@@ -2766,7 +2877,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             LessonOccurrenceEntity classroomConflict = candidateClassroomId == null ? null : firstOverlap(candidate, classroomOccurrences.stream()
                     .filter(existing -> Objects.equals(existing.getPlannedClassroomId(), candidateClassroomId)).toList());
             if (candidateClassroomId != null && classroomConflict != null) {
-                conflicts.add("Classroom conflict at " + candidate.getPlannedStartAt());
+                conflicts.add(formatConflictMessage("Classroom schedule conflict", classroomConflict, null));
                 details.add(buildConflictDetail("CLASSROOM", candidateClassroomId, resolveClassroomName(candidateClassroomId), candidate, classroomConflict));
             }
             if (conflicts.size() >= 3) {
@@ -2804,6 +2915,9 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .resourceType(resourceType)
                 .resourceId(resourceId)
                 .resourceName(resourceName)
+                .courseName(resolveOccurrenceCourseName(existing))
+                .studentName("STUDENT".equals(resourceType) ? resourceName : resolveOccurrenceStudentName(existing))
+                .teacherName(resolveTeacherName(existing.getPlannedTeacherId()))
                 .requestedStartAt(candidate.getPlannedStartAt())
                 .requestedEndAt(candidate.getPlannedEndAt())
                 .conflictStartAt(existing.getPlannedStartAt())
@@ -2811,6 +2925,52 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .existingOccurrenceId(existing.getId())
                 .existingLessonNo(existing.getLessonNo())
                 .build();
+    }
+
+    private String formatConflictMessage(String conflictType, LessonOccurrenceEntity occurrence, Long studentId) {
+        return "Schedule conflict detected.\n"
+                + "Conflict type: " + conflictType + ".\n"
+                + "Conflicting course: " + displayValue(resolveOccurrenceCourseName(occurrence)) + "\n"
+                + "Date: " + occurrence.getPlannedStartAt().toLocalDate() + "\n"
+                + "Time: " + occurrence.getPlannedStartAt().toLocalTime() + "–"
+                + occurrence.getPlannedEndAt().toLocalTime() + "\n"
+                + "Teacher: " + displayValue(resolveTeacherName(occurrence.getPlannedTeacherId())) + "\n"
+                + "Student: " + displayValue(studentId == null
+                ? resolveOccurrenceStudentName(occurrence) : resolveStudentName(studentId));
+    }
+
+    private String resolveOccurrenceCourseName(LessonOccurrenceEntity occurrence) {
+        if (StringUtils.hasText(occurrence.getSubjectName())) {
+            return occurrence.getSubjectName();
+        }
+        CoursePackageEntity coursePackage = occurrence.getPackageId() == null
+                ? null : coursePackageMapper.selectById(occurrence.getPackageId());
+        CourseProductEntity product = coursePackage == null || coursePackage.getCourseProductId() == null
+                ? null : courseProductMapper.selectById(coursePackage.getCourseProductId());
+        if (product != null && StringUtils.hasText(product.getProductName())) {
+            return product.getProductName();
+        }
+        return coursePackage == null ? null : coursePackage.getPackageName();
+    }
+
+    private String resolveOccurrenceStudentName(LessonOccurrenceEntity occurrence) {
+        if (occurrence.getStudentId() != null) {
+            return resolveStudentName(occurrence.getStudentId());
+        }
+        if (occurrence.getPrivateLessonGroupId() != null) {
+            return privateLessonGroupMemberMapper.selectList(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                            .eq(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId, occurrence.getPrivateLessonGroupId())
+                            .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                            .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0))
+                    .stream().map(PrivateLessonGroupMemberEntity::getStudentId)
+                    .filter(Objects::nonNull).map(this::resolveStudentName).filter(StringUtils::hasText)
+                    .distinct().collect(Collectors.joining(", "));
+        }
+        return null;
+    }
+
+    private String displayValue(String value) {
+        return StringUtils.hasText(value) ? value : "Not recorded";
     }
 
     private String resolveStudentName(Long studentId) {

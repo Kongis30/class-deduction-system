@@ -205,6 +205,7 @@ import dayjs from 'dayjs';
 import { scheduleOccurrenceTimeRange } from '@/utils/schedule-time';
 
 import { extractErrorMessage } from '@/api/http';
+import { showScheduleError } from '@/utils/schedule-conflict-feedback';
 import { confirmLesson } from '@/api/lesson';
 import { confirmClassLesson, createScheduleAdjustment, fetchLessonOccurrences } from '@/api/schedule';
 import { useAppStore } from '@/stores/app';
@@ -321,7 +322,7 @@ async function submitTimeAdjustment() {
     adjustDialogVisible.value = false;
     await loadLessons();
   } catch (error) {
-    ElMessage.error(extractErrorMessage(error));
+    showScheduleError(error);
   } finally {
     adjusting.value = false;
   }
@@ -365,7 +366,7 @@ async function submitAttendance() {
     confirmDialogVisible.value = false;
     await loadLessons();
   } catch (error) {
-    ElMessage.error(extractErrorMessage(error));
+    showScheduleError(error);
   } finally {
     submitting.value = false;
   }

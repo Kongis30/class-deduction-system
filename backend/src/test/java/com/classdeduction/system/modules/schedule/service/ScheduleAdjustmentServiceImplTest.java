@@ -7,6 +7,7 @@ import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
+import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
@@ -25,6 +26,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonAdjustmentLogMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.impl.ScheduleAdjustmentServiceImpl;
+import com.classdeduction.system.modules.schedule.service.RecurringScheduleRuleService;
 import com.classdeduction.system.modules.schedule.vo.ScheduleAdjustmentResultVO;
 import com.classdeduction.system.modules.schedule.vo.WeeklyScheduleAdjustmentResultVO;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -92,10 +94,16 @@ class ScheduleAdjustmentServiceImplTest {
     private ClassroomMapper classroomMapper;
 
     @Mock
+    private CourseProductMapper courseProductMapper;
+
+    @Mock
     private JsonHelper jsonHelper;
 
     @Mock
     private ClassHolidayService classHolidayService;
+
+    @Mock
+    private RecurringScheduleRuleService recurringScheduleRuleService;
 
     @Captor
     private ArgumentCaptor<LessonOccurrenceEntity> occurrenceCaptor;
@@ -131,10 +139,13 @@ class ScheduleAdjustmentServiceImplTest {
                 studentMapper,
                 teacherMapper,
                 classroomMapper,
+                courseProductMapper,
                 jsonHelper,
-                classHolidayService
+                classHolidayService,
+                recurringScheduleRuleService
         );
         lenient().when(coursePackageMapper.selectById(501L)).thenReturn(activeOneOnOnePackage());
+        lenient().when(coursePackageMapper.selectByIdForUpdate(501L)).thenReturn(activeOneOnOnePackage());
         // 调课写入现在会校验受影响行数，默认让 updateById 返回成功，避免误报并发冲突。
         lenient().when(lessonOccurrenceMapper.updateById(any(LessonOccurrenceEntity.class))).thenReturn(1);
     }
@@ -163,7 +174,9 @@ class ScheduleAdjustmentServiceImplTest {
 
     @Test
     void shouldCreateMakeupOccurrenceAndAdjustmentLog() {
-        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildSourceOccurrence());
+        LessonOccurrenceEntity source = buildSourceOccurrence();
+        source.setSubjectName("SHSAT Math");
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(source);
         when(lessonOccurrenceMapper.selectCount(any())).thenReturn(0L);
         when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
@@ -406,7 +419,7 @@ class ScheduleAdjustmentServiceImplTest {
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
         when(jsonHelper.toJson(any())).thenReturn("{\"ok\":true}");
 
-        WeeklyScheduleAdjustmentResultVO result = scheduleAdjustmentService.adjustWeekly(
+        WeeklyScheduleAdjustmentResultVO result = adjustWeekly(
                 buildWeeklyRequest(weeklyItem(1001L, firstStartAt, 6))
         );
 
@@ -449,7 +462,7 @@ class ScheduleAdjustmentServiceImplTest {
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
         when(jsonHelper.toJson(any())).thenReturn("{\"ok\":true}");
 
-        WeeklyScheduleAdjustmentResultVO result = scheduleAdjustmentService.adjustWeekly(
+        WeeklyScheduleAdjustmentResultVO result = adjustWeekly(
                 buildWeeklyRequest(weeklyItem(1001L, firstStartAt, 2))
         );
 
@@ -484,7 +497,7 @@ class ScheduleAdjustmentServiceImplTest {
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
         when(jsonHelper.toJson(any())).thenReturn("{\"ok\":true}");
 
-        WeeklyScheduleAdjustmentResultVO result = scheduleAdjustmentService.adjustWeekly(
+        WeeklyScheduleAdjustmentResultVO result = adjustWeekly(
                 buildWeeklyRequest(weeklyItem(1001L, firstStartAt, 2))
         );
 
@@ -518,7 +531,7 @@ class ScheduleAdjustmentServiceImplTest {
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
         when(jsonHelper.toJson(any())).thenReturn("{\"ok\":true}");
 
-        WeeklyScheduleAdjustmentResultVO result = scheduleAdjustmentService.adjustWeekly(
+        WeeklyScheduleAdjustmentResultVO result = adjustWeekly(
                 buildWeeklyRequest(weeklyItem(1001L, currentStartAt, 10))
         );
 
@@ -555,7 +568,7 @@ class ScheduleAdjustmentServiceImplTest {
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
         when(jsonHelper.toJson(any())).thenReturn("{\"ok\":true}");
 
-        WeeklyScheduleAdjustmentResultVO result = scheduleAdjustmentService.adjustWeekly(
+        WeeklyScheduleAdjustmentResultVO result = adjustWeekly(
                 buildWeeklyRequest(weeklyItem(1001L, currentStartAt, 6))
         );
 
@@ -584,7 +597,7 @@ class ScheduleAdjustmentServiceImplTest {
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
         when(jsonHelper.toJson(any())).thenReturn("{\"ok\":true}");
 
-        assertThatThrownBy(() -> scheduleAdjustmentService.adjustWeekly(
+        assertThatThrownBy(() -> adjustWeekly(
                 buildWeeklyRequest(weeklyItem(1001L, currentStartAt, 6))
         ))
                 .isInstanceOf(BusinessException.class)
@@ -598,7 +611,7 @@ class ScheduleAdjustmentServiceImplTest {
         LessonOccurrenceEntity occurrence = buildWeeklyOccurrence(1001L, nextWeekStartAt, 4);
         when(lessonOccurrenceMapper.selectBatchIds(any())).thenReturn(List.of(occurrence));
 
-        assertThatThrownBy(() -> scheduleAdjustmentService.adjustWeekly(
+        assertThatThrownBy(() -> adjustWeekly(
                 buildWeeklyRequest(weeklyItem(1001L, nextWeekStartAt, 4))
         ))
                 .isInstanceOf(BusinessException.class)
@@ -612,7 +625,7 @@ class ScheduleAdjustmentServiceImplTest {
         WeeklyScheduleAdjustmentRequest request = buildWeeklyRequest(weeklyItem(1001L, lastWeekStartAt, 4));
         request.setWeekStartDate(currentWeekStartDate().minusDays(7));
 
-        assertThatThrownBy(() -> scheduleAdjustmentService.adjustWeekly(request))
+        assertThatThrownBy(() -> adjustWeekly(request))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo("WEEKLY_ADJUSTMENT_NOT_CURRENT_WEEK");
@@ -625,7 +638,7 @@ class ScheduleAdjustmentServiceImplTest {
         occurrence.setPlanningStatus("CANCELLED");
         when(lessonOccurrenceMapper.selectBatchIds(any())).thenReturn(List.of(occurrence));
 
-        assertThatThrownBy(() -> scheduleAdjustmentService.adjustWeekly(
+        assertThatThrownBy(() -> adjustWeekly(
                 buildWeeklyRequest(weeklyItem(1001L, startAt, 4))
         ))
                 .isInstanceOf(BusinessException.class)
@@ -640,7 +653,7 @@ class ScheduleAdjustmentServiceImplTest {
         when(lessonOccurrenceMapper.selectBatchIds(any())).thenReturn(List.of(occurrence));
         when(lessonRecordMapper.selectCount(any())).thenReturn(1L);
 
-        assertThatThrownBy(() -> scheduleAdjustmentService.adjustWeekly(
+        assertThatThrownBy(() -> adjustWeekly(
                 buildWeeklyRequest(weeklyItem(1001L, startAt, 4))
         ))
                 .isInstanceOf(BusinessException.class)
@@ -661,7 +674,7 @@ class ScheduleAdjustmentServiceImplTest {
         when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
 
-        assertThatThrownBy(() -> scheduleAdjustmentService.adjustWeekly(buildWeeklyRequest(
+        assertThatThrownBy(() -> adjustWeekly(buildWeeklyRequest(
                 weeklyItem(1001L, firstStartAt, 4),
                 weeklyItem(1002L, firstStartAt.plusHours(1), 4)
         )))
@@ -720,7 +733,7 @@ class ScheduleAdjustmentServiceImplTest {
             return 1;
         }).when(lessonOccurrenceMapper).insert(any(LessonOccurrenceEntity.class));
 
-        WeeklyScheduleAdjustmentResultVO result = scheduleAdjustmentService.adjustWeekly(
+        WeeklyScheduleAdjustmentResultVO result = adjustWeekly(
                 buildWeeklyRequest(createItem(createStartAt, 4))
         );
 
@@ -751,7 +764,7 @@ class ScheduleAdjustmentServiceImplTest {
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(toDelete, other), List.of(future));
         when(jsonHelper.toJson(any())).thenReturn("{\"ok\":true}");
 
-        WeeklyScheduleAdjustmentResultVO result = scheduleAdjustmentService.adjustWeekly(
+        WeeklyScheduleAdjustmentResultVO result = adjustWeekly(
                 buildWeeklyRequest(deleteItem(1001L))
         );
 
@@ -799,7 +812,7 @@ class ScheduleAdjustmentServiceImplTest {
             return 1;
         }).when(lessonOccurrenceMapper).insert(any(LessonOccurrenceEntity.class));
 
-        WeeklyScheduleAdjustmentResultVO result = scheduleAdjustmentService.adjustWeekly(buildWeeklyRequest(
+        WeeklyScheduleAdjustmentResultVO result = adjustWeekly(buildWeeklyRequest(
                 weeklyItem(1001L, updateStartAt, 6),
                 deleteItem(1002L),
                 createItem(createStartAt, 4)
@@ -836,7 +849,7 @@ class ScheduleAdjustmentServiceImplTest {
         WeeklyScheduleAdjustmentRequest.Item item = createItem(createStartAt, 4);
         item.setItemReason(null);
 
-        WeeklyScheduleAdjustmentResultVO result = scheduleAdjustmentService.adjustWeekly(buildWeeklyRequest(item));
+        WeeklyScheduleAdjustmentResultVO result = adjustWeekly(buildWeeklyRequest(item));
 
         assertThat(result.createdCount()).isEqualTo(1);
     }
@@ -863,7 +876,7 @@ class ScheduleAdjustmentServiceImplTest {
         onlineItem.setPlannedClassroomId(null);
         onlineItem.setDeliveryMode("ONLINE");
 
-        WeeklyScheduleAdjustmentResultVO result = scheduleAdjustmentService.adjustWeekly(buildWeeklyRequest(onlineItem));
+        WeeklyScheduleAdjustmentResultVO result = adjustWeekly(buildWeeklyRequest(onlineItem));
 
         verify(lessonOccurrenceMapper).insert(occurrenceCaptor.capture());
         assertThat(result.createdCount()).isEqualTo(1);
@@ -882,7 +895,7 @@ class ScheduleAdjustmentServiceImplTest {
         when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
 
-        assertThatThrownBy(() -> scheduleAdjustmentService.adjustWeekly(
+        assertThatThrownBy(() -> adjustWeekly(
                 buildWeeklyRequest(createItem(createStartAt, 4))
         ))
                 .isInstanceOf(BusinessException.class)
@@ -897,7 +910,7 @@ class ScheduleAdjustmentServiceImplTest {
         when(lessonOccurrenceMapper.selectBatchIds(any())).thenReturn(List.of(occurrence));
         when(lessonRecordMapper.selectCount(any())).thenReturn(1L);
 
-        assertThatThrownBy(() -> scheduleAdjustmentService.adjustWeekly(
+        assertThatThrownBy(() -> adjustWeekly(
                 buildWeeklyRequest(deleteItem(1001L))
         ))
                 .isInstanceOf(BusinessException.class)
@@ -913,7 +926,7 @@ class ScheduleAdjustmentServiceImplTest {
         LessonOccurrenceEntity existing = buildWeeklyOccurrence(1001L, existingStartAt, 4);
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(existing));
 
-        assertThatThrownBy(() -> scheduleAdjustmentService.adjustWeekly(
+        assertThatThrownBy(() -> adjustWeekly(
                 buildWeeklyRequest(createItem(outsideStartAt, 4))
         ))
                 .isInstanceOf(BusinessException.class)
@@ -965,9 +978,15 @@ class ScheduleAdjustmentServiceImplTest {
         request.setPackageId(501L);
         request.setWeekStartDate(currentWeekStartDate());
         request.setItems(List.of(items));
-        request.setAdjustedBy(999L);
         request.setReason("temporary weekly adjustment");
         return request;
+    }
+
+    /** 管理端周排课编辑入口由当前用户身份提供操作人，测试统一使用现有审计样例 ID。 */
+    private WeeklyScheduleAdjustmentResultVO adjustWeekly(WeeklyScheduleAdjustmentRequest request) {
+        CurrentUserResponse admin = new CurrentUserResponse(999L, "admin", "Admin", "ADMIN", null, null,
+                List.of("ADMIN"));
+        return scheduleAdjustmentService.adjustWeekly(request, admin);
     }
 
     private LocalDate currentWeekStartDate() {

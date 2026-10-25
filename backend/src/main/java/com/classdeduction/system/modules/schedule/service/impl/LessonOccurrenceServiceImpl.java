@@ -583,7 +583,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 LessonOccurrenceEntity right = occurrences.get(j);
                 if (overlaps(left, right)) {
                     throw new BusinessException("SCHEDULE_CONFLICT",
-                            "Pending lessons overlap and cannot be assigned to the same classroom together.",
+                            describeClassroomConflict("Room assignment conflict", left, right),
                             List.of(toClassroomConflictDetail(left, right)));
                 }
             }
@@ -599,7 +599,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     .lt(LessonOccurrenceEntity::getPlannedStartAt, occurrence.getPlannedEndAt())
                     .gt(LessonOccurrenceEntity::getPlannedEndAt, occurrence.getPlannedStartAt()));
             if (conflicts != null && !conflicts.isEmpty()) {
-                throw new BusinessException("SCHEDULE_CONFLICT", "Classroom conflict detected for the selected room.",
+                throw new BusinessException("SCHEDULE_CONFLICT",
+                        describeClassroomConflict("Classroom schedule conflict", occurrence, conflicts.get(0)),
                         List.of(toClassroomConflictDetail(occurrence, conflicts.get(0))));
             }
         }
@@ -613,6 +614,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .resourceType("CLASSROOM")
                 .resourceId(classroomId)
                 .resourceName(classroom == null ? null : classroom.getRoomName())
+                .courseName(resolveOccurrenceCourseName(existing))
+                .studentName(resolveOccurrenceStudentName(existing))
+                .teacherName(resolveTeacherName(existing.getPlannedTeacherId()))
                 .requestedStartAt(candidate.getPlannedStartAt())
                 .requestedEndAt(candidate.getPlannedEndAt())
                 .conflictStartAt(existing.getPlannedStartAt())
@@ -620,6 +624,68 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .existingOccurrenceId(existing.getId())
                 .existingLessonNo(existing.getLessonNo())
                 .build();
+    }
+
+    private String describeClassroomConflict(String conflictType, LessonOccurrenceEntity candidate,
+                                             LessonOccurrenceEntity existing) {
+        ClassroomEntity classroom = candidate.getPlannedClassroomId() == null ? null
+                : classroomMapper.selectById(candidate.getPlannedClassroomId());
+        return "Schedule conflict detected.\n"
+                + "Conflict type: " + conflictType + ".\n"
+                + "Conflicting course: " + displayConflictValue(resolveOccurrenceCourseName(existing)) + "\n"
+                + "Date: " + existing.getPlannedStartAt().toLocalDate() + "\n"
+                + "Time: " + existing.getPlannedStartAt().toLocalTime() + "–"
+                + existing.getPlannedEndAt().toLocalTime() + "\n"
+                + "Teacher: " + displayConflictValue(resolveTeacherName(existing.getPlannedTeacherId())) + "\n"
+                + "Student: " + displayConflictValue(resolveOccurrenceStudentName(existing)) + "\n"
+                + "Room: " + displayConflictValue(classroom == null ? null : classroom.getRoomName());
+    }
+
+    private String resolveOccurrenceCourseName(LessonOccurrenceEntity occurrence) {
+        if (StringUtils.hasText(occurrence.getSubjectName())) {
+            return occurrence.getSubjectName();
+        }
+        if (occurrence.getClassGroupId() != null) {
+            ClassGroupEntity classGroup = classGroupMapper.selectById(occurrence.getClassGroupId());
+            if (classGroup != null && classGroup.getProductId() != null) {
+                CourseProductEntity product = courseProductMapper.selectById(classGroup.getProductId());
+                if (product != null && StringUtils.hasText(product.getProductName())) {
+                    return product.getProductName();
+                }
+            }
+        }
+        CoursePackageEntity coursePackage = occurrence.getPackageId() == null ? null
+                : coursePackageMapper.selectById(occurrence.getPackageId());
+        CourseProductEntity product = coursePackage == null || coursePackage.getCourseProductId() == null
+                ? null : courseProductMapper.selectById(coursePackage.getCourseProductId());
+        return product != null && StringUtils.hasText(product.getProductName())
+                ? product.getProductName() : coursePackage == null ? null : coursePackage.getPackageName();
+    }
+
+    private String resolveOccurrenceStudentName(LessonOccurrenceEntity occurrence) {
+        if (occurrence.getStudentId() != null) {
+            StudentEntity student = studentMapper.selectById(occurrence.getStudentId());
+            return student == null ? null : student.getStudentName();
+        }
+        if (occurrence.getClassGroupId() != null) {
+            return classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                            .eq(ClassEnrollmentEntity::getClassId, occurrence.getClassGroupId())
+                            .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                            .eq(ClassEnrollmentEntity::getIsDeleted, 0))
+                    .stream().map(ClassEnrollmentEntity::getStudentId).filter(Objects::nonNull)
+                    .map(studentMapper::selectById).filter(Objects::nonNull).map(StudentEntity::getStudentName)
+                    .filter(StringUtils::hasText).distinct().collect(Collectors.joining(", "));
+        }
+        return null;
+    }
+
+    private String resolveTeacherName(Long teacherId) {
+        TeacherEntity teacher = teacherId == null ? null : teacherMapper.selectById(teacherId);
+        return teacher == null ? null : teacher.getTeacherName();
+    }
+
+    private String displayConflictValue(String value) {
+        return StringUtils.hasText(value) ? value : "Not recorded";
     }
 
     private boolean overlaps(LessonOccurrenceEntity left, LessonOccurrenceEntity right) {

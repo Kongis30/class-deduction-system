@@ -6,6 +6,9 @@ import { clearStoredAuthSession, getStoredAuthToken } from '@/utils/auth-storage
 interface ScheduleConflictDetail {
   resourceType?: string;
   resourceName?: string;
+  courseName?: string;
+  studentName?: string;
+  teacherName?: string;
   requestedStartAt?: string;
   requestedEndAt?: string;
   conflictStartAt?: string;
@@ -148,7 +151,7 @@ function formatStructuredErrorMessage(data: Record<string, unknown>): string {
   const details = data.data
     .map(formatScheduleConflictDetail)
     .filter((line): line is string => Boolean(line));
-  return details.length > 0 ? `${message} ${details.join('; ')}` : message;
+  return details.length > 0 ? `Schedule conflict detected:\n${details.join('\n\n')}` : message;
 }
 
 function formatScheduleConflictDetail(detail: unknown): string | null {
@@ -156,26 +159,20 @@ function formatScheduleConflictDetail(detail: unknown): string | null {
     return null;
   }
   const conflict = detail as ScheduleConflictDetail;
-  const resourceType = conflict.resourceType?.toLowerCase();
-  const label = resourceType === 'teacher' ? 'Teacher'
-    : resourceType === 'classroom' ? 'Classroom'
-      : resourceType === 'student' ? 'Student' : 'Resource';
-  const resource = [label, conflict.resourceName].filter(Boolean).join(' ');
-  const requested = formatConflictTimeRange(conflict.requestedStartAt, conflict.requestedEndAt);
-  const occupied = formatConflictTimeRange(conflict.conflictStartAt, conflict.conflictEndAt);
-  const lesson = conflict.existingLessonNo ? `lesson ${conflict.existingLessonNo}` : 'another scheduled lesson';
-  if (requested && occupied) {
-    return `${resource} conflict: requested ${requested} overlaps ${lesson} (${occupied} ET)`;
-  }
-  if (occupied) {
-    return `${resource} conflict: ${lesson} is scheduled at ${occupied} ET`;
-  }
-  return `${resource} conflict detected`;
-}
-
-function formatConflictTimeRange(startAt?: string, endAt?: string): string {
-  if (!startAt || !endAt) {
-    return '';
-  }
-  return `${startAt.replace('T', ' ').slice(0, 16)}–${endAt.replace('T', ' ').slice(0, 16)}`;
+  const resourceType = conflict.resourceType?.toUpperCase();
+  const typeLabel = resourceType === 'TEACHER' ? 'Teacher schedule conflict'
+    : resourceType === 'CLASSROOM' ? 'Classroom schedule conflict'
+      : resourceType === 'STUDENT' ? 'Student schedule conflict' : 'Schedule conflict';
+  const date = conflict.conflictStartAt?.slice(0, 10) ?? '';
+  const time = conflict.conflictStartAt && conflict.conflictEndAt
+    ? `${conflict.conflictStartAt.slice(11, 16)}–${conflict.conflictEndAt.slice(11, 16)}` : '';
+  return [
+    `Conflict type: ${typeLabel}`,
+    `Conflicting course: ${conflict.courseName || 'Not recorded'}`,
+    `Date: ${date || 'Not recorded'}`,
+    `Time: ${time || 'Not recorded'}`,
+    `Teacher: ${conflict.teacherName || (resourceType === 'TEACHER' ? conflict.resourceName : null) || 'Not recorded'}`,
+    `Student: ${conflict.studentName || (resourceType === 'STUDENT' ? conflict.resourceName : null) || 'Not recorded'}`,
+    ...(resourceType === 'CLASSROOM' ? [`Room: ${conflict.resourceName || 'Not recorded'}`] : []),
+  ].join('\n');
 }

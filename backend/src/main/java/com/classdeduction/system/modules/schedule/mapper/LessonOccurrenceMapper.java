@@ -41,6 +41,20 @@ public interface LessonOccurrenceMapper extends BaseMapper<LessonOccurrenceEntit
     int softDeleteFutureUnprocessed(@Param("ids") List<Long> ids,
                                     @Param("effectiveAt") LocalDateTime effectiveAt);
 
+    /** 管理员继续改排课时回收已结束的未确认私教课；只软删除且写入时再次排除已确认记录。 */
+    @Update({"<script>",
+            "UPDATE lesson_occurrence lo SET lo.is_deleted = 1, lo.deleted_at = #{effectiveAt},",
+            "lo.updated_at = #{effectiveAt}",
+            "WHERE lo.id IN",
+            "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach>",
+            "AND lo.is_deleted = 0 AND lo.class_group_id IS NULL AND lo.planning_status &lt;&gt; 'CANCELLED'",
+            "AND lo.planned_end_at &lt;= #{effectiveAt}",
+            "AND NOT EXISTS (SELECT 1 FROM lesson_record lr",
+            "WHERE lr.occurrence_id = lo.id AND lr.is_deleted = 0)",
+            "</script>"})
+    int softDeleteEndedUnconfirmedPrivateLessons(@Param("ids") List<Long> ids,
+                                                  @Param("effectiveAt") LocalDateTime effectiveAt);
+
     /** 分配额缩减时移除末尾普通课，同时让后续增额可以在该日期重新生成课次。 */
     @Update("UPDATE lesson_occurrence SET planning_status = 'CANCELLED', is_deleted = 1, deleted_at = #{effectiveAt}, "
             + "updated_at = #{effectiveAt} WHERE id = #{id} AND is_deleted = 0 "

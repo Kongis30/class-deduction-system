@@ -992,19 +992,26 @@
 
     <el-dialog
       v-model="editDeductionPromptVisible"
-      title="Started Lessons Need Deduction"
+      title="Unconfirmed Lessons Need a Decision"
       width="min(540px, calc(100vw - 32px))"
       :close-on-click-modal="false"
     >
       <el-alert
-        :title="`${pendingStartedLessons.length} lesson(s) have started but are not yet deducted.`"
+        :title="`${pendingStartedLessons.length} ended lesson(s) are not yet confirmed.`"
         type="warning"
         :closable="false"
         show-icon
       />
       <p class="edit-deduction-prompt__message">
-        Deduct these lessons before editing the schedule, or continue editing without deducting them.
+        Review these lessons in 1-on-1 Lessons first. If you continue, their pending submissions and schedule records will be withdrawn, and those hours will be available for the new schedule. Confirmed lessons stay in the history.
       </p>
+      <ul class="edit-deduction-prompt__lessons">
+        <li v-for="lesson in pendingStartedLessons" :key="lesson.occurrenceId">
+          {{ dayjs(lesson.plannedStartAt).format('MMM D, YYYY') }} ·
+          {{ scheduleOccurrenceTimeRange(lesson.plannedStartAt, lesson.plannedEndAt) }} ·
+          {{ lesson.subjectName || 'Lesson' }} · {{ ((lesson.plannedUnits || 0) * 0.5).toFixed(1) }}h
+        </li>
+      </ul>
 
       <template #footer>
         <el-button type="primary" plain @click="goToOneOnOneDeduction">Go to 1-on-1 Lessons</el-button>
@@ -1035,6 +1042,7 @@ import dayjs from 'dayjs';
 import { useRoute, useRouter } from 'vue-router';
 
 import { extractErrorMessage } from '@/api/http';
+import { showScheduleError } from '@/utils/schedule-conflict-feedback';
 import { fetchAllClassrooms, fetchAllTeachers, fetchClassroom, fetchTeacher } from '@/api/base-data';
 import { useAppStore } from '@/stores/app';
 import { fetchCoursePackage, fetchCoursePackages, pauseCoursePackage, resumeCoursePackage, updateCoursePackageDeductedHours } from '@/api/enrollment';
@@ -1255,6 +1263,7 @@ const pauseConfirmationVisible = ref(false);
 const checkingEditDeduction = ref(false);
 const editDeductionPromptVisible = ref(false);
 const pendingStartedLessons = ref<OneOnOneLesson[]>([]);
+const reclaimEndedUnconfirmedLessons = ref(false);
 const resumingPackageId = ref<EntityId | null>(null);
 const packageHoursDialogVisible = ref(false);
 const startingHoursDraft = ref(0);
@@ -2063,6 +2072,7 @@ async function requestEditSchedule() {
   const studentId = selectedStudentId.value;
   if (!packageToEdit || !studentId || !currentRule.value || checkingEditDeduction.value) return;
 
+  reclaimEndedUnconfirmedLessons.value = false;
   checkingEditDeduction.value = true;
   try {
     const response = await fetchOneOnOneDeductions({
@@ -2087,8 +2097,8 @@ async function requestEditSchedule() {
     const now = dayjs();
     pendingStartedLessons.value = coursePackage.lessons.filter(lesson =>
       lesson.planningStatus !== 'CANCELLED'
-      && dayjs(lesson.plannedStartAt).isValid()
-      && !dayjs(lesson.plannedStartAt).isAfter(now)
+      && dayjs(lesson.plannedEndAt).isValid()
+      && !dayjs(lesson.plannedEndAt).isAfter(now)
       && lesson.confirmStage !== 'CONFIRMED');
 
     if (pendingStartedLessons.value.length > 0) {
@@ -2106,6 +2116,7 @@ async function requestEditSchedule() {
 // 弹窗的继续操作不重新查询，直接进入已有的周排课编辑流程。
 async function continueEditSchedule() {
   editDeductionPromptVisible.value = false;
+  reclaimEndedUnconfirmedLessons.value = true;
   await openEditDialog();
 }
 
@@ -2476,7 +2487,7 @@ async function submitCreateForm() {
       await Promise.all([loadAllPackageRules(), refreshScheduleStudentList()]);
       await loadCurrentWeekOccurrences();
     } catch (err) {
-      ElMessage.error(extractErrorMessage(err));
+      showScheduleError(err);
     } finally {
       submitting.value = false;
     }
@@ -2502,6 +2513,7 @@ async function submitEditForm() {
         ruleStatus: editForm.ruleStatus,
         startDate: editForm.startDate,
         notes: editForm.notes || undefined,
+        reclaimEndedUnconfirmedLessons: reclaimEndedUnconfirmedLessons.value || undefined,
         slots: editForm.slots.map((s) => ({
           slotId: s.slotId,
           teacherId: s.teacherId,
@@ -2518,13 +2530,15 @@ async function submitEditForm() {
       const data = result.data.data;
       ElMessage.success(
         `Schedule updated. ${data.generatedOccurrenceCount} new occurrences generated; ` +
-        `${data.preservedOccurrenceCount} existing lessons preserved (${data.confirmedOccurrenceCount} confirmed).`
+        `${data.preservedOccurrenceCount} existing lessons preserved (${data.confirmedOccurrenceCount} confirmed); ` +
+        `${data.reclaimedOccurrenceCount || 0} ended unconfirmed lessons reclaimed.`
       );
+      reclaimEndedUnconfirmedLessons.value = false;
       editDialogVisible.value = false;
       await Promise.all([loadAllPackageRules(), refreshScheduleStudentList()]);
       await loadCurrentWeekOccurrences();
     } catch (err) {
-      ElMessage.error(extractErrorMessage(err));
+      showScheduleError(err);
     } finally {
       submitting.value = false;
     }
@@ -2663,7 +2677,7 @@ async function submitWeeklyAdjustment() {
 
     await loadCurrentWeekOccurrences();
   } catch (err) {
-    ElMessage.error(extractErrorMessage(err));
+    showScheduleError(err);
   } finally {
     submitting.value = false;
   }
@@ -3060,6 +3074,16 @@ function disabledPastDate(date: Date) {
   margin: 12px 0 0;
   color: #606266;
   line-height: 1.6;
+}
+
+.edit-deduction-prompt__lessons {
+  max-height: 180px;
+  margin: 10px 0 0;
+  padding: 0 0 0 20px;
+  overflow-y: auto;
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.8;
 }
 
 .schedule-page {

@@ -183,6 +183,15 @@ class LessonRecordServiceImplTest {
                 notificationOutboxService,
                 notificationTriggerRuleMapper
         );
+        org.mockito.Mockito.lenient().when(lessonOccurrenceMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> lessonOccurrenceMapper.selectById(invocation.getArgument(0)));
+        org.mockito.Mockito.lenient().when(lessonRecordMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> lessonRecordMapper.selectById(invocation.getArgument(0)));
+        org.mockito.Mockito.lenient().when(lessonRecordMapper.selectByIdsForUpdate(any()))
+                .thenAnswer(invocation -> ((List<Long>) invocation.getArgument(0)).stream()
+                        .map(lessonRecordMapper::selectById).filter(Objects::nonNull).toList());
+        org.mockito.Mockito.lenient().when(coursePackageMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> coursePackageMapper.selectById(invocation.getArgument(0)));
     }
 
     @Test
@@ -293,6 +302,56 @@ class LessonRecordServiceImplTest {
         verify(hourLedgerMapper, never()).insert(any(HourLedgerEntity.class));
         verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
         verify(lessonOccurrenceMapper, never()).updateById(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
+    void shouldLetNewSlotTeacherSubmitAnUnprocessedHandedOverLesson() {
+        LessonOccurrenceEntity occurrence = buildRecentOccurrence();
+        occurrence.setScheduleSlotId(9001L);
+        occurrence.setPlannedTeacherId(701L);
+
+        RecurringScheduleRuleEntity activeRule = new RecurringScheduleRuleEntity();
+        activeRule.setId(5002L);
+        activeRule.setPackageId(501L);
+        activeRule.setRuleStatus("ACTIVE");
+        RecurringScheduleSlotEntity oldSlot = new RecurringScheduleSlotEntity();
+        oldSlot.setId(9001L);
+        oldSlot.setSlotLineageId(9901L);
+        oldSlot.setTeacherId(701L);
+        oldSlot.setSlotStatus("DELETED");
+        RecurringScheduleSlotEntity currentSlot = new RecurringScheduleSlotEntity();
+        currentSlot.setId(9002L);
+        currentSlot.setRuleId(activeRule.getId());
+        currentSlot.setSlotLineageId(9901L);
+        currentSlot.setTeacherId(702L);
+        currentSlot.setSlotStatus("ACTIVE");
+
+        LessonRecordConfirmRequest request = new LessonRecordConfirmRequest();
+        request.setOccurrenceId(occurrence.getId());
+        request.setResultStatus("COMPLETED");
+
+        when(lessonOccurrenceMapper.selectById(occurrence.getId())).thenReturn(occurrence);
+        when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(oldSlot));
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(activeRule));
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(currentSlot));
+        when(lessonRecordMapper.selectOne(any())).thenReturn(null);
+        when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(12, 0));
+        when(studentMapper.selectById(601L)).thenReturn(buildStudent());
+        when(lessonStatusRuleMapper.selectOne(any())).thenReturn(buildCompletedRule());
+        when(teacherMapper.selectById(701L)).thenReturn(buildTeacher(701L));
+        when(classroomMapper.selectById(801L)).thenReturn(buildClassroom());
+        stubRecordInsertedId(2002L);
+
+        LessonRecordConfirmResultVO result = lessonRecordService.initialConfirmLesson(request,
+                new CurrentUserResponse(1003L, "new.teacher", "New Teacher", "TEACHER", 702L, null,
+                        List.of("TEACHER")));
+
+        assertThat(result.occurrenceId()).isEqualTo(occurrence.getId());
+        verify(lessonRecordMapper).insert(recordCaptor.capture());
+        assertThat(recordCaptor.getValue().getConfirmStage()).isEqualTo("PENDING_ADMIN");
+        assertThat(recordCaptor.getValue().getTeacherConfirmedByUserId()).isEqualTo(1003L);
+        verify(hourLedgerMapper, never()).insert(any(HourLedgerEntity.class));
+        verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
     }
 
     @Test
@@ -1043,7 +1102,6 @@ class LessonRecordServiceImplTest {
         when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(classOccurrence);
         when(lessonOccurrenceMapper.selectByIdForUpdate(1001L)).thenReturn(classOccurrence);
         when(classGroupMapper.selectByIdForUpdate(7001L)).thenReturn(classGroup);
-        when(lessonRecordMapper.selectCount(any())).thenReturn(0L);
         when(lessonOccurrenceMapper.updateById(any(LessonOccurrenceEntity.class))).thenReturn(1);
 
         LessonRecordRevokeRequest revokeRequest = new LessonRecordRevokeRequest();

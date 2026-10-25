@@ -16,6 +16,7 @@ public record ScheduleRuleUpdateResultVO(
         Integer generatedOccurrenceCount,
         Integer confirmedOccurrenceCount,
         LocalDateTime firstGeneratedStartAt,
-        LocalDateTime lastGeneratedEndAt
+        LocalDateTime lastGeneratedEndAt,
+        Integer reclaimedOccurrenceCount
 ) {
 }

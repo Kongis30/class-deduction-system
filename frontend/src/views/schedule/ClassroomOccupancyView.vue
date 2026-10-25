@@ -399,6 +399,7 @@ import { useAppStore } from '@/stores/app';
 import dayjs from 'dayjs';
 import { scheduleOccurrenceTimeRange } from '@/utils/schedule-time';
 import { extractErrorMessage } from '@/api/http';
+import { showScheduleError } from '@/utils/schedule-conflict-feedback';
 import { fetchAllClassrooms } from '@/api/base-data';
 import {
   backfillPendingClassroom,
@@ -723,7 +724,7 @@ async function savePendingAssignment(row: PendingClassroomAssignmentItem & { row
       await loadData();
     }
   } catch (error) {
-    ElMessage.error(`Failed to assign classroom: ${extractErrorMessage(error)}`);
+    showScheduleError(error, 'Failed to assign classroom.');
   } finally {
     savingPendingKey.value = '';
   }

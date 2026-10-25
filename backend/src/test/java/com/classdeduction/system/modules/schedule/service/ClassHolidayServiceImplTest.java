@@ -16,6 +16,7 @@ import com.classdeduction.system.modules.schedule.dto.ClassHolidaySaveRequest;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
+import com.classdeduction.system.modules.schedule.service.ClassAdjustedSlotReservations;
 import com.classdeduction.system.modules.schedule.mapper.ClassHolidayMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.impl.ClassHolidayServiceImpl;
@@ -30,11 +31,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -49,6 +52,7 @@ class ClassHolidayServiceImplTest {
     @Mock private PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
     @Mock private ClassGroupMapper classGroupMapper;
     @Mock private ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
+    @Mock private ClassAdjustedSlotReservations adjustedSlotReservations;
     @Mock private LessonRecordMapper lessonRecordMapper;
 
     private ClassHolidayServiceImpl service;
@@ -66,9 +70,10 @@ class ClassHolidayServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        lenient().when(adjustedSlotReservations.load(any())).thenReturn(Set.of());
         service = new ClassHolidayServiceImpl(classHolidayMapper, projectMapper, lessonOccurrenceMapper,
                 classEnrollmentMapper, privateLessonGroupMemberMapper, classGroupMapper,
-                classGroupScheduleSlotMapper, lessonRecordMapper);
+                classGroupScheduleSlotMapper, adjustedSlotReservations, lessonRecordMapper);
     }
 
     @Test
