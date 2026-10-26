@@ -106,6 +106,16 @@ export interface DataSummaryRow {
   lowOneOnOneHours: boolean;
   alertTypes: string[];
   reviewIssueCodes?: string[];
+  /** Data Summary display classification only; has no effect on enrollment or lesson balances. */
+  discontinued?: boolean;
+}
+
+export interface DataSummaryClassificationRequest {
+  orderId: EntityId;
+  studentId: EntityId;
+  participantIndex?: number;
+  orderItemIds: EntityId[];
+  discontinued: boolean;
 }
 
 export interface DataSummaryResponse {
@@ -129,4 +139,8 @@ export interface DataSummaryResponse {
 
 export function fetchDataSummary(params: DataSummaryQuery = {}) {
   return http.get<ApiResponse<DataSummaryResponse>>('/v1/data-summary', { params });
+}
+
+export function updateDataSummaryClassification(request: DataSummaryClassificationRequest) {
+  return http.post<ApiResponse<void>>('/v1/data-summary/classification', request);
 }

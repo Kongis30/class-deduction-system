@@ -12,6 +12,7 @@ import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.DataSummaryQuery;
+import com.classdeduction.system.modules.enrollment.dto.DataSummaryClassificationRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
@@ -23,6 +24,7 @@ import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderParticipantMapper;
+import com.classdeduction.system.modules.enrollment.mapper.DataSummaryClassificationMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentAllocationMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
@@ -73,6 +75,9 @@ class DataSummaryServiceImplTest {
 
     @Mock
     private EnrollmentOrderParticipantMapper enrollmentOrderParticipantMapper;
+
+    @Mock
+    private DataSummaryClassificationMapper dataSummaryClassificationMapper;
 
     @Mock
     private PrivateLessonGroupMapper privateLessonGroupMapper;
@@ -141,6 +146,7 @@ class DataSummaryServiceImplTest {
                 enrollmentOrderMapper,
                 enrollmentOrderItemMapper,
                 enrollmentOrderParticipantMapper,
+                dataSummaryClassificationMapper,
                 privateLessonGroupMapper,
                 coursePackageMapper,
                 packageTeacherAssignmentMapper,
@@ -160,12 +166,29 @@ class DataSummaryServiceImplTest {
                 new JsonHelper(new ObjectMapper())
         );
         lenient().when(enrollmentOrderItemMapper.selectList(any())).thenReturn(Collections.emptyList());
+        lenient().when(dataSummaryClassificationMapper.selectRecordKeysByOrderIds(any())).thenReturn(Collections.emptyList());
         lenient().when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(privateLessonGroupMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(coursePackageMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(groupCourseProjectMapper.selectBatchIds(any())).thenReturn(Collections.emptyList());
         lenient().when(paymentRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(studentMapper.selectBatchIds(any())).thenReturn(Collections.emptyList());
+    }
+
+    @Test
+    void discontinuedClassificationCanBeRestoredWithoutChangingEnrollmentData() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(42L);
+        order.setStudentId(84L);
+        when(enrollmentOrderMapper.selectById(42L)).thenReturn(order);
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        dataSummaryService.classifyRecord(new DataSummaryClassificationRequest(42L, 84L, null, List.of(), true));
+        dataSummaryService.classifyRecord(new DataSummaryClassificationRequest(42L, 84L, null, List.of(), false));
+
+        verify(dataSummaryClassificationMapper).insertDiscontinued(
+                "ORDER:42:STUDENT:84:PARTICIPANT:0", 42L, null, 84L, null);
+        verify(dataSummaryClassificationMapper).deleteRecordKeys(List.of("ORDER:42:STUDENT:84:PARTICIPANT:0"));
     }
 
     @Test

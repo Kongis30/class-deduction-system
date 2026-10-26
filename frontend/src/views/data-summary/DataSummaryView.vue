@@ -34,7 +34,7 @@
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="export-excel" :disabled="sortedRows.length + visibleRefundRows.length === 0">Export Excel</el-dropdown-item>
+              <el-dropdown-item command="export-excel" :disabled="sortedRows.length + visibleRefundRows.length + visibleDiscontinuedRows.length === 0">Export Excel</el-dropdown-item>
               <el-dropdown-item command="archive-scope">{{ archiveScope === 'CURRENT' ? 'View archived courses' : 'View current courses' }}</el-dropdown-item>
               <el-dropdown-item command="print-roster" :disabled="rosterPrintClassGroups.length === 0">Print class roster</el-dropdown-item>
               <template v-if="isSaturdayProductTab">
@@ -133,7 +133,7 @@
         <el-button
           size="small"
           type="primary"
-          :disabled="sortedRows.length + visibleRefundRows.length === 0"
+          :disabled="sortedRows.length + visibleRefundRows.length + visibleDiscontinuedRows.length === 0"
           @click="exportExcel"
         >
           Export Excel
@@ -490,7 +490,34 @@
           </tr>
         </tbody>
 
-        <tbody v-if="!loading && !groupedCampusRows.length && !visibleRefundRows.length">
+        <tbody v-if="visibleDiscontinuedRows.length">
+          <tr class="workbook-section-row" data-testid="discontinued-section-row">
+            <td :colspan="columns.length">Discontinued Student</td>
+          </tr>
+          <tr
+            v-for="row in visibleDiscontinuedRows"
+            :key="rowKey(row)"
+            class="workbook-data-row workbook-data-row--discontinued"
+            @contextmenu.prevent.stop="openStudentContextMenu($event, row)"
+          >
+            <td v-for="column in columns" :key="column.key" :class="stoppedCellClass(column.key)">
+              <span v-if="column.key === 'period'">{{ formatPeriod(row) }}</span>
+              <span v-else-if="column.key === 'signupDate'">{{ formatDate(row.signupDate) }}</span>
+              <span v-else-if="column.key === 'phone'">{{ formatUsPhoneDisplay(row.phone) || '—' }}</span>
+              <span v-else-if="column.key === 'phone2'">{{ formatUsPhoneDisplay(row.phone2) || '—' }}</span>
+              <span v-else-if="column.key === 'pickup' || column.key === 'dropoff'" :class="['workbook-pill', columnValue(row, column.key) === 'Yes' ? 'workbook-pill--yes' : 'workbook-pill--no']">
+                {{ columnValue(row, column.key) }}
+              </span>
+              <span v-else-if="column.key === 'paymentMethod'" :class="['workbook-pill', paymentMethodClass(row.paymentMethod)]">
+                {{ displayText(row.paymentMethod) }}
+              </span>
+              <span v-else-if="isMoneyColumn(column.key)">{{ formatMoney(columnValue(row, column.key)) }}</span>
+              <span v-else>{{ displayText(columnValue(row, column.key)) }}</span>
+            </td>
+          </tr>
+        </tbody>
+
+        <tbody v-if="!loading && !groupedCampusRows.length && !visibleRefundRows.length && !visibleDiscontinuedRows.length">
           <tr class="workbook-empty-row">
             <td :colspan="columns.length">
               <span>{{ emptyMessage }}</span>
@@ -580,6 +607,22 @@
       :style="{ left: `${studentContextMenu.x}px`, top: `${studentContextMenu.y}px` }"
       @click.stop
     >
+      <button
+        v-if="studentContextMenu.row?.discontinued"
+        type="button"
+        role="menuitem"
+        @click="setStudentDiscontinued(false)"
+      >
+        Continue
+      </button>
+      <button
+        v-else
+        type="button"
+        role="menuitem"
+        @click="setStudentDiscontinued(true)"
+      >
+        Discontinue student
+      </button>
       <button type="button" role="menuitem" @click="viewStudentReceipt">
         View receipt
       </button>
@@ -615,7 +658,7 @@ import { ElMessage } from 'element-plus';
 import * as XLSX from 'xlsx';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
-import { fetchDataSummary, type DataSummaryRow } from '@/api/data-summary';
+import { fetchDataSummary, updateDataSummaryClassification, type DataSummaryRow } from '@/api/data-summary';
 import { fetchRefundPreview } from '@/api/enrollment';
 import { fetchAllCourseProducts, saveCourseProductTabOrder } from '@/api/base-data';
 import { extractErrorMessage } from '@/api/http';
@@ -1074,18 +1117,23 @@ function mergeLogicalCourseRows(monthRows: DataSummaryRow[], allRows: DataSummar
       balanceAmount: balance,
       paymentStatus: balance < 0 ? (sum('paidAmount') > 0 ? 'PARTIAL' : 'UNPAID') : 'PAID',
       overdue: balance < 0,
+      discontinued: ordered.every((row) => Boolean(row.discontinued)),
       purchaseRows: ordered,
     });
   });
 }
 
-const filteredRows = computed<DataSummaryDisplayRow[]>(() => monthFilteredRows.value.filter((row) => {
-  return columns.every((column) => matchesColumnFilter(row, column));
-}));
+const visibleDiscontinuedRows = computed<DataSummaryDisplayRow[]>(() => sortDataRows(monthFilteredRows.value.filter((row) =>
+  Boolean(row.discontinued) && columns.every((column) => matchesColumnFilter(row, column)),
+)));
+
+const filteredRows = computed<DataSummaryDisplayRow[]>(() => monthFilteredRows.value.filter((row) =>
+  !row.discontinued && columns.every((column) => matchesColumnFilter(row, column)),
+));
 
 const monthStats = computed(() => {
   // 汇总跟随月份、课程和表格筛选；退款行按退款后的净收款计入。
-  const rowsToSummarize = [...filteredRows.value, ...visibleRefundRows.value];
+  const rowsToSummarize = [...filteredRows.value, ...visibleRefundRows.value, ...visibleDiscontinuedRows.value];
   return uniqueSourceRows(rowsToSummarize).reduce(
     (acc, row) => {
       acc.count += 1;
@@ -1548,7 +1596,7 @@ function setArchiveScope(value: 'CURRENT' | 'ARCHIVED') {
 
 function openStudentContextMenu(event: MouseEvent, row: DataSummaryDisplayRow) {
   const menuWidth = 150;
-  const menuHeight = 140;
+  const menuHeight = 190;
   studentContextMenu.x = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
   studentContextMenu.y = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
   studentContextMenu.row = row;
@@ -1575,6 +1623,32 @@ function closeStudentContextMenu() {
   refundPreviewRequestId += 1;
   studentContextMenu.visible = false;
   studentContextMenu.row = null;
+}
+
+async function setStudentDiscontinued(discontinued: boolean) {
+  const row = studentContextMenu.row;
+  closeStudentContextMenu();
+  if (!row?.orderId || !row.studentId) {
+    ElMessage.error('This record cannot be updated. Refresh the page and try again.');
+    return;
+  }
+  const orderItemIds = (row.purchaseRows ?? [row])
+    .map((purchase) => purchase.orderItemId)
+    .filter((id): id is NonNullable<typeof id> => id != null)
+    .filter((id, index, ids) => ids.indexOf(id) === index);
+  try {
+    await updateDataSummaryClassification({
+      orderId: row.orderId,
+      studentId: row.studentId,
+      participantIndex: row.participantIndex,
+      orderItemIds,
+      discontinued,
+    });
+    await loadPage();
+    ElMessage.success(discontinued ? 'Moved to Discontinued Student.' : 'Student record restored.');
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  }
 }
 
 function viewStudentReceipt() {
@@ -2155,17 +2229,28 @@ const EXPORT_NUMERIC_COLUMNS: ReadonlySet<ColumnKey> = new Set([
 function exportExcel() {
   const dataRows = sortedRows.value;
   const refundRows = visibleRefundRows.value;
-  if (dataRows.length === 0 && refundRows.length === 0) {
+  const discontinuedRows = visibleDiscontinuedRows.value;
+  if (dataRows.length === 0 && refundRows.length === 0 && discontinuedRows.length === 0) {
     ElMessage.warning('No rows to export.');
     return;
   }
   const aoa: (string | number)[][] = [columns.map((column) => column.label)];
+  const numericRowOffsets: number[] = [];
   dataRows.forEach((row) => {
+    numericRowOffsets.push(aoa.length);
     aoa.push(columns.map((column) => exportCell(row, column.key)));
   });
   if (refundRows.length) {
     aoa.push(['Refund Student']);
     refundRows.forEach((row) => {
+      numericRowOffsets.push(aoa.length);
+      aoa.push(columns.map((column) => exportCell(row, column.key)));
+    });
+  }
+  if (discontinuedRows.length) {
+    aoa.push(['Discontinued Student']);
+    discontinuedRows.forEach((row) => {
+      numericRowOffsets.push(aoa.length);
       aoa.push(columns.map((column) => exportCell(row, column.key)));
     });
   }
@@ -2173,8 +2258,7 @@ function exportExcel() {
   // Excel 保留原始分值用于计算，仅将金额单元格的显示格式设为整数。
   columns.forEach((column, columnIndex) => {
     if (!EXPORT_NUMERIC_COLUMNS.has(column.key)) return;
-    [...dataRows, ...refundRows].forEach((_, rowIndex) => {
-      const rowOffset = rowIndex + 1 + (refundRows.length && rowIndex >= dataRows.length ? 1 : 0);
+    numericRowOffsets.forEach((rowOffset) => {
       const cell = sheet[XLSX.utils.encode_cell({ r: rowOffset, c: columnIndex })];
       if (cell) cell.z = '$#,##0;-$#,##0';
     });
@@ -2763,6 +2847,14 @@ onMounted(() => {
 
 .workbook-data-row.workbook-data-row--refund:hover td {
   background: #f8ecd9;
+}
+
+.workbook-data-row.workbook-data-row--discontinued td {
+  background: #f1f3f6;
+}
+
+.workbook-data-row.workbook-data-row--discontinued:hover td {
+  background: #e8edf3;
 }
 
 .workbook-table {

@@ -16,6 +16,7 @@ import com.classdeduction.system.modules.base.mapper.GroupRegistrationPlanMapper
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.DataSummaryQuery;
+import com.classdeduction.system.modules.enrollment.dto.DataSummaryClassificationRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
 import com.classdeduction.system.modules.enrollment.util.WholeDollarBilling;
@@ -30,6 +31,7 @@ import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderParticipantMapper;
+import com.classdeduction.system.modules.enrollment.mapper.DataSummaryClassificationMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentAllocationMapper;
@@ -46,6 +48,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderCourseRefundStateMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -77,6 +80,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
     private final EnrollmentOrderMapper enrollmentOrderMapper;
     private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
     private final EnrollmentOrderParticipantMapper enrollmentOrderParticipantMapper;
+    private final DataSummaryClassificationMapper dataSummaryClassificationMapper;
     private final PrivateLessonGroupMapper privateLessonGroupMapper;
     private final CoursePackageMapper coursePackageMapper;
     private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
@@ -178,6 +182,8 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         Map<Long, List<EnrollmentOrderParticipantEntity>> participantsByOrderId = orderParticipants.stream()
                 .collect(Collectors.groupingBy(EnrollmentOrderParticipantEntity::getEnrollmentOrderId,
                         LinkedHashMap::new, Collectors.toList()));
+        Set<String> discontinuedRecordKeys = dataSummaryClassificationMapper.selectRecordKeysByOrderIds(orderIds)
+                .stream().collect(Collectors.toSet());
 
         List<PrivateLessonGroupEntity> privateLessonGroups = privateLessonGroupMapper.selectList(
                         new LambdaQueryWrapper<PrivateLessonGroupEntity>()
@@ -297,7 +303,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                     paidAmountByParticipant));
         }
         List<DataSummaryResponseVO.RowVO> rows = buildRows(orderMap, itemsByOrderId, packagesByOrderId,
-                        participantsByOrderId, privateLessonGroupIdByOrderItemId, privateLessonParticipantCountByOrderItemId,
+                        participantsByOrderId, discontinuedRecordKeys, privateLessonGroupIdByOrderItemId, privateLessonParticipantCountByOrderItemId,
                         unambiguousPrivateLessonGroupIdByOrderId, privateLessonParticipantCountByOrderId,
                         refundStateByParticipantCourse,
                         packageByOrderItemId,
@@ -503,6 +509,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             Map<Long, List<EnrollmentOrderItemEntity>> itemsByOrderId,
             Map<Long, List<CoursePackageEntity>> packagesByOrderId,
             Map<Long, List<EnrollmentOrderParticipantEntity>> participantsByOrderId,
+            Set<String> discontinuedRecordKeys,
             Map<Long, Long> privateLessonGroupIdByOrderItemId,
             Map<Long, Integer> privateLessonParticipantCountByOrderItemId,
             Map<Long, Long> unambiguousPrivateLessonGroupIdByOrderId,
@@ -540,6 +547,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                             : findPackageForParticipant(packagesByOrderId.get(order.getId()), participant, null);
                     rows.add(toRow(order, null, Collections.emptyList(), coursePackage, participant,
                             null,
+                            discontinuedRecordKeys.contains(discontinuedRecordKey(order.getId(), null,
+                                    participant == null ? order.getStudentId() : participant.getStudentId(),
+                                    participant == null ? null : participant.getParticipantIndex())),
                             unambiguousPrivateLessonGroupIdByOrderId.get(order.getId()),
                             sharedPrivateLesson ? privateLessonParticipantCount : null,
                             reviewIssuesByOrderId.getOrDefault(order.getId(), Collections.emptyList()),
@@ -577,6 +587,8 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                             : refundStateByParticipantCourse.get(new ParticipantCourseKey(item.getId(), displayStudentId));
                     rows.add(toRow(order, item, orderItems, coursePackage, participant,
                             refundState,
+                            discontinuedRecordKeys.contains(discontinuedRecordKey(order.getId(), item.getId(),
+                                    displayStudentId, participant == null ? null : participant.getParticipantIndex())),
                             privateLessonGroupId,
                             sharedPrivateLesson ? privateLessonParticipantCount : null,
                             reviewIssuesByOrderId.getOrDefault(order.getId(), Collections.emptyList()),
@@ -674,6 +686,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                                               CoursePackageEntity coursePackage,
                                               EnrollmentOrderParticipantEntity participant,
                                               EnrollmentOrderCourseRefundStateEntity refundState,
+                                              boolean discontinued,
                                               Long privateLessonGroupId,
                                               Integer privateLessonParticipantCount,
                                               List<String> reviewIssueCodes,
@@ -954,8 +967,88 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                         : (order.getCashierUserId() != null ? order.getCashierUserId() : order.getCreatedBy()),
                 order.getRegistrationOperatorName() != null ? order.getRegistrationOperatorName() : order.getHandledByName(),
                 v2Enrollment != null && v2Enrollment.getLogicalCourseId() != null
-                        ? v2Enrollment.getLogicalCourseId() : item == null ? null : item.getLogicalCourseId()
+                        ? v2Enrollment.getLogicalCourseId() : item == null ? null : item.getLogicalCourseId(),
+                discontinued
         );
+    }
+
+    private String discontinuedRecordKey(Long orderId, Long orderItemId, Long studentId, Integer participantIndex) {
+        return orderItemId != null
+                ? "ITEM:" + orderItemId + ":STUDENT:" + studentId
+                : "ORDER:" + orderId + ":STUDENT:" + studentId + ":PARTICIPANT:" + (participantIndex == null ? 0 : participantIndex);
+    }
+
+    /** 归类只写入独立标记表；定位购买项和参与学生后才接受请求。 */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void classifyRecord(DataSummaryClassificationRequest request) {
+        EnrollmentOrderEntity order = enrollmentOrderMapper.selectById(request.orderId());
+        if (order == null) {
+            throw new com.classdeduction.system.common.exception.BusinessException(
+                    "DATA_SUMMARY_RECORD_NOT_FOUND", "The selected registration record could not be found.");
+        }
+        validateClassificationParticipant(order, request.studentId(), request.participantIndex());
+
+        List<Long> itemIds = request.orderItemIds() == null ? List.of() : request.orderItemIds().stream()
+                .filter(Objects::nonNull).distinct().toList();
+        List<String> recordKeys;
+        List<EnrollmentOrderItemEntity> targetItems = List.of();
+        if (itemIds.isEmpty()) {
+            boolean hasItems = !enrollmentOrderItemMapper.selectList(new LambdaQueryWrapper<EnrollmentOrderItemEntity>()
+                    .eq(EnrollmentOrderItemEntity::getEnrollmentOrderId, order.getId())).isEmpty();
+            if (hasItems) {
+                throw new com.classdeduction.system.common.exception.BusinessException(
+                        "DATA_SUMMARY_RECORD_INVALID", "Refresh the page and try again.");
+            }
+            recordKeys = List.of(discontinuedRecordKey(order.getId(), null, request.studentId(), request.participantIndex()));
+        } else {
+            List<EnrollmentOrderItemEntity> items = enrollmentOrderItemMapper.selectBatchIds(itemIds);
+            if (items.size() != itemIds.size() || items.stream().anyMatch(item -> !Objects.equals(item.getEnrollmentOrderId(), order.getId()))) {
+                throw new com.classdeduction.system.common.exception.BusinessException(
+                        "DATA_SUMMARY_RECORD_INVALID", "Refresh the page and try again.");
+            }
+            targetItems = items;
+            recordKeys = items.stream().map(item -> discontinuedRecordKey(order.getId(), item.getId(),
+                    request.studentId(), request.participantIndex())).toList();
+        }
+
+        if (Boolean.TRUE.equals(request.discontinued())) {
+            if (targetItems.isEmpty()) {
+                dataSummaryClassificationMapper.insertDiscontinued(recordKeys.get(0), order.getId(), null,
+                        request.studentId(), request.participantIndex());
+            } else {
+                for (EnrollmentOrderItemEntity item : targetItems) {
+                    String key = discontinuedRecordKey(order.getId(), item.getId(), request.studentId(), request.participantIndex());
+                    dataSummaryClassificationMapper.insertDiscontinued(key, order.getId(), item.getId(),
+                            request.studentId(), request.participantIndex());
+                }
+            }
+        } else {
+            dataSummaryClassificationMapper.deleteRecordKeys(recordKeys);
+        }
+    }
+
+    private void validateClassificationParticipant(EnrollmentOrderEntity order, Long studentId, Integer participantIndex) {
+        if (participantIndex == null) {
+            boolean primaryStudent = Objects.equals(order.getStudentId(), studentId);
+            boolean legacyParticipant = !enrollmentOrderParticipantMapper.selectList(
+                    new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
+                            .eq(EnrollmentOrderParticipantEntity::getEnrollmentOrderId, order.getId())
+                            .eq(EnrollmentOrderParticipantEntity::getStudentId, studentId)).isEmpty();
+            if (!primaryStudent && !legacyParticipant) {
+                throw new com.classdeduction.system.common.exception.BusinessException(
+                        "DATA_SUMMARY_RECORD_INVALID", "Refresh the page and try again.");
+            }
+            return;
+        }
+        EnrollmentOrderParticipantEntity participant = enrollmentOrderParticipantMapper.selectOne(
+                new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
+                        .eq(EnrollmentOrderParticipantEntity::getEnrollmentOrderId, order.getId())
+                        .eq(EnrollmentOrderParticipantEntity::getParticipantIndex, participantIndex));
+        if (participant == null || !Objects.equals(participant.getStudentId(), studentId)) {
+            throw new com.classdeduction.system.common.exception.BusinessException(
+                    "DATA_SUMMARY_RECORD_INVALID", "Refresh the page and try again.");
+        }
     }
 
     private String resolveDisplayItemStatus(EnrollmentOrderItemEntity item,
