@@ -568,16 +568,18 @@ function clearOrders() {
 }
 
 function openReceipt(row: ReceiptRecordItem) {
-  if (row.templateCode === 'REFUND_RECEIPT') {
-    void router.push({ name: 'refund-receipt', params: { receiptId: String(row.id) } });
+  // 退款收据属于订单的财务流水；View 始终回到该订单的原始报名收据页面。
+  const orderId = receiptPayload(row).enrollmentOrderId || row.enrollmentOrderId;
+  if (!orderId) {
+    ElMessage.error('The original enrollment receipt could not be found.');
     return;
   }
-
-  // 报名收据依赖订单快照；退款收据走独立快照页，避免关联订单删除后无法查看。
-  const orderId = receiptPayload(row).enrollmentOrderId || row.enrollmentOrderId;
   router.push({
     name: 'registration',
-    query: { orderId: String(orderId), receiptId: String(row.id) },
+    query: {
+      orderId: String(orderId),
+      ...(row.templateCode === 'REFUND_RECEIPT' ? {} : { receiptId: String(row.id) }),
+    },
   });
 }
 

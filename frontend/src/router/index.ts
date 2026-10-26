@@ -15,7 +15,6 @@ const CampusesView = () => import('@/views/base-data/CampusesView.vue');
 const EnrollmentOrdersView = () => import('@/views/enrollment/EnrollmentOrdersView.vue');
 const CoursePackagesView = () => import('@/views/enrollment/CoursePackagesView.vue');
 const ReceiptRecordsView = () => import('@/views/enrollment/ReceiptRecordsView.vue');
-const RefundReceiptView = () => import('@/views/enrollment/RefundReceiptView.vue');
 const RegistrationIntakeView = () => import('@/views/registration/RegistrationIntakeView.vue');
 const DataSummaryView = () => import('@/views/data-summary/DataSummaryView.vue');
 const StudentCreditView = () => import('@/views/finance/StudentCreditView.vue');
@@ -400,16 +399,6 @@ const routes: RouteRecordRaw[] = [
           title: 'Receipts',
           section: 'Enrollment',
           description: 'Find each student, then open or print their saved receipts.',
-        },
-      },
-      {
-        path: 'enrollment/receipts/refund/:receiptId',
-        name: 'refund-receipt',
-        component: RefundReceiptView,
-        meta: {
-          title: 'Refund receipt',
-          section: 'Enrollment',
-          description: 'View and print a saved refund receipt.',
         },
       },
       {

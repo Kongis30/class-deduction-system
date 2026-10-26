@@ -135,14 +135,19 @@ async function assertReceiptRecordsVisible(page: Page, studentName: string, enro
   await page.getByRole('tab', { name: 'Payment receipts' }).click();
   await expect(page.getByText(enrollmentNo).first()).toBeVisible();
   await page.getByRole('button', { name: 'View receipt' }).first().click();
-  await expect(visibleDialog(page).last().locator('.el-dialog__title')).toHaveText('Payment Receipt');
-  await closeVisibleDialog(page);
+  await expect(page).toHaveURL(/\/registration\?orderId=/);
+  await expect(page.getByText('Saved receipt', { exact: true })).toBeVisible();
 
+  await page.goto('/enrollment/receipts');
+  await page.getByPlaceholder('Search student').fill(studentName);
+  await page.getByRole('button', { name: 'Search' }).click();
   await page.getByRole('tab', { name: 'Refund receipts' }).click();
   await expect(page.getByText(enrollmentNo).first()).toBeVisible();
   await page.getByRole('button', { name: 'View receipt' }).first().click();
-  await expect(visibleDialog(page).last().locator('.el-dialog__title')).toHaveText('Refund Receipt');
-  await closeVisibleDialog(page);
+  await expect(page).toHaveURL(/\/registration\?orderId=/);
+  await expect(page).not.toHaveURL(/receiptId=/);
+  await expect(page.getByText('Saved receipt', { exact: true })).toBeVisible();
+  await expect(page.getByText('Refund transaction record')).toHaveCount(0);
 }
 
 async function assertFinancialLedger(orderId: string | number, originalReceiptPayload: string): Promise<void> {
