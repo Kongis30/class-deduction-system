@@ -464,14 +464,15 @@
           </template>
         </tbody>
 
-        <tbody v-if="visibleRefundRows.length">
-          <tr class="workbook-section-row" data-testid="refund-section-row">
-            <td :colspan="columns.length">Refund Student</td>
+        <tbody v-if="visibleDiscontinuedRows.length">
+          <tr class="workbook-section-row" data-testid="discontinued-section-row">
+            <td :colspan="columns.length">Discontinued Student</td>
           </tr>
           <tr
-            v-for="row in visibleRefundRows"
+            v-for="row in visibleDiscontinuedRows"
             :key="rowKey(row)"
-            class="workbook-data-row workbook-data-row--refund"
+            class="workbook-data-row workbook-data-row--discontinued"
+            @contextmenu.prevent.stop="openStudentContextMenu($event, row)"
           >
             <td v-for="column in columns" :key="column.key" :class="stoppedCellClass(column.key)">
               <span v-if="column.key === 'period'">{{ formatPeriod(row) }}</span>
@@ -490,15 +491,14 @@
           </tr>
         </tbody>
 
-        <tbody v-if="visibleDiscontinuedRows.length">
-          <tr class="workbook-section-row" data-testid="discontinued-section-row">
-            <td :colspan="columns.length">Discontinued Student</td>
+        <tbody v-if="visibleRefundRows.length">
+          <tr class="workbook-section-row" data-testid="refund-section-row">
+            <td :colspan="columns.length">Refund Student</td>
           </tr>
           <tr
-            v-for="row in visibleDiscontinuedRows"
+            v-for="row in visibleRefundRows"
             :key="rowKey(row)"
-            class="workbook-data-row workbook-data-row--discontinued"
-            @contextmenu.prevent.stop="openStudentContextMenu($event, row)"
+            class="workbook-data-row workbook-data-row--refund"
           >
             <td v-for="column in columns" :key="column.key" :class="stoppedCellClass(column.key)">
               <span v-if="column.key === 'period'">{{ formatPeriod(row) }}</span>
@@ -607,6 +607,9 @@
       :style="{ left: `${studentContextMenu.x}px`, top: `${studentContextMenu.y}px` }"
       @click.stop
     >
+      <button type="button" role="menuitem" @click="viewStudentReceipt">
+        View receipt
+      </button>
       <button
         v-if="studentContextMenu.row?.discontinued"
         type="button"
@@ -622,9 +625,6 @@
         @click="setStudentDiscontinued(true)"
       >
         Discontinue student
-      </button>
-      <button type="button" role="menuitem" @click="viewStudentReceipt">
-        View receipt
       </button>
       <button
         v-if="canPayFromDataSummary(studentContextMenu.row)"

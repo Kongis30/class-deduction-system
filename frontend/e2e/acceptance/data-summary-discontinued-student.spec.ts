@@ -122,10 +122,22 @@ test('Data Summary moves a renewal row as one record, restores it, and persists 
   await expect(workbook.getByTestId('discontinued-section-row')).toHaveCount(0);
 
   await activeRow.click({ button: 'right' });
+  await expect(page.locator('.student-context-menu [role="menuitem"]').evaluateAll((items) =>
+    items.map((item) => item.textContent?.trim()),
+  )).resolves.toEqual([
+    'View receipt',
+    'Discontinue student',
+    'Refund',
+  ]);
   await page.getByRole('menuitem', { name: 'Discontinue student' }).click();
 
   const discontinuedSection = workbook.getByTestId('discontinued-section-row');
   await expect(discontinuedSection).toBeVisible();
+  await expect(workbook.locator('[data-testid="discontinued-section-row"], [data-testid="refund-section-row"]')
+    .evaluateAll((rows) => rows.map((row) => row.textContent?.trim()))).resolves.toEqual([
+    'Discontinued Student',
+    'Refund Student',
+  ]);
   const discontinuedRow = workbook.locator('tr.workbook-data-row--discontinued').filter({ hasText: 'Renewal Test Student' });
   await expect(discontinuedRow).toHaveCount(1);
   await expect(discontinuedRow.locator('.workbook-cell--money').first()).toContainText('1,300');
@@ -136,6 +148,13 @@ test('Data Summary moves a renewal row as one record, restores it, and persists 
   expect(classificationRequests[0]).toEqual({ orderItemIds: ['5501', '5502'], discontinued: true });
 
   await discontinuedRow.click({ button: 'right' });
+  await expect(page.locator('.student-context-menu [role="menuitem"]').evaluateAll((items) =>
+    items.map((item) => item.textContent?.trim()),
+  )).resolves.toEqual([
+    'View receipt',
+    'Continue',
+    'Refund',
+  ]);
   await expect(page.getByRole('menuitem', { name: 'Continue', exact: true })).toBeVisible();
   await page.getByRole('menuitem', { name: 'Continue', exact: true }).click();
   await expect(workbook.getByTestId('discontinued-section-row')).toHaveCount(0);
