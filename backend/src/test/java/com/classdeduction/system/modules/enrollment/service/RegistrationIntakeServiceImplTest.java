@@ -1010,6 +1010,108 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
+    void shouldChargeFixedPlanPriceAndIncludeEveryScheduledDateDespiteLateSignup() {
+        stubScheduledSessionGroupClassIntake(new BigDecimal("699.00"), 1);
+        stubV2ProjectPlan("SESSION", 1, "FIXED_PRICE", new BigDecimal("699.00"),
+                LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 22));
+        RegistrationIntakeRequest request = buildGroupClassRequest();
+        request.setSignupDate(LocalDate.of(2026, 9, 20));
+        request.getItems().get(0).setStartDate(LocalDate.of(2026, 9, 22));
+
+        registrationIntakeService.submitIntake(request);
+
+        ArgumentCaptor<ClassEnrollmentEntity> classEnrollmentCaptor = ArgumentCaptor.forClass(ClassEnrollmentEntity.class);
+        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
+        verify(classEnrollmentMapper).insert(classEnrollmentCaptor.capture());
+        assertThat(orderItemCaptor.getValue().getPriceAmount()).isEqualByComparingTo("699.00");
+        assertThat(orderItemCaptor.getValue().getPackageQuantity()).isEqualByComparingTo("4");
+        assertThat(orderItemCaptor.getValue().getStartDate()).isEqualTo(LocalDate.of(2026, 9, 1));
+        assertThat(classEnrollmentCaptor.getValue().getPurchasedQuantity()).isEqualTo(4);
+        assertThat(classEnrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2026, 9, 22));
+    }
+
+    @Test
+    void shouldCoverEntireActualClassWhenFixedPricePlanHasNoDates() {
+        stubScheduledSessionGroupClassIntake(new BigDecimal("699.00"), 1);
+        stubV2ProjectPlan("SESSION", 1, "FIXED_PRICE", new BigDecimal("699.00"), null, null);
+        RegistrationIntakeRequest request = buildGroupClassRequest();
+        request.setSignupDate(LocalDate.of(2026, 9, 20));
+        request.getItems().get(0).setStartDate(LocalDate.of(2026, 9, 22));
+
+        registrationIntakeService.submitIntake(request);
+
+        ArgumentCaptor<ClassEnrollmentEntity> enrollmentCaptor = ArgumentCaptor.forClass(ClassEnrollmentEntity.class);
+        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
+        verify(classEnrollmentMapper).insert(enrollmentCaptor.capture());
+        assertThat(orderItemCaptor.getValue().getPriceAmount()).isEqualByComparingTo("699.00");
+        assertThat(orderItemCaptor.getValue().getPackageQuantity()).isEqualByComparingTo("18");
+        assertThat(orderItemCaptor.getValue().getStartDate()).isEqualTo(LocalDate.of(2026, 9, 1));
+        assertThat(enrollmentCaptor.getValue().getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 9, 1));
+        assertThat(enrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2026, 12, 31));
+    }
+
+    @Test
+    void shouldExcludeProjectHolidaysFromFixedPriceScheduleWithoutChangingPrice() {
+        stubScheduledSessionGroupClassIntake(new BigDecimal("699.00"), 1);
+        stubV2ProjectPlan("SESSION", 1, "FIXED_PRICE", new BigDecimal("699.00"),
+                LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 22));
+        when(classHolidayService.listHolidays(any(), any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(List.of(new com.classdeduction.system.modules.schedule.vo.ClassHolidayVO(
+                        77L, "No class", LocalDate.of(2026, 9, 8), LocalDate.of(2026, 9, 8))));
+
+        RegistrationIntakeRequest request = buildGroupClassRequest();
+        request.setSignupDate(LocalDate.of(2026, 9, 20));
+        registrationIntakeService.submitIntake(request);
+
+        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
+        ArgumentCaptor<ClassEnrollmentEntity> enrollmentCaptor = ArgumentCaptor.forClass(ClassEnrollmentEntity.class);
+        verify(classEnrollmentMapper).insert(enrollmentCaptor.capture());
+        assertThat(orderItemCaptor.getValue().getPriceAmount()).isEqualByComparingTo("699.00");
+        assertThat(orderItemCaptor.getValue().getPackageQuantity()).isEqualByComparingTo("3");
+        assertThat(enrollmentCaptor.getValue().getPurchasedQuantity()).isEqualTo(3);
+        assertThat(enrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2026, 9, 22));
+    }
+
+    @Test
+    void shouldRejectFixedPricePeriodWithoutScheduledClassDates() {
+        stubUnscheduledGroupClassIntake(new BigDecimal("699.00"), 1);
+        ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
+        slot.setClassGroupId(501L);
+        slot.setWeekday(2);
+        when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
+        stubV2ProjectPlan("SESSION", 1, "FIXED_PRICE", new BigDecimal("699.00"),
+                LocalDate.of(2026, 9, 2), LocalDate.of(2026, 9, 2));
+        RegistrationIntakeRequest request = buildGroupClassRequest();
+        request.getItems().get(0).setStartDate(LocalDate.of(2026, 9, 2));
+
+        assertThatThrownBy(() -> registrationIntakeService.submitIntake(request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("GROUP_PLAN_SCHEDULE_INSUFFICIENT");
+        verify(enrollmentOrderItemMapper, never()).insert(any(EnrollmentOrderItemEntity.class));
+        verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
+    }
+
+    @Test
+    void shouldRequireActualClassDatesForUnboundedFixedPricePlan() {
+        stubUnscheduledGroupClassIntake(new BigDecimal("699.00"), 1);
+        stubV2ProjectPlan("SESSION", 1, "FIXED_PRICE", new BigDecimal("699.00"), null, null);
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setCampusId(1L);
+        classGroup.setProductId(202L);
+        classGroup.setGroupProjectId(GROUP_PROJECT_ID);
+        classGroup.setIsDeleted(0);
+        classGroup.setStatus("ACTIVE");
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+
+        assertThatThrownBy(() -> registrationIntakeService.submitIntake(buildGroupClassRequest()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("GROUP_PLAN_DATES_INVALID");
+        verify(enrollmentOrderItemMapper, never()).insert(any(EnrollmentOrderItemEntity.class));
+        verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
+    }
+
+    @Test
     void shouldRejectFractionalManualSessionPrice() {
         RegistrationIntakeRequest request = buildGroupClassRequest();
         RegistrationIntakeRequest.CourseItemPayload line = request.getItems().get(0);

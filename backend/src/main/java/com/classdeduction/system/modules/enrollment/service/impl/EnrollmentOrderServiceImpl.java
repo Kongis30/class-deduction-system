@@ -2300,7 +2300,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 && "ROLLING_MONTHS".equalsIgnoreCase(plan.getCoverageType())
                 && quantityToValidate != null
                 && quantityToValidate.compareTo(BigDecimal.valueOf(36)) <= 0;
-        boolean exceedsPlanQuantity = quantityToValidate != null && plan.getPackageQuantity() != null
+        boolean fixedPrice = "FIXED_PRICE".equalsIgnoreCase(plan.getCoverageType());
+        boolean exceedsPlanQuantity = !fixedPrice && quantityToValidate != null && plan.getPackageQuantity() != null
                 && quantityToValidate.compareTo(plan.getPackageQuantity()) > 0;
         // 历史订单保存的是购买时的方案条款。方案后来调整上限后，编辑收据中的姓名、金额等字段
         // 不应被当前方案配置挡住；只有变更方案或购买条款时才按当前配置重新校验。
@@ -2682,7 +2683,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         String coverage = plan.getCoverageType() == null ? "" : plan.getCoverageType().toUpperCase(java.util.Locale.ROOT);
         int maximumQuantity = "MONTH".equals(unit) && "ROLLING_MONTHS".equals(coverage)
                 ? 36 : configuredQuantity;
-        if (configuredQuantity < 1 || quantity < 1 || quantity > maximumQuantity
+        boolean fixedPrice = "FIXED_PRICE".equals(coverage);
+        if (configuredQuantity < 1 || quantity < 1 || (!fixedPrice && quantity > maximumQuantity)
                 || !("SESSION".equals(unit) || "MONTH".equals(unit))) {
             throw new BusinessException("GROUP_PLAN_QUANTITY_INVALID",
                     "The selected sessions or months exceed the allowed duration.");
@@ -2692,12 +2694,18 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         LocalDate classEnd = targetClass.getEndDate() != null ? targetClass.getEndDate()
                 : targetClass.getEndMonth() == null ? null
                 : targetClass.getEndMonth().withDayOfMonth(targetClass.getEndMonth().lengthOfMonth());
-        LocalDate start = item.getStartDate() != null ? item.getStartDate()
+        if (fixedPrice && plan.getCoverageStartDate() == null && (classStart == null || classEnd == null)) {
+            throw new BusinessException("GROUP_PLAN_DATES_INVALID",
+                    "The actual class needs a start and end date for a whole-class fixed-price plan.");
+        }
+        LocalDate start = fixedPrice
+                ? (plan.getCoverageStartDate() == null ? classStart : plan.getCoverageStartDate())
+                : item.getStartDate() != null ? item.getStartDate()
                 : plan.getCoverageStartDate() != null ? plan.getCoverageStartDate()
                 : classStart != null ? classStart : order.getSignupDate();
-        if ("FIXED_DATES".equals(coverage) && plan.getCoverageStartDate() != null
+        if (("FIXED_DATES".equals(coverage) || fixedPrice) && plan.getCoverageStartDate() != null
                 && start.isBefore(plan.getCoverageStartDate())) start = plan.getCoverageStartDate();
-        if ("FIXED_DATES".equals(coverage) && plan.getCoverageEndDate() != null
+        if (("FIXED_DATES".equals(coverage) || fixedPrice) && plan.getCoverageEndDate() != null
                 && start.isAfter(plan.getCoverageEndDate())) {
             throw new BusinessException("GROUP_PLAN_DATES_INVALID",
                     "The selected start date is outside this registration plan.");
@@ -2705,8 +2713,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (classStart != null && start.isBefore(classStart)) start = classStart;
 
         LocalDate end;
-        if ("FIXED_DATES".equals(coverage)) {
-            end = plan.getCoverageEndDate();
+        if ("FIXED_DATES".equals(coverage) || fixedPrice) {
+            end = fixedPrice && plan.getCoverageEndDate() == null ? classEnd : plan.getCoverageEndDate();
         } else if ("ROLLING_MONTHS".equals(coverage) && "MONTH".equals(unit)) {
             end = GroupRegistrationCoverage.monthPackageEndDate(start, quantity);
         } else {
@@ -2735,11 +2743,15 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 ClassScheduleDates.resolveBaseEndDate(targetClass.getScheduleBaseEndDate(), classEnd),
                 slots, date -> holidays.stream()
                 .anyMatch(holiday -> !date.isBefore(holiday.getStartDate()) && !date.isAfter(holiday.getEndDate())));
-        if (scheduledDates.isEmpty() || ("SESSION".equals(unit) && scheduledDates.size() < quantity)) {
+        if (scheduledDates.isEmpty() || (!fixedPrice && "SESSION".equals(unit) && scheduledDates.size() < quantity)) {
             throw new BusinessException("GROUP_PLAN_SCHEDULE_INSUFFICIENT",
                     "The selected actual class does not have enough scheduled dates for this plan.");
         }
-        LocalDate enrollmentDate = scheduledDates.get(0);
+        if (fixedPrice && quantity != scheduledDates.size()) {
+            throw new BusinessException("GROUP_PLAN_QUANTITY_INVALID",
+                    "A fixed-price plan includes every scheduled date in its period. Re-select the actual class before saving.");
+        }
+        LocalDate enrollmentDate = fixedPrice ? start : scheduledDates.get(0);
         if ("MONTH".equals(unit)) {
             end = GroupRegistrationCoverage.monthPackageEndDate(enrollmentDate, quantity);
             if (classEnd != null && end.isAfter(classEnd)) end = classEnd;
@@ -2748,7 +2760,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                         "The selected registration plan is outside the actual class period.");
             }
         }
-        LocalDate expiryDate = "MONTH".equals(unit) ? end : scheduledDates.get(quantity - 1);
+        LocalDate expiryDate = fixedPrice || "MONTH".equals(unit) ? end : scheduledDates.get(quantity - 1);
         return new ClassBillingService.ClassBilling(enrollmentDate, expiryDate, quantity);
     }
 

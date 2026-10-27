@@ -573,7 +573,11 @@
                           </el-select>
                           <strong class="print-only print-course-value">{{ printTeacherOrClassLabel(line) }}</strong>
                         </label>
-                        <label v-if="line.groupRegistrationPlanId" class="course-control">
+                        <label v-if="line.groupRegistrationPlanId && selectedGroupPlan(line)?.coverageType === 'FIXED_PRICE'" class="course-control">
+                          <span>Course dates</span>
+                          <strong>{{ fixedPriceCourseDateLabel(line) }}</strong>
+                        </label>
+                        <label v-if="line.groupRegistrationPlanId && selectedGroupPlan(line)?.coverageType !== 'FIXED_PRICE'" class="course-control">
                           <span>First lesson date</span>
                           <el-select
                             v-model="line.startDate"
@@ -586,7 +590,7 @@
                             <el-option v-for="date in availableGroupStartDates(line)" :key="date" :label="formatDateValue(date)" :value="date" />
                           </el-select>
                         </label>
-                        <label v-if="line.groupRegistrationPlanId && line.packageUnit === 'SESSION'" class="course-control">
+                        <label v-if="line.groupRegistrationPlanId && line.packageUnit === 'SESSION' && selectedGroupPlan(line)?.coverageType !== 'FIXED_PRICE'" class="course-control">
                           <span>Sessions</span>
                           <el-select v-model="line.groupSessionCount" class="table-select" :disabled="!receiptEditingEnabled || !line.classId || !line.startDate || line.groupScheduleDatesLoading" @change="() => handleGroupSessionCountChange(line)">
                             <el-option v-for="quantity in correctionSessionChoices(line)" :key="quantity" :label="`${quantity} sessions`" :value="quantity" />
@@ -4585,6 +4589,8 @@ async function handleGroupPlanChange(line: RegistrationCourseLine) {
   const classStart = selectedGroupActualClass(line)?.startDate;
   if (!line.classId) {
     line.startDate = undefined;
+  } else if (plan.coverageType === 'FIXED_PRICE') {
+    line.startDate = fixedPricePeriod(line).start;
   } else if (plan.coverageType === 'FIXED_DATES') {
     const termStart = plan.coverageStartDate || classStart || signupDate;
     line.startDate = termStart < signupDate ? signupDate : termStart;
@@ -4640,11 +4646,11 @@ function correctionSessionChoices(line: RegistrationCourseLine) {
 function availableGroupStartDates(line: RegistrationCourseLine) {
   const plan = selectedGroupPlan(line);
   let dates = line.groupScheduleDates ?? [];
-  if (plan?.coverageType === 'FIXED_DATES') {
+  if (plan?.coverageType === 'FIXED_DATES' || plan?.coverageType === 'FIXED_PRICE') {
     dates = dates.filter((date) => (!plan.coverageStartDate || date >= plan.coverageStartDate)
       && (!plan.coverageEndDate || date <= plan.coverageEndDate));
   }
-  if ((!isReadOnly.value || !editingCorrection.value) && !isSameRenewalGroupCourse(line)) {
+  if (plan?.coverageType !== 'FIXED_PRICE' && (!isReadOnly.value || !editingCorrection.value) && !isSameRenewalGroupCourse(line)) {
     const minimumDate = form.signupDate || today;
     dates = dates.filter((date) => date >= minimumDate);
   }
@@ -4779,7 +4785,7 @@ async function handleGroupActualClassChange(line: RegistrationCourseLine) {
   if (actualClass?.startDate && (!line.startDate || line.startDate < actualClass.startDate)) {
     line.startDate = actualClass.startDate;
   }
-  if (plan?.coverageType === 'FIXED_DATES' && plan.coverageStartDate
+  if ((plan?.coverageType === 'FIXED_DATES' || plan?.coverageType === 'FIXED_PRICE') && plan.coverageStartDate
       && (!line.startDate || line.startDate < plan.coverageStartDate)) {
     line.startDate = plan.coverageStartDate;
   }
@@ -4811,10 +4817,14 @@ async function loadGroupClassDates(line: RegistrationCourseLine, preserveHistori
     }
   }
   const choices = availableGroupStartDates(line);
-  if (!preserveHistorical && !choices.includes(line.startDate ?? '')) {
+  if (!preserveHistorical && plan.coverageType === 'FIXED_PRICE') {
+    line.startDate = fixedPricePeriod(line).start || choices[0];
+  } else if (!preserveHistorical && !choices.includes(line.startDate ?? '')) {
     line.startDate = choices[0];
   }
-  if (!preserveHistorical && plan.packageUnit === 'SESSION') {
+  if (!preserveHistorical && plan.coverageType === 'FIXED_PRICE') {
+    line.groupSessionCount = choices.length;
+  } else if (!preserveHistorical && plan.packageUnit === 'SESSION') {
     const maximum = availableGroupPlanQuantities(line)[0] ?? 0;
     if (numeric(line.groupSessionCount) > maximum) line.groupSessionCount = maximum || undefined;
   }
@@ -4953,7 +4963,8 @@ function recalculateLinePrice(line: RegistrationCourseLine) {
       : Math.max(1, Math.floor(numeric(line.groupSessionCount) || configuredQuantity));
     const fullPrice = groupPlanDisplayPrice(plan, line.attendanceOption);
     // Registration plan 确定单位费率；原订单实收和手工改价不能反推月单价。
-    const price = ceilRegistrationAmount(fullPrice * selectedQuantity / configuredQuantity);
+    const price = plan.coverageType === 'FIXED_PRICE'
+      ? fullPrice : ceilRegistrationAmount(fullPrice * selectedQuantity / configuredQuantity);
     line.packageTotalPrice = fullPrice;
     line.packageQuantity = selectedQuantity;
     line.originalPriceAmount = price;
@@ -5225,7 +5236,9 @@ function courseLineHint(line: RegistrationCourseLine) {
     if (!line.groupProjectId) return 'Select a teaching project.';
     if (!line.groupRegistrationPlanId) return 'Select the season or package for this student.';
     if (groupActualClassGroupsForLine(line).length === 0) return 'No actual class is configured at the selected campus.';
-    return 'Choose the actual class and first lesson date.';
+    return selectedGroupPlan(line)?.coverageType === 'FIXED_PRICE'
+      ? 'Choose the actual class. All its scheduled dates within the plan period are included at the fixed price.'
+      : 'Choose the actual class and first lesson date.';
   }
   if (priceOptionsWithProduct.value.length === 0) {
     return isAdmin.value
@@ -5314,12 +5327,34 @@ function privateParticipantLineSharePrice(line: RegistrationCourseLine, particip
 }
 
 function printCourseScheduleLabel(line: RegistrationCourseLine) {
+  const plan = isV2GroupLine(line) ? selectedGroupPlan(line) : undefined;
+  if (plan?.coverageType === 'FIXED_PRICE') {
+    return `${plan.planName} · ${fixedPriceCourseDateLabel(line)}`;
+  }
   if (isV2GroupLine(line)) return [line.periodLabel, line.startDate].filter(Boolean).join(' · ') || line.detail || '—';
   const option = findOption(line.coursePriceOptionId);
   return [
     option?.periodLabel || line.periodLabel,
     option?.timeSlotLabel || line.timeSlotLabel,
   ].filter(Boolean).join(' · ') || line.detail || '—';
+}
+
+function fixedPriceCourseDateLabel(line: RegistrationCourseLine) {
+  const { start, end } = fixedPricePeriod(line);
+  return start && end ? `${start} to ${end}` : 'Entire actual class';
+}
+
+// 固定总价方案与实际班级的日期取交集，报名金额不参与课次范围计算。
+function fixedPricePeriod(line: RegistrationCourseLine) {
+  const plan = selectedGroupPlan(line);
+  const actualClass = selectedGroupActualClass(line);
+  const start = plan?.coverageStartDate && actualClass?.startDate
+    ? (plan.coverageStartDate > actualClass.startDate ? plan.coverageStartDate : actualClass.startDate)
+    : plan?.coverageStartDate || actualClass?.startDate;
+  const end = plan?.coverageEndDate && actualClass?.endDate
+    ? (plan.coverageEndDate < actualClass.endDate ? plan.coverageEndDate : actualClass.endDate)
+    : plan?.coverageEndDate || actualClass?.endDate;
+  return { start, end };
 }
 
 function showDurationInput(line: RegistrationCourseLine) {
@@ -5937,7 +5972,9 @@ function validateRegistrationDuration(line: RegistrationCourseLine, label: strin
     const selected = plan?.packageUnit === 'MONTH'
       ? numeric(line.groupPurchasedMonths)
       : numeric(line.groupSessionCount);
-    const maximum = plan?.packageUnit === 'MONTH' ? maxGroupMonthsForLine(line) : configured;
+    const maximum = plan?.coverageType === 'FIXED_PRICE'
+      ? availableGroupStartDates(line).length
+      : plan?.packageUnit === 'MONTH' ? maxGroupMonthsForLine(line) : configured;
     if (!plan || configured < 1 || !Number.isInteger(selected) || selected < 1 || selected > maximum) {
       errors.push(`${label}: enter a valid quantity within the course period.`);
       return true;

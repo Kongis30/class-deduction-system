@@ -1065,12 +1065,17 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         LocalDate classEnd = classGroup.getEndDate() != null ? classGroup.getEndDate()
                 : classGroup.getEndMonth() == null ? null
                 : classGroup.getEndMonth().withDayOfMonth(classGroup.getEndMonth().lengthOfMonth());
+        boolean fixedPrice = "FIXED_PRICE".equals(plan.getCoverageType());
+        if (fixedPrice && plan.getCoverageStartDate() == null && (classStart == null || classEnd == null)) {
+            throw new BusinessException("GROUP_PLAN_DATES_INVALID",
+                    "The actual class needs a start and end date for a whole-class fixed-price plan.");
+        }
         if (item.getStartDate() != null && (classStart != null && item.getStartDate().isBefore(classStart)
                 || classEnd != null && item.getStartDate().isAfter(classEnd))) {
             throw new BusinessException("ENROLLMENT_START_OUT_OF_RANGE",
                     "Choose a first lesson date within the actual class period.");
         }
-        if ("FIXED_DATES".equals(plan.getCoverageType()) && item.getStartDate() != null
+        if (("FIXED_DATES".equals(plan.getCoverageType()) || "FIXED_PRICE".equals(plan.getCoverageType())) && item.getStartDate() != null
                 && (plan.getCoverageStartDate() != null && item.getStartDate().isBefore(plan.getCoverageStartDate())
                 || plan.getCoverageEndDate() != null && item.getStartDate().isAfter(plan.getCoverageEndDate()))) {
             throw new BusinessException("GROUP_PLAN_DATES_INVALID",
@@ -1097,7 +1102,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         line.detail = firstText(item.getDetail(), project.getProjectName() + " · " + plan.getPlanName());
         line.gradeBand = firstText(classGroup.getActualClass(), classGroup.getGradeBand());
         line.periodLabel = plan.getPlanName();
-        line.startDate = item.getStartDate();
+        line.startDate = fixedPrice
+                ? firstNonNull(plan.getCoverageStartDate(), classStart) : item.getStartDate();
         line.attendanceOption = normalizeAttendanceOption(item.getAttendanceOption());
         line.attendanceScheduleJson = item.getAttendanceScheduleJson();
         line.packageUnit = plan.getPackageUnit();
@@ -1106,6 +1112,15 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         line.sessions = null;
         line.purchasedMonths = null;
 
+        // 固定总价购买的是计划日期内的整段课表，实购课次由实际班级排课决定。
+        List<LocalDate> fixedPriceDates = fixedPrice
+                ? findScheduledClassDates(classGroup, plan.getCoverageType(),
+                    plan.getCoverageStartDate(), plan.getCoverageEndDate(), line.startDate, 1)
+                : null;
+        if (fixedPrice && fixedPriceDates.isEmpty()) {
+            throw new BusinessException("GROUP_PLAN_SCHEDULE_INSUFFICIENT",
+                    "No scheduled lesson dates fall within this fixed-price plan. Update the class schedule or plan dates first.");
+        }
         int configuredQuantity;
         int selectedQuantity;
         try {
@@ -1114,6 +1129,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 case "FIXED_DATES" -> item.getSessions() == null ? configuredQuantity : item.getSessions();
                 case "SESSION_COUNT" -> item.getSessions() == null ? configuredQuantity : item.getSessions();
                 case "ROLLING_MONTHS" -> item.getPurchasedMonths() == null ? configuredQuantity : item.getPurchasedMonths();
+                case "FIXED_PRICE" -> fixedPriceDates.size();
                 default -> throw new IllegalStateException("Unsupported group plan coverage type.");
             };
         } catch (ArithmeticException | NullPointerException ex) {
@@ -1121,7 +1137,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         }
         int maximumQuantity = "MONTH".equals(plan.getPackageUnit())
                 && "ROLLING_MONTHS".equals(plan.getCoverageType()) ? 36 : configuredQuantity;
-        if (configuredQuantity < 1 || selectedQuantity < 1 || selectedQuantity > maximumQuantity) {
+        if (configuredQuantity < 1 || selectedQuantity < 1 || (!fixedPrice && selectedQuantity > maximumQuantity)) {
             throw new BusinessException("GROUP_PLAN_QUANTITY_INVALID",
                     "Selected months or sessions must be within the plan limit.");
         }
@@ -1142,7 +1158,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         if (configuredPrice.compareTo(ZERO_AMOUNT) <= 0) {
             throw new BusinessException("COURSE_LINE_PRICE_REQUIRED", "Plan price must be greater than zero.");
         }
-        BigDecimal proratedPrice = configuredPrice.multiply(BigDecimal.valueOf(selectedQuantity))
+        BigDecimal proratedPrice = fixedPrice ? configuredPrice : configuredPrice.multiply(BigDecimal.valueOf(selectedQuantity))
                 .divide(BigDecimal.valueOf(configuredQuantity), 0, RoundingMode.CEILING);
         line.manualPriceOverride = Boolean.TRUE.equals(item.getManualPriceOverride());
         line.originalPriceAmount = WholeDollarBilling.ceil(proratedPrice);
@@ -1155,7 +1171,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         }
         line.remark = item.getRemark();
 
-        List<LocalDate> availableDates = findScheduledClassDates(classGroup,
+        List<LocalDate> availableDates = fixedPrice ? fixedPriceDates : findScheduledClassDates(classGroup,
                 plan.getCoverageType(), plan.getCoverageStartDate(), plan.getCoverageEndDate(),
                 line.startDate, selectedQuantity);
         int requiredDates = "MONTH".equals(plan.getPackageUnit()) ? 1 : selectedQuantity;
@@ -1165,7 +1181,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         }
         // 固定季节方案保存整个学期的日期范围，但中途加入的学生只购买剩余课次。
         // 固定方案按用户选定的首课日期起，取实际排课中的前 N 次；不会重排课程或补造日期。
-        line.entitlementStartDate = availableDates.get(0);
+        line.entitlementStartDate = fixedPrice
+                ? (classStart != null && classStart.isAfter(line.startDate) ? classStart : line.startDate)
+                : availableDates.get(0);
         if ("MONTH".equals(plan.getPackageUnit())) {
             // 有效期从系统确认的第一节实际课程起算，订单项会保存同一日期供改收据复用。
             LocalDate requestedStart = line.entitlementStartDate;
@@ -1179,7 +1197,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             if (classEnd != null && coverageEnd.isAfter(classEnd)) coverageEnd = classEnd;
             line.entitlementExpiryDate = coverageEnd;
         } else {
-            line.entitlementExpiryDate = availableDates.get(selectedQuantity - 1);
+            line.entitlementExpiryDate = fixedPrice
+                    ? (plan.getCoverageEndDate() == null || classEnd != null && classEnd.isBefore(plan.getCoverageEndDate())
+                        ? classEnd : plan.getCoverageEndDate())
+                    : availableDates.get(selectedQuantity - 1);
         }
         if (line.entitlementExpiryDate == null || line.entitlementExpiryDate.isBefore(line.entitlementStartDate)) {
             throw new BusinessException("GROUP_PLAN_DATES_INVALID",
@@ -1214,15 +1235,15 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 : classGroup.getEndMonth() == null ? null
                 : classGroup.getEndMonth().withDayOfMonth(classGroup.getEndMonth().lengthOfMonth());
         LocalDate start = requestedStart;
-        if ("FIXED_DATES".equals(coverageType) && fixedStart != null
+        if (("FIXED_DATES".equals(coverageType) || "FIXED_PRICE".equals(coverageType)) && fixedStart != null
                 && (start == null || start.isBefore(fixedStart))) {
             start = fixedStart;
         }
-        if (start == null) start = LocalDate.now(AppTime.APP_ZONE_ID);
+        if (start == null) start = "FIXED_PRICE".equals(coverageType) ? classStart : LocalDate.now(AppTime.APP_ZONE_ID);
         if (classStart != null && start.isBefore(classStart)) start = classStart;
         LocalDate end;
-        if ("FIXED_DATES".equals(coverageType)) {
-            end = fixedEnd;
+        if ("FIXED_DATES".equals(coverageType) || "FIXED_PRICE".equals(coverageType)) {
+            end = fixedEnd == null && "FIXED_PRICE".equals(coverageType) ? classEnd : fixedEnd;
         } else if ("ROLLING_MONTHS".equals(coverageType)) {
             // 报名月计为第一个月，候选排课范围与权益到期日共用同一月末规则。
             end = GroupRegistrationCoverage.monthPackageEndDate(start, limit);
@@ -1230,8 +1251,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             end = classEnd;
             if (end == null) end = start.plusYears(3);
         }
-        if (classEnd != null && end.isAfter(classEnd)) end = classEnd;
         if (start == null || end == null || end.isBefore(start)) return Collections.emptyList();
+        if (classEnd != null && end.isAfter(classEnd)) end = classEnd;
+        if (end.isBefore(start)) return Collections.emptyList();
         List<ClassGroupScheduleSlotEntity> slots = classGroupScheduleSlotMapper.selectList(
                 new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
                         .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classId)

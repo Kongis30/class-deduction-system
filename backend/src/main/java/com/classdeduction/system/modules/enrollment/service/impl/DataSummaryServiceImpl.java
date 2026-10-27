@@ -1292,7 +1292,8 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                                              EnrollmentOrderEntity order) {
         if (plan != null) {
             if (isActiveEnrollment(enrollment) && enrollment.getExpiryDate() != null) return enrollment.getExpiryDate();
-            if ("FIXED_DATES".equalsIgnoreCase(plan.getCoverageType()) && plan.getCoverageEndDate() != null) {
+            if (("FIXED_DATES".equalsIgnoreCase(plan.getCoverageType())
+                    || "FIXED_PRICE".equalsIgnoreCase(plan.getCoverageType())) && plan.getCoverageEndDate() != null) {
                 return plan.getCoverageEndDate();
             }
         }
@@ -1309,7 +1310,8 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         if (isActiveEnrollment(enrollment) && enrollment.getEnrollmentDate() != null) {
             return enrollment.getEnrollmentDate();
         }
-        if (plan != null && "FIXED_DATES".equalsIgnoreCase(plan.getCoverageType())
+        if (plan != null && ("FIXED_DATES".equalsIgnoreCase(plan.getCoverageType())
+                || "FIXED_PRICE".equalsIgnoreCase(plan.getCoverageType()))
                 && plan.getCoverageStartDate() != null) {
             return plan.getCoverageStartDate();
         }

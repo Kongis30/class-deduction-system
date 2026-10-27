@@ -2,7 +2,7 @@ import http from '@/api/http';
 import type { ApiResponse } from '@/types/http';
 import type { EntityId } from '@/types/domain';
 
-export type GroupPlanCoverageType = 'FIXED_DATES' | 'ROLLING_MONTHS' | 'SESSION_COUNT';
+export type GroupPlanCoverageType = 'FIXED_DATES' | 'ROLLING_MONTHS' | 'SESSION_COUNT' | 'FIXED_PRICE';
 export type GroupPlanUnit = 'SESSION' | 'MONTH';
 
 export interface GroupRegistrationPlan {

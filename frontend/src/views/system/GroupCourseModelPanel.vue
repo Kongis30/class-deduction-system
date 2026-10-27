@@ -140,10 +140,11 @@
                   <small v-if="row.coverageStartDate || row.coverageEndDate" class="group-cell-subtitle">
                     {{ row.coverageStartDate || '—' }} to {{ row.coverageEndDate || '—' }}
                   </small>
+                  <small v-else-if="row.coverageType === 'FIXED_PRICE'" class="group-cell-subtitle">Entire actual class</small>
                 </template>
               </el-table-column>
               <el-table-column label="Quantity" width="130" align="center">
-                <template #default="{ row }">{{ row.packageQuantity }} {{ row.packageUnit === 'MONTH' ? 'months' : 'sessions' }}</template>
+                <template #default="{ row }">{{ row.coverageType === 'FIXED_PRICE' ? 'All scheduled dates' : `${row.packageQuantity} ${row.packageUnit === 'MONTH' ? 'months' : 'sessions'}` }}</template>
               </el-table-column>
               <el-table-column label="Full day" width="120" align="right">
                 <template #default="{ row }">{{ money(row.fullDayPrice) }}</template>
@@ -166,7 +167,8 @@
                 <header><strong>{{ plan.planName }}</strong><el-tag size="small" :type="plan.status === 'ACTIVE' ? 'success' : 'info'">{{ plan.status }}</el-tag></header>
                 <span>{{ coverageLabel(plan) }}</span>
                 <small v-if="plan.coverageStartDate || plan.coverageEndDate">{{ plan.coverageStartDate || '—' }} to {{ plan.coverageEndDate || '—' }}</small>
-                <dl><div><dt>Quantity</dt><dd>{{ plan.packageQuantity }} {{ plan.packageUnit === 'MONTH' ? 'months' : 'sessions' }}</dd></div><div><dt>Full day</dt><dd>{{ money(plan.fullDayPrice) }}</dd></div><div><dt>Half day</dt><dd>{{ plan.halfDayPrice == null ? '—' : money(plan.halfDayPrice) }}</dd></div></dl>
+                <small v-else-if="plan.coverageType === 'FIXED_PRICE'">Entire actual class</small>
+                <dl><div><dt>Quantity</dt><dd>{{ plan.coverageType === 'FIXED_PRICE' ? 'All scheduled dates' : `${plan.packageQuantity} ${plan.packageUnit === 'MONTH' ? 'months' : 'sessions'}` }}</dd></div><div><dt>Full day</dt><dd>{{ money(plan.fullDayPrice) }}</dd></div><div><dt>Half day</dt><dd>{{ plan.halfDayPrice == null ? '—' : money(plan.halfDayPrice) }}</dd></div></dl>
                 <div class="mobile-model-card__actions"><el-button type="primary" plain @click="openPlanDialog(project, plan)">Edit</el-button><el-dropdown trigger="click"><el-button text aria-label="More plan actions"><el-icon><MoreFilled /></el-icon></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item class="danger-menu-item" @click="removePlan(plan)">Delete plan</el-dropdown-item></el-dropdown-menu></template></el-dropdown></div>
               </article>
             </div>
@@ -228,17 +230,18 @@
             <el-select v-model="planForm.coverageType" style="width: 100%" @change="normalizePlanFields">
               <el-option label="Fixed date range" value="FIXED_DATES" />
               <el-option label="Rolling months" value="ROLLING_MONTHS" />
-              <el-option label="Number of sessions" value="SESSION_COUNT" />
+              <el-option label="Fixed Price" value="FIXED_PRICE" />
             </el-select>
           </el-form-item>
-          <el-form-item :label="planForm.packageUnit === 'MONTH' ? 'Months' : 'Sessions'" required>
+          <el-form-item v-if="planForm.coverageType !== 'FIXED_PRICE'" :label="planForm.packageUnit === 'MONTH' ? 'Months' : 'Sessions'" required>
             <el-input-number v-model="planForm.packageQuantity" :min="1" :precision="0" :controls="false" style="width: 100%" />
           </el-form-item>
         </div>
-        <div v-if="planForm.coverageType === 'FIXED_DATES'" class="plan-form__row">
-          <el-form-item label="First scheduled date" required><el-date-picker v-model="planForm.coverageStartDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item>
-          <el-form-item label="Last scheduled date" required><el-date-picker v-model="planForm.coverageEndDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item>
+        <div v-if="planForm.coverageType === 'FIXED_DATES' || planForm.coverageType === 'FIXED_PRICE'" class="plan-form__row">
+          <el-form-item :label="planForm.coverageType === 'FIXED_PRICE' ? 'Start date (optional)' : 'First scheduled date'" :required="planForm.coverageType === 'FIXED_DATES'"><el-date-picker v-model="planForm.coverageStartDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item>
+          <el-form-item :label="planForm.coverageType === 'FIXED_PRICE' ? 'End date (optional)' : 'Last scheduled date'" :required="planForm.coverageType === 'FIXED_DATES'"><el-date-picker v-model="planForm.coverageEndDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item>
         </div>
+        <el-alert v-if="planForm.coverageType === 'FIXED_PRICE'" title="Leave both dates blank for the entire class, or set both to include only scheduled dates in that range. The price stays fixed." type="info" :closable="false" />
         <div class="plan-form__row">
           <el-form-item label="Full-day price" required><el-input-number v-model="planForm.fullDayPrice" :min="0" :precision="0" :controls="false" style="width: 100%" /></el-form-item>
           <el-form-item label="Half-day price"><el-input-number v-model="planForm.halfDayPrice" :min="0" :precision="0" :controls="false" style="width: 100%" /></el-form-item>
@@ -532,13 +535,14 @@ function openPlanDialog(project: GroupCourseProject, plan?: GroupRegistrationPla
 }
 
 function normalizePlanFields() {
+  if (planForm.coverageType === 'FIXED_PRICE') planForm.packageQuantity = 1;
   if (planForm.coverageType === 'ROLLING_MONTHS') {
     planForm.packageUnit = 'MONTH';
     planForm.coverageStartDate = undefined;
     planForm.coverageEndDate = undefined;
   } else {
     planForm.packageUnit = 'SESSION';
-    if (planForm.coverageType !== 'FIXED_DATES') {
+    if (planForm.coverageType !== 'FIXED_DATES' && planForm.coverageType !== 'FIXED_PRICE') {
       planForm.coverageStartDate = undefined;
       planForm.coverageEndDate = undefined;
     }
@@ -550,8 +554,11 @@ async function savePlan() {
   if (!projectId || !planForm.planName.trim() || planForm.packageQuantity < 1 || planForm.fullDayPrice < 0) {
     return ElMessage.warning('Complete the required plan fields.');
   }
-  if (planForm.coverageType === 'FIXED_DATES'
-      && (!planForm.coverageStartDate || !planForm.coverageEndDate || planForm.coverageEndDate < planForm.coverageStartDate)) {
+  const hasStartDate = Boolean(planForm.coverageStartDate);
+  const hasEndDate = Boolean(planForm.coverageEndDate);
+  const invalidDateOrder = hasStartDate && hasEndDate && planForm.coverageEndDate! < planForm.coverageStartDate!;
+  if (planForm.coverageType === 'FIXED_DATES' && (!hasStartDate || !hasEndDate || invalidDateOrder)
+      || planForm.coverageType === 'FIXED_PRICE' && (hasStartDate !== hasEndDate || invalidDateOrder)) {
     return ElMessage.warning('Enter a valid plan date range.');
   }
   saving.value = true;
@@ -770,8 +777,8 @@ function sortedPlans(plans: GroupRegistrationPlan[]) {
   }));
 }
 
-
 function coverageLabel(plan: GroupRegistrationPlan) {
+  if (plan.coverageType === 'FIXED_PRICE') return 'Fixed Price';
   if (plan.coverageType === 'FIXED_DATES') return plan.termCode || 'Fixed date range';
   if (plan.coverageType === 'ROLLING_MONTHS') return 'Starts on selected date';
   return 'Selected number of scheduled class dates';

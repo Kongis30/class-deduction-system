@@ -262,7 +262,7 @@ public class GroupCourseModelServiceImpl implements GroupCourseModelService {
     private void validatePlan(GroupRegistrationPlanSaveRequest request) {
         String type = request.getCoverageType().trim().toUpperCase(Locale.ROOT);
         String unit = request.getPackageUnit().trim().toUpperCase(Locale.ROOT);
-        if (!List.of("FIXED_DATES", "ROLLING_MONTHS", "SESSION_COUNT").contains(type)) {
+        if (!List.of("FIXED_DATES", "ROLLING_MONTHS", "SESSION_COUNT", "FIXED_PRICE").contains(type)) {
             throw new BusinessException("GROUP_PLAN_COVERAGE_INVALID", "Choose a supported class registration period.");
         }
         if (!List.of("SESSION", "MONTH").contains(unit)) {
@@ -272,6 +272,20 @@ public class GroupCourseModelServiceImpl implements GroupCourseModelService {
                 && (request.getCoverageStartDate() == null || request.getCoverageEndDate() == null
                     || request.getCoverageEndDate().isBefore(request.getCoverageStartDate()) || !"SESSION".equals(unit))) {
             throw new BusinessException("GROUP_PLAN_DATES_INVALID", "A fixed-date plan needs a valid date range and session unit.");
+        }
+        if ("FIXED_PRICE".equals(type) && !"SESSION".equals(unit)) {
+            throw new BusinessException("GROUP_PLAN_UNIT_INVALID", "A fixed-price plan must use scheduled class dates.");
+        }
+        if ("FIXED_PRICE".equals(type)
+                && ((request.getCoverageStartDate() == null) != (request.getCoverageEndDate() == null)
+                    || request.getCoverageStartDate() != null
+                    && request.getCoverageEndDate().isBefore(request.getCoverageStartDate()))) {
+            throw new BusinessException("GROUP_PLAN_DATES_INVALID",
+                    "Set both fixed-price plan dates or leave both blank for the whole class.");
+        }
+        // 固定总价按实际课表生成购买课次；方案数量只作为数据库必填的单份课程标记。
+        if ("FIXED_PRICE".equals(type) && request.getPackageQuantity().compareTo(BigDecimal.ONE) != 0) {
+            throw new BusinessException("GROUP_PLAN_QUANTITY_INVALID", "A fixed-price plan covers all scheduled dates in its date range.");
         }
         if ("ROLLING_MONTHS".equals(type) && !"MONTH".equals(unit)) {
             throw new BusinessException("GROUP_PLAN_UNIT_INVALID", "A rolling plan must use months.");
