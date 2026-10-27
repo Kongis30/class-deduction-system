@@ -1763,9 +1763,10 @@ const canPrintSavedReceipt = computed(() => isReadOnly.value
   && !historicalOrderLoading.value
   && historicalOrder.value !== null);
 const correctionDataWarnings = computed(() => (historicalOrder.value?.items ?? []).flatMap((item) => {
-  if (!item.packageUnit || item.packageQuantity == null || item.entitlementPurchasedQuantity == null
-      || Number(item.packageQuantity) === Number(item.entitlementPurchasedQuantity)) return [];
-  return [`Course ${item.lineNo}: receipt records ${item.packageQuantity} ${item.packageUnit.toLowerCase()}(s), but the current class enrollment records ${item.entitlementPurchasedQuantity}. This difference will not be changed automatically.`];
+  const receiptQuantity = item.packageUnit === 'MONTH' ? item.purchasedMonths : item.sessions;
+  if (!item.packageUnit || receiptQuantity == null || item.entitlementPurchasedQuantity == null
+      || Number(receiptQuantity) === Number(item.entitlementPurchasedQuantity)) return [];
+  return [`Course ${item.lineNo}: receipt records ${receiptQuantity} ${item.packageUnit.toLowerCase()}(s), but the current class enrollment records ${item.entitlementPurchasedQuantity}. This difference will not be changed automatically.`];
 }));
 const wholeDollarForm = computed(() => !isReadOnly.value || historicalOrder.value?.billingPolicy === 'WHOLE_DOLLAR_V1');
 // Contact fields are editable when creating a new registration or when correcting a saved one.

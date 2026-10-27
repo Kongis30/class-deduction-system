@@ -1079,7 +1079,7 @@ class RegistrationIntakeServiceImplTest {
         assertThat(orderItemCaptor.getValue().getPriceAmount()).isEqualByComparingTo("800.00");
         assertThat(enrollmentCaptor.getValue().getPurchasedQuantity()).isEqualTo(2);
         assertThat(enrollmentCaptor.getValue().getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 5, 19));
-        assertThat(enrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2026, 7, 18));
+        assertThat(enrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2026, 6, 30));
         assertThat(enrollmentCaptor.getValue().getBillingType()).isEqualTo("MONTHLY");
     }
 
@@ -1102,7 +1102,7 @@ class RegistrationIntakeServiceImplTest {
         verify(classEnrollmentMapper).insert(enrollmentCaptor.capture());
         assertThat(orderItemCaptor.getValue().getStartDate()).isEqualTo(LocalDate.of(2026, 3, 17));
         assertThat(enrollmentCaptor.getValue().getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 3, 17));
-        assertThat(enrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2026, 5, 16));
+        assertThat(enrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2026, 4, 30));
     }
 
     @Test

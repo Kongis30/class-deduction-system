@@ -1180,16 +1180,27 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     }
 
     private EnrollmentOrderItemVO toOrderItemVO(EnrollmentOrderItemEntity item) {
-        return toOrderItemVO(item, null, null);
+        return toOrderItemVO(item, null, null, false);
     }
 
     /** 将迁移后的项目、方案和逐课程班级名称返回给收据还原流程。 */
     private EnrollmentOrderItemVO toOrderItemVO(EnrollmentOrderItemEntity item, String className,
                                                 ClassEnrollmentEntity entitlement) {
-        // V2 订单行保存本次实购数量；旧班课可能仍用方案上限，优先保留其权益选购数。
-        Integer purchasedQuantity = item.getGroupProjectId() != null
-                ? wholeNumber(item.getPackageQuantity())
-                : entitlement == null ? wholeNumber(item.getPackageQuantity()) : entitlement.getPurchasedQuantity();
+        return toOrderItemVO(item, className, entitlement, true);
+    }
+
+    private EnrollmentOrderItemVO toOrderItemVO(EnrollmentOrderItemEntity item, String className,
+                                                ClassEnrollmentEntity entitlement, boolean readReceiptSnapshot) {
+        // 收据详情优先还原购买时快照，旧数据再使用订单行当前直接拥有的权益数量。
+        Integer purchasedQuantity = readReceiptSnapshot
+                ? originalReceiptQuantity(item.getEnrollmentOrderId(), item.getLineNo(), item.getPackageUnit()) : null;
+        if (purchasedQuantity == null && entitlement != null) {
+            // 旧订单行可能只存方案上限；仅在订单行仍直接拥有该权益时，才用在册实购数还原收据。
+            purchasedQuantity = entitlement.getPurchasedQuantity();
+        }
+        if (purchasedQuantity == null) {
+            purchasedQuantity = wholeNumber(item.getPackageQuantity());
+        }
         return EnrollmentOrderItemVO.builder()
                 .id(item.getId())
                 .enrollmentOrderId(item.getEnrollmentOrderId())
@@ -2026,7 +2037,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 throw new BusinessException("RENEWED_COURSE_TERMS_LOCKED",
                         "This course has later purchases. Correcting its class or purchased duration requires a dedicated course adjustment.");
             }
-            ClassItemBefore previous = new ClassItemBefore(item.getLineNo(), item.getClassId(), item.getStartDate(),
+            ClassItemBefore previous = new ClassItemBefore(item.getId(), item.getLineNo(), item.getClassId(), item.getStartDate(),
                     item.getPackageUnit(), item.getPackageQuantity(), item.getCourseProductId(), item.getGradeBand(),
                     item.getGroupProjectId(), item.getGroupRegistrationPlanId());
             Long oldClassId = item.getClassId();
@@ -2273,13 +2284,11 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         Integer selectedCount = "SESSION".equalsIgnoreCase(payload.getPackageUnit())
                 ? payload.getSessions()
                 : "MONTH".equalsIgnoreCase(payload.getPackageUnit()) ? payload.getPurchasedMonths() : null;
-        Integer previousSelectedCount = "SESSION".equalsIgnoreCase(previous.packageUnit())
-                ? originalReceiptSessions(orderId, previous.lineNo())
-                : "MONTH".equalsIgnoreCase(previous.packageUnit())
-                ? originalReceiptPurchasedMonths(orderId, previous.lineNo()) : null;
-        if (previousSelectedCount == null) {
-            previousSelectedCount = wholeNumber(previous.packageQuantity());
+        Integer previousSelectedCount = originalReceiptQuantity(orderId, previous.lineNo(), previous.packageUnit());
+        if (previousSelectedCount == null && previous.id() != null) {
+            previousSelectedCount = directlyOwnedPurchasedQuantity(previous.id());
         }
+        if (previousSelectedCount == null) previousSelectedCount = wholeNumber(previous.packageQuantity());
         boolean selectedCountChanged = selectedCount != null
                 && !Objects.equals(selectedCount, previousSelectedCount);
         BigDecimal quantityToValidate = selectedCount == null
@@ -2351,7 +2360,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 && !"ONE_ON_ONE".equalsIgnoreCase(payload.getCourseType()));
     }
 
-    private record ClassItemBefore(Integer lineNo, Long classId, LocalDate startDate, String packageUnit,
+    private record ClassItemBefore(Long id, Integer lineNo, Long classId, LocalDate startDate, String packageUnit,
                                    BigDecimal packageQuantity, Long courseProductId, String gradeBand,
                                    Long groupProjectId, Long groupRegistrationPlanId) {
     }
@@ -2402,6 +2411,13 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 ? originalReceiptSessions(order.getId(), previous.lineNo()) : null;
         Integer originalMonths = "MONTH".equalsIgnoreCase(previous.packageUnit())
                 ? originalReceiptPurchasedMonths(order.getId(), previous.lineNo()) : null;
+        Integer directlyOwnedQuantity = directlyOwnedPurchasedQuantity(item.getId());
+        if (originalSessions == null && "SESSION".equalsIgnoreCase(previous.packageUnit())) {
+            originalSessions = directlyOwnedQuantity;
+        }
+        if (originalMonths == null && "MONTH".equalsIgnoreCase(previous.packageUnit())) {
+            originalMonths = directlyOwnedQuantity;
+        }
         boolean sameClass = Objects.equals(previous.classId(), item.getClassId());
         if (!sameClass) {
             List<Long> entitlementIds = currentEnrollments.stream().map(ClassEnrollmentEntity::getId).toList();
@@ -2805,7 +2821,28 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         return null;
     }
 
-    /** 历史收据可能保存实购月数；缺失时应回退订单行实购数量，不能取当前权益累计数。 */
+    /** 收据快照记录本次购买量；没有快照时再回退到仍直接关联的权益。 */
+    private Integer originalReceiptQuantity(Long orderId, Integer lineNo, String packageUnit) {
+        if ("SESSION".equalsIgnoreCase(packageUnit)) return originalReceiptSessions(orderId, lineNo);
+        if ("MONTH".equalsIgnoreCase(packageUnit)) return originalReceiptPurchasedMonths(orderId, lineNo);
+        return null;
+    }
+
+    /** 读取当前订单行直接拥有的权益数量，不会把已转挂到续报的新课包数量算回旧收据。 */
+    private Integer directlyOwnedPurchasedQuantity(Long orderItemId) {
+        if (orderItemId == null) return null;
+        List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(
+                new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getEnrollmentOrderItemId, orderItemId)
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0)
+                        .in(ClassEnrollmentEntity::getStatus, "ACTIVE", "EXPIRED")
+                        .orderByDesc(ClassEnrollmentEntity::getId)
+                        .last("LIMIT 1"));
+        return enrollments == null || enrollments.isEmpty()
+                ? null : enrollments.get(0).getPurchasedQuantity();
+    }
+
+    /** 读取收据里保存的本次实购月数；缺失时由调用方再按关联权益和订单行回退。 */
     private Integer originalReceiptPurchasedMonths(Long orderId, Integer lineNo) {
         List<ReceiptRecordEntity> receipts = receiptRecordMapper.selectList(new LambdaQueryWrapper<ReceiptRecordEntity>()
                 .eq(ReceiptRecordEntity::getEnrollmentOrderId, orderId)
