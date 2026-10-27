@@ -132,7 +132,7 @@
               <h4>Registration plans</h4>
               <span class="group-project-section__description">Plans control the dates and price a student receives.</span>
             </div>
-            <el-table v-if="!appStore.isMobileViewport && project.plans.length" :data="project.plans" row-key="id" border size="small">
+            <el-table v-if="!appStore.isMobileViewport && project.plans.length" :data="sortedPlans(project.plans)" row-key="id" border size="small">
               <el-table-column prop="planName" label="Plan" min-width="190" />
               <el-table-column label="Coverage" min-width="200">
                 <template #default="{ row }">
@@ -162,7 +162,7 @@
               </el-table-column>
             </el-table>
             <div v-if="appStore.isMobileViewport && project.plans.length" class="mobile-plan-list">
-              <article v-for="plan in project.plans" :key="plan.id" class="mobile-model-card">
+              <article v-for="plan in sortedPlans(project.plans)" :key="plan.id" class="mobile-model-card">
                 <header><strong>{{ plan.planName }}</strong><el-tag size="small" :type="plan.status === 'ACTIVE' ? 'success' : 'info'">{{ plan.status }}</el-tag></header>
                 <span>{{ coverageLabel(plan) }}</span>
                 <small v-if="plan.coverageStartDate || plan.coverageEndDate">{{ plan.coverageStartDate || '—' }} to {{ plan.coverageEndDate || '—' }}</small>
@@ -762,6 +762,14 @@ async function onScheduleSaved() {
   await loadSetup();
   emit('reload');
 }
+
+function sortedPlans(plans: GroupRegistrationPlan[]) {
+  return [...plans].sort((left, right) => left.planName.localeCompare(right.planName, undefined, {
+    sensitivity: 'base',
+    numeric: true,
+  }));
+}
+
 
 function coverageLabel(plan: GroupRegistrationPlan) {
   if (plan.coverageType === 'FIXED_DATES') return plan.termCode || 'Fixed date range';
