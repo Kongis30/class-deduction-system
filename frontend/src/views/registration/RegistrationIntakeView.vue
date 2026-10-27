@@ -519,7 +519,7 @@
                             @change="() => handleGroupPlanChange(line)"
                           >
                             <el-option
-                              v-for="plan in groupPlansForLine(line)"
+                              v-for="plan in groupPlanOptionsForLine(line)"
                               :key="plan.id"
                               :label="`${plan.planName} · ${formatMoney(groupPlanDisplayPrice(plan, line.attendanceOption))}`"
                               :value="plan.id"
@@ -4509,6 +4509,12 @@ function groupPlansForLine(line: RegistrationCourseLine) {
   return plans.filter((plan) => plan.status === 'ACTIVE'
     && (!sameCourse || !sourceUnit || plan.packageUnit === sourceUnit)
     && (!sameCourse || sourceUnit !== 'MONTH' || plan.coverageType === 'ROLLING_MONTHS'));
+}
+
+function groupPlanOptionsForLine(line: RegistrationCourseLine) {
+  // 仅调整下拉框的展示顺序，保留业务逻辑使用的原始顺序，避免影响默认套餐选择。
+  return [...groupPlansForLine(line)].sort((left, right) =>
+    left.planName.localeCompare(right.planName, 'en', { sensitivity: 'base', numeric: true }));
 }
 
 function renewalSourceForLine(line: RegistrationCourseLine) {
