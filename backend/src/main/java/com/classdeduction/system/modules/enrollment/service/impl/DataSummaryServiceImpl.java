@@ -1,6 +1,7 @@
 package com.classdeduction.system.modules.enrollment.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.common.util.UnitConverter;
 import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.CampusEntity;
@@ -294,6 +295,19 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 : campusMapper.selectBatchIds(campusIds).stream()
                         .collect(Collectors.toMap(CampusEntity::getId, Function.identity(), (left, right) -> left));
         Context context = buildContext(orders, items, packages);
+        LocalDate transportRosterToday = Boolean.TRUE.equals(query.getTransportOnly())
+                ? LocalDate.now(AppTime.APP_ZONE_ID) : null;
+        Map<EnrollmentItemStudentKey, List<ClassEnrollmentEntity>> classEnrollmentsByItemStudent =
+                Boolean.TRUE.equals(query.getTransportOnly()) && !itemIds.isEmpty()
+                        ? classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                                .in(ClassEnrollmentEntity::getEnrollmentOrderItemId, itemIds)
+                                .eq(ClassEnrollmentEntity::getIsDeleted, 0))
+                                .stream()
+                                .filter(enrollment -> enrollment.getEnrollmentOrderItemId() != null
+                                        && enrollment.getStudentId() != null)
+                                .collect(Collectors.groupingBy(enrollment -> new EnrollmentItemStudentKey(
+                                        enrollment.getEnrollmentOrderItemId(), enrollment.getStudentId())))
+                        : Collections.emptyMap();
         // 行级金额分摊：同一订单的多行按「参与人 → 订单项」分摊整单金额，避免汇总时金额按行数翻倍。
         Map<Long, Map<AllocationKey, AllocatedAmounts>> allocationByOrderId = new HashMap<>();
         for (EnrollmentOrderEntity order : orders) {
@@ -315,9 +329,10 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                         studentById, campusById, context)
                 .stream()
                 .filter(this::hasDisplayableStudent)
-                // 接送名单只保留仍有效的课程权益；同一收据的其他未退款课程继续保留。
+                // 接送名单按学生与课程权益筛选；Discontinue 仅是 Data Summary 分类，不影响当前服务。
                 .filter(row -> !Boolean.TRUE.equals(query.getTransportOnly())
-                        || !Boolean.TRUE.equals(row.refunded()))
+                        || isTransportRosterEligible(row, packagesByOrderId, classEnrollmentsByItemStudent,
+                                transportRosterToday))
                 .filter(row -> matchesQuery(row, query))
                 .filter(row -> !Boolean.TRUE.equals(query.getOnlyAlerts()) || hasAlerts(row))
                 .filter(row -> !Boolean.TRUE.equals(query.getOnlyNeedsReview()) || hasReviewIssues(row))
@@ -342,6 +357,70 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 rows,
                 logicalCoursePeriods(rows)
         );
+    }
+
+    /** 接送名单只展示当前仍有课程服务的学生；退款金额本身不代表课程权益已终止。 */
+    private boolean isTransportRosterEligible(
+            DataSummaryResponseVO.RowVO row,
+            Map<Long, List<CoursePackageEntity>> packagesByOrderId,
+            Map<EnrollmentItemStudentKey, List<ClassEnrollmentEntity>> classEnrollmentsByItemStudent,
+            LocalDate today) {
+        if ("CANCELLED".equalsIgnoreCase(row.orderStatus())
+                || "STOPPED".equalsIgnoreCase(row.itemStatus())) {
+            return false;
+        }
+
+        if ("ONE_ON_ONE".equalsIgnoreCase(row.courseType())) {
+            CoursePackageEntity coursePackage = findTransportPackage(row, packagesByOrderId.get(row.orderId()));
+            if (coursePackage != null) {
+                return (!StringUtils.hasText(coursePackage.getPackageStatus())
+                        || "ACTIVE".equalsIgnoreCase(coursePackage.getPackageStatus()))
+                        && (coursePackage.getRemainingUnits() == null || coursePackage.getRemainingUnits() > 0);
+            }
+            return row.periodEndDate() == null || !row.periodEndDate().isBefore(today);
+        }
+
+        // 班课结束日当天仍可接送；从纽约本地次日开始移出当前名单。
+        if (row.periodEndDate() != null && row.periodEndDate().isBefore(today)) {
+            return false;
+        }
+        if (row.orderItemId() != null) {
+            List<ClassEnrollmentEntity> enrollments = classEnrollmentsByItemStudent.get(
+                    new EnrollmentItemStudentKey(row.orderItemId(), row.studentId()));
+            if (enrollments != null && !enrollments.isEmpty()
+                    && enrollments.stream().noneMatch(enrollment -> "ACTIVE".equalsIgnoreCase(enrollment.getStatus()))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** 按订单项和学生定位私教课包，兼容未关联订单项的旧课包。 */
+    private CoursePackageEntity findTransportPackage(DataSummaryResponseVO.RowVO row,
+                                                     List<CoursePackageEntity> orderPackages) {
+        if (orderPackages == null || orderPackages.isEmpty()) {
+            return null;
+        }
+        List<CoursePackageEntity> studentPackages = orderPackages.stream()
+                .filter(coursePackage -> Objects.equals(coursePackage.getStudentId(), row.studentId()))
+                .toList();
+        if (row.orderItemId() != null) {
+            List<CoursePackageEntity> itemPackages = studentPackages.stream()
+                    .filter(coursePackage -> Objects.equals(coursePackage.getEnrollmentOrderItemId(), row.orderItemId()))
+                    .toList();
+            if (!itemPackages.isEmpty()) {
+                return itemPackages.get(0);
+            }
+        }
+        if (row.courseProductId() != null) {
+            List<CoursePackageEntity> productPackages = studentPackages.stream()
+                    .filter(coursePackage -> Objects.equals(coursePackage.getCourseProductId(), row.courseProductId()))
+                    .toList();
+            if (productPackages.size() == 1) {
+                return productPackages.get(0);
+            }
+        }
+        return studentPackages.size() == 1 ? studentPackages.get(0) : null;
     }
 
     private List<EnrollmentOrderEntity> listOrders(DataSummaryQuery query, Set<Long> transportOrderIds) {

@@ -11,6 +11,7 @@ import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
+import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.enrollment.dto.DataSummaryQuery;
 import com.classdeduction.system.modules.enrollment.dto.DataSummaryClassificationRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
@@ -284,6 +285,78 @@ class DataSummaryServiceImplTest {
                 ArgumentCaptor.forClass((Class) LambdaQueryWrapper.class);
         verify(enrollmentOrderMapper).selectList(wrapperCaptor.capture());
         assertThat(wrapperCaptor.getValue().getSqlSegment()).contains("id IN");
+    }
+
+    @Test
+    void shouldKeepCurrentDiscontinuedStudentsAndExcludeStoppedOrExpiredGroupCoursesFromTransportRoster() {
+        LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
+        EnrollmentOrderEntity active = order(1L, "100.00", "100.00", "0.00");
+        active.setPeriodEndDate(today.plusDays(1));
+        EnrollmentOrderEntity stopped = order(2L, "100.00", "100.00", "0.00");
+        stopped.setPeriodEndDate(today.plusDays(1));
+        EnrollmentOrderEntity expired = order(3L, "100.00", "100.00", "0.00");
+        expired.setPeriodEndDate(today.minusDays(1));
+
+        EnrollmentOrderItemEntity activeItem = item(101L, 1, "100.00");
+        activeItem.setEnrollmentOrderId(1L);
+        activeItem.setItemStatus("ACTIVE");
+        EnrollmentOrderItemEntity stoppedItem = item(102L, 1, "100.00");
+        stoppedItem.setEnrollmentOrderId(2L);
+        stoppedItem.setItemStatus("STOPPED");
+        EnrollmentOrderItemEntity expiredItem = item(103L, 1, "100.00");
+        expiredItem.setEnrollmentOrderId(3L);
+        expiredItem.setItemStatus("ACTIVE");
+
+        DataSummaryQuery query = new DataSummaryQuery();
+        query.setTransportOnly(true);
+        when(enrollmentOrderMapper.selectTransportOrderIds()).thenReturn(List.of(1L, 2L, 3L));
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(active, stopped, expired));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(activeItem, stoppedItem, expiredItem));
+        when(dataSummaryClassificationMapper.selectRecordKeysByOrderIds(any()))
+                .thenReturn(List.of("ITEM:101:STUDENT:1"));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(query);
+
+        assertThat(response.rows()).singleElement().satisfies(row -> {
+            assertThat(row.orderId()).isEqualTo(1L);
+            assertThat(row.discontinued()).isTrue();
+        });
+    }
+
+    @Test
+    void shouldKeepPartiallyRefundedCourseInTransportRosterWhileItsGroupEntitlementIsActive() {
+        LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
+        EnrollmentOrderEntity order = order(1L, "100.00", "75.00", "25.00");
+        order.setPeriodEndDate(today.plusDays(1));
+        EnrollmentOrderItemEntity item = item(101L, 1, "100.00");
+        item.setEnrollmentOrderId(1L);
+        item.setItemStatus("ACTIVE");
+        ClassEnrollmentEntity activeEntitlement = new ClassEnrollmentEntity();
+        activeEntitlement.setEnrollmentOrderItemId(101L);
+        activeEntitlement.setStudentId(1L);
+        activeEntitlement.setStatus("ACTIVE");
+        activeEntitlement.setIsDeleted(0);
+        PaymentRecordEntity refund = payment(1L, "-25.00");
+        refund.setId(201L);
+        refund.setPaymentType("REFUND");
+        refund.setParticipantIndex(1);
+
+        DataSummaryQuery query = new DataSummaryQuery();
+        query.setTransportOnly(true);
+        when(enrollmentOrderMapper.selectTransportOrderIds()).thenReturn(List.of(1L));
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(activeEntitlement));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(refund));
+        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of(
+                paymentAllocation(201L, 101L, "-25.00")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(query);
+
+        assertThat(response.rows()).singleElement().satisfies(row -> {
+            assertThat(row.refunded()).isTrue();
+            assertThat(row.itemStatus()).isEqualTo("ACTIVE");
+        });
     }
 
     @Test
