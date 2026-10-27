@@ -36,6 +36,7 @@ import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMa
 import com.classdeduction.system.modules.schedule.service.impl.RecurringScheduleRuleServiceImpl;
 import com.classdeduction.system.modules.schedule.vo.ScheduleRuleCreateResultVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleRuleUpdateResultVO;
+import com.classdeduction.system.modules.schedule.vo.ScheduleAllocationErrorVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleStudentOptionVO;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
@@ -561,8 +562,14 @@ class RecurringScheduleRuleServiceImplTest {
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
 
         assertThatThrownBy(() -> recurringScheduleRuleService.createRule(request))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("remaining hours after other schedules");
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    assertThat(exception.getCode()).isEqualTo("SLOT_ALLOCATION_EXCEEDS_PACKAGE");
+                    assertThat(exception.getData()).isInstanceOf(ScheduleAllocationErrorVO.class);
+                    ScheduleAllocationErrorVO details = (ScheduleAllocationErrorVO) exception.getData();
+                    assertThat(details.packageTotalHours()).isEqualTo(7.5);
+                    assertThat(details.requestedAllocationHours()).isEqualTo(10.0);
+                    assertThat(details.shortfallHours()).isPositive();
+                });
     }
 
     @Test
@@ -1436,8 +1443,21 @@ class RecurringScheduleRuleServiceImplTest {
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
 
         assertThatThrownBy(() -> recurringScheduleRuleService.updateRule(5001L, request))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("current package balance after pending lessons");
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    assertThat(exception.getCode()).isEqualTo("SLOT_ALLOCATION_EXCEEDS_PACKAGE");
+                    assertThat(exception.getMessage()).contains("current package balance after pending lessons");
+                    assertThat(exception.getData()).isInstanceOf(ScheduleAllocationErrorVO.class);
+                    ScheduleAllocationErrorVO details = (ScheduleAllocationErrorVO) exception.getData();
+                    assertThat(details.packageTotalHours()).isEqualTo(40.0);
+                    assertThat(details.packageRemainingHours()).isEqualTo(24.0);
+                    assertThat(details.requestedAllocationHours()).isEqualTo(40.0);
+                    assertThat(details.availableAllocationHours()).isEqualTo(24.0);
+                    assertThat(details.shortfallHours()).isEqualTo(16.0);
+                    assertThat(details.pendingReviewHours()).isZero();
+                    assertThat(details.otherScheduleReservedHours()).isZero();
+                    assertThat(details.preservedLessonHours()).isZero();
+                    assertThat(details.transferredFutureLessonHours()).isZero();
+                });
         verify(recurringScheduleRuleMapper, org.mockito.Mockito.never()).updateById(any(RecurringScheduleRuleEntity.class));
     }
 

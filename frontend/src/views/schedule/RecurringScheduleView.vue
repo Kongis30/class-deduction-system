@@ -362,6 +362,13 @@
             </div>
           </div>
         </div>
+        <div v-if="selectedPackage" class="edit-schedule__balance" aria-label="Package balance summary">
+          <strong>Package hours</strong>
+          <span>Total {{ packageHours(selectedPackage.totalUnits).toFixed(1) }}h</span>
+          <span>Confirmed deducted {{ confirmedDeductionHours.toFixed(1) }}h</span>
+          <span>Pending admin review {{ pendingAdminDeductionHours.toFixed(1) }}h</span>
+          <span class="edit-schedule__balance-remaining">Remaining {{ remainingPackageHours.toFixed(1) }}h</span>
+        </div>
 
         <el-form ref="editFormRef" :model="editForm" :rules="editFormRules" label-width="130px">
           <el-form-item label="Start Date" prop="startDate">
@@ -497,6 +504,40 @@
           </span>
         </div>
         <el-alert
+          v-if="allocationSaveError"
+          class="edit-schedule__allocation-error"
+          type="error"
+          :closable="false"
+          show-icon
+        >
+          <template #title>
+            Cannot save: {{ allocationSaveError.requestedAllocationHours.toFixed(1) }}h is allocated,
+            but only {{ allocationSaveError.availableAllocationHours.toFixed(1) }}h is available
+            ({{ allocationSaveError.shortfallHours.toFixed(1) }}h over).
+          </template>
+          <div class="allocation-error-details">
+            <strong>Package hours</strong>
+            <span>Total {{ allocationSaveError.packageTotalHours.toFixed(1) }}h</span>
+            <span>Remaining {{ allocationSaveError.packageRemainingHours.toFixed(1) }}h</span>
+            <span>Requested {{ allocationSaveError.requestedAllocationHours.toFixed(1) }}h</span>
+            <span>Available {{ allocationSaveError.availableAllocationHours.toFixed(1) }}h</span>
+            <strong>Hours reserved in this calculation</strong>
+            <span>Pending admin review {{ allocationSaveError.pendingReviewHours.toFixed(1) }}h</span>
+            <span>Other schedules {{ allocationSaveError.otherScheduleReservedHours.toFixed(1) }}h</span>
+            <span>Preserved lessons {{ allocationSaveError.preservedLessonHours.toFixed(1) }}h</span>
+            <span>Transferred future lessons +{{ allocationSaveError.transferredFutureLessonHours.toFixed(1) }}h</span>
+            <span v-if="allocationSaveError.currentRuleRetainedHours > 0">
+              Current schedule already used +{{ allocationSaveError.currentRuleRetainedHours.toFixed(1) }}h
+            </span>
+          </div>
+          <p class="allocation-error-guidance">
+            Available hours = remaining balance − pending reviews − other schedules − preserved lessons + transferred future lessons + hours already used by this schedule.
+          </p>
+          <p class="allocation-error-guidance">
+            Reduce one or more slot allocations by {{ allocationSaveError.shortfallHours.toFixed(1) }}h. If the reserved hours are unexpected, review the student’s pending and preserved lesson records before retrying.
+          </p>
+        </el-alert>
+        <el-alert
           v-if="hasTeacherHandoffChanges"
           class="edit-schedule__change-hint"
           type="info"
@@ -522,7 +563,7 @@
       <template #footer>
         <div class="dialog-footer">
           <el-button @click="editDialogVisible = false">Cancel</el-button>
-          <el-button type="primary" :loading="submitting || editBusyLoading" :disabled="Boolean(editBusyError)" @click="submitForm">
+          <el-button type="primary" :loading="submitting || editBusyLoading" :disabled="Boolean(editBusyError) || submitting" @click="submitForm">
             {{ isEditing ? 'Save Changes' : 'Create Schedule' }}
           </el-button>
         </div>
@@ -1036,7 +1077,7 @@
 <script setup lang="ts">
 import { ArrowLeft, ArrowRight, Calendar, Search, QuestionFilled, Delete, RefreshLeft, Close, Loading } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import type { FormInstance, FormRules } from 'element-plus';
 import dayjs from 'dayjs';
 import { useRoute, useRouter } from 'vue-router';
@@ -1098,6 +1139,19 @@ interface WeeklyAdjustmentRow {
   original?: LessonOccurrenceItem;
 }
 
+interface ScheduleAllocationErrorDetails {
+  packageTotalHours: number;
+  packageRemainingHours: number;
+  requestedAllocationHours: number;
+  availableAllocationHours: number;
+  shortfallHours: number;
+  pendingReviewHours: number;
+  otherScheduleReservedHours: number;
+  preservedLessonHours: number;
+  transferredFutureLessonHours: number;
+  currentRuleRetainedHours: number;
+}
+
 const loadingPackages = ref(false);
 const packageLoadError = ref('');
 let packageLoadSequence = 0;
@@ -1110,6 +1164,7 @@ const detailDialogVisible = ref(false);
 const weeklyDialogVisible = ref(false);
 const weeklyLoading = ref(false);
 const submitting = ref(false);
+const allocationSaveError = ref<ScheduleAllocationErrorDetails | null>(null);
 const isEditing = ref(false);
 const editingRuleId = ref<EntityId | null>(null);
 const editFormRef = ref<FormInstance>();
@@ -1723,6 +1778,15 @@ const editForm = reactive({
     rolloverAllocatedHours?: number;
   }>,
 });
+// 编辑输入发生变化后清除旧的额度错误，避免用户调整后还看到过期的拦截结果。
+watch([
+  () => editForm.slots,
+  () => editForm.startDate,
+  () => editForm.ruleStatus,
+  () => reclaimEndedUnconfirmedLessons.value,
+], () => {
+  allocationSaveError.value = null;
+}, { deep: true });
 const originalEditSlots = ref<Array<SlotDef & { slotId?: EntityId; allocatedHours?: number }>>([]);
 const originalAllocatedHours = ref(0);
 
@@ -2331,6 +2395,7 @@ const allocationExceedsRemaining = computed(() =>
 
 async function openCreateDialog() {
   if (selectedPackage.value?.packageStatus !== 'ACTIVE') return;
+  allocationSaveError.value = null;
   isEditing.value = false;
   editingRuleId.value = null;
   editFormRef.value?.resetFields();
@@ -2366,6 +2431,7 @@ async function openEditDialog() {
     return;
   }
   await ensureScheduleResourceOptions(detail.slots || [], detail.defaultClassroomId);
+  allocationSaveError.value = null;
   isEditing.value = true;
   editingRuleId.value = detail.id;
   editFormRef.value?.resetFields();
@@ -2405,6 +2471,39 @@ function submitForm() {
   } else {
     submitCreateForm();
   }
+}
+
+// 只拦截带有服务端额度快照的错误；其它排课错误继续走统一反馈逻辑。
+function showAllocationSaveError(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('response' in error)) return false;
+  const response = (error as { response?: { data?: { code?: unknown; data?: unknown } } }).response;
+  if (response?.data?.code !== 'SLOT_ALLOCATION_EXCEEDS_PACKAGE'
+      || !response.data.data || typeof response.data.data !== 'object') {
+    return false;
+  }
+
+  const details = response.data.data as Record<keyof ScheduleAllocationErrorDetails, unknown>;
+  const fields: Array<keyof ScheduleAllocationErrorDetails> = [
+    'packageTotalHours', 'packageRemainingHours', 'requestedAllocationHours',
+    'availableAllocationHours', 'shortfallHours', 'pendingReviewHours',
+    'otherScheduleReservedHours', 'preservedLessonHours', 'transferredFutureLessonHours',
+    'currentRuleRetainedHours',
+  ];
+  if (fields.some(field => !Number.isFinite(Number(details[field])))) return false;
+
+  allocationSaveError.value = Object.fromEntries(
+    fields.map(field => [field, Number(details[field])]),
+  ) as ScheduleAllocationErrorDetails;
+  void nextTick(() => {
+    const alert = document.querySelector<HTMLElement>('.edit-schedule__allocation-error');
+    const dialogBody = alert?.closest<HTMLElement>('.el-dialog__body');
+    if (!alert || !dialogBody) return;
+    const alertTop = alert.getBoundingClientRect().top;
+    const bodyTop = dialogBody.getBoundingClientRect().top;
+    const target = dialogBody.scrollTop + alertTop - bodyTop - 12;
+    dialogBody.scrollTo({ top: Math.max(0, target), behavior: 'auto' });
+  });
+  return true;
 }
 
 function validateSlotAllocations(): boolean {
@@ -2487,7 +2586,7 @@ async function submitCreateForm() {
       await Promise.all([loadAllPackageRules(), refreshScheduleStudentList()]);
       await loadCurrentWeekOccurrences();
     } catch (err) {
-      showScheduleError(err);
+      if (!showAllocationSaveError(err)) showScheduleError(err);
     } finally {
       submitting.value = false;
     }
@@ -2538,7 +2637,7 @@ async function submitEditForm() {
       await Promise.all([loadAllPackageRules(), refreshScheduleStudentList()]);
       await loadCurrentWeekOccurrences();
     } catch (err) {
-      showScheduleError(err);
+      if (!showAllocationSaveError(err)) showScheduleError(err);
     } finally {
       submitting.value = false;
     }
@@ -3496,6 +3595,26 @@ function disabledPastDate(date: Date) {
   font-size: 12px;
 }
 
+.edit-schedule__balance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  margin: 10px 0 16px;
+  padding: 10px 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  background: #f5f9ff;
+  color: #5d6b82;
+  font-size: 12px;
+}
+
+.edit-schedule__balance strong,
+.edit-schedule__balance-remaining {
+  color: #1f3b61;
+  font-weight: 600;
+}
+
 .edit-schedule__summary {
   margin-top: 8px;
   color: #409eff;
@@ -3509,6 +3628,37 @@ function disabledPastDate(date: Date) {
 
 .edit-schedule__allocation--over {
   color: #f56c6c;
+}
+
+.edit-schedule__allocation-error {
+  margin-top: 10px;
+}
+
+.edit-schedule__allocation-error :deep(.el-alert__icon) {
+  align-self: flex-start;
+  margin-top: 3px;
+}
+
+.allocation-error-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 16px;
+  margin-top: 6px;
+  line-height: 1.5;
+  color: #606266;
+}
+
+.allocation-error-details strong {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  color: #303133;
+}
+
+.allocation-error-guidance {
+  margin: 8px 0 0;
+  line-height: 1.5;
+  color: #606266;
+  font-size: 12px;
 }
 
 .slot-teacher-list {
@@ -4055,6 +4205,10 @@ function disabledPastDate(date: Date) {
 }
 
 @media (max-width: 640px) {
+  .allocation-error-details {
+    grid-template-columns: 1fr;
+  }
+
   .weekly-adjustment__week-picker {
     align-items: flex-start;
     flex-direction: column;

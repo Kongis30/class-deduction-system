@@ -51,6 +51,7 @@ import com.classdeduction.system.modules.schedule.util.PrivateSchedulePeriod;
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleRuleDetailVO;
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleRuleListItemVO;
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleSlotVO;
+import com.classdeduction.system.modules.schedule.vo.ScheduleAllocationErrorVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleConflictDetailVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleStudentOptionVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleRuleCreateResultVO;
@@ -1896,13 +1897,16 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         }
         RuleDeductionUnits existing = editingRuleId == null
                 ? new RuleDeductionUnits(0, 0) : ruleDeductionUnits(editingRuleId, coursePackage.getId());
+        int pendingUnits = pendingDeductionUnits(coursePackage.getId());
+        int otherReservedUnits = otherRuleReservedUnits(coursePackage.getId(), editingRuleId);
+        int retainedCurrentRuleUnits = existing.confirmed() + existing.pending();
         int availableUnits = Math.max(0, allocatableUnits(coursePackage)
-                - pendingDeductionUnits(coursePackage.getId())
-                - otherRuleReservedUnits(coursePackage.getId(), editingRuleId)
-                + existing.confirmed() + existing.pending());
+                - pendingUnits - otherReservedUnits + retainedCurrentRuleUnits);
         if (allocatedSum > availableUnits) {
             throw new BusinessException("SLOT_ALLOCATION_EXCEEDS_PACKAGE",
-                    "Allocated hours exceed the package's remaining hours after other schedules are accounted for.");
+                    "Allocated hours exceed the package's remaining hours after other schedules are accounted for.",
+                    allocationErrorDetails(coursePackage, allocatedSum, availableUnits,
+                            pendingUnits, otherReservedUnits, 0, 0, retainedCurrentRuleUnits));
         }
         if (allocatedSum < existing.confirmed() + existing.pending()) {
             throw new BusinessException("SLOT_ALLOCATION_BELOW_USED",
@@ -2104,16 +2108,40 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             }
             allocated += slot.getAllocatedUnits();
         }
+        int pendingUnits = pendingDeductionUnits(coursePackage.getId());
+        int otherReservedUnits = otherRuleReservedUnits(coursePackage.getId(), previousRuleId);
+        int preservedUnits = preservedNonPendingUnits(preservedOccurrences, recordByOccurrenceId,
+                AppTime.nowLocalDateTime());
         int available = Math.max(0, allocatableUnits(coursePackage)
-                - pendingDeductionUnits(coursePackage.getId())
-                - otherRuleReservedUnits(coursePackage.getId(), previousRuleId)
-                - preservedNonPendingUnits(preservedOccurrences, recordByOccurrenceId,
-                        AppTime.nowLocalDateTime())
-                + transferredFutureUnits);
+                - pendingUnits - otherReservedUnits - preservedUnits + transferredFutureUnits);
         if (allocated > available) {
             throw new BusinessException("SLOT_ALLOCATION_EXCEEDS_PACKAGE",
-                    "Allocated hours exceed the current package balance after pending lessons and preserved schedule exceptions are accounted for.");
+                    "Allocated hours exceed the current package balance after pending lessons and preserved schedule exceptions are accounted for.",
+                    allocationErrorDetails(coursePackage, allocated, available, pendingUnits,
+                            otherReservedUnits, preservedUnits, transferredFutureUnits, 0));
         }
+    }
+
+    /** 将服务端真实使用的额度核算结果带回页面，避免前端自行猜测跨周期可用额度。 */
+    private ScheduleAllocationErrorVO allocationErrorDetails(CoursePackageEntity coursePackage,
+                                                              int requestedUnits,
+                                                              int availableUnits,
+                                                              int pendingReviewUnits,
+                                                              int otherScheduleReservedUnits,
+                                                              int preservedLessonUnits,
+                                                              int transferredFutureUnits,
+                                                              int currentRuleRetainedUnits) {
+        return new ScheduleAllocationErrorVO(
+                safeUnits(coursePackage.getTotalUnits()) * 0.5,
+                allocatableUnits(coursePackage) * 0.5,
+                Math.max(0, requestedUnits) * 0.5,
+                Math.max(0, availableUnits) * 0.5,
+                Math.max(0, requestedUnits - availableUnits) * 0.5,
+                Math.max(0, pendingReviewUnits) * 0.5,
+                Math.max(0, otherScheduleReservedUnits) * 0.5,
+                Math.max(0, preservedLessonUnits) * 0.5,
+                Math.max(0, transferredFutureUnits) * 0.5,
+                Math.max(0, currentRuleRetainedUnits) * 0.5);
     }
 
     /** 周期快照中的 Pending 已从可分配余额扣除，因此这里只返回其它保留课次。 */
