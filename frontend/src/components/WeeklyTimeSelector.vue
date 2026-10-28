@@ -315,7 +315,7 @@ const occupiedMap = computed(() => {
     const endMin = parseEndTimeToMin(slot.startTime, slot.endTime);
     // A lesson may start off-grid (for example 17:15). Mark every 30-minute
     // calendar cell touched by the lesson so overlaps are not silently missed.
-    // 只映射日历可见范围；早于 06:30 的课程若延续到可见时段，仍从首行显示。
+    // 只映射日历可见范围；早于 06:00 的课程若延续到可见时段，仍从首行显示。
     const firstCellMin = Math.max(Math.floor(startMin / SCHEDULE_SLOT_MINUTES) * SCHEDULE_SLOT_MINUTES, SCHEDULE_DAY_START_MINUTES);
     const lastVisibleMin = Math.min(endMin, SCHEDULE_DAY_END_MINUTES);
     for (let m = firstCellMin; m < lastVisibleMin; m += SCHEDULE_SLOT_MINUTES) {

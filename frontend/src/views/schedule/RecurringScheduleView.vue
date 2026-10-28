@@ -1499,7 +1499,7 @@ function busyForDay(dayIndex: number): BusyOccurrence[] {
     dayjs(o.plannedStartAt).format('YYYY-MM-DD') === date && occurrenceOverlapsCalendar(o.plannedStartAt, o.plannedEndAt));
 }
 
-// 将超出日历显示范围的课次裁切到可见区间，避免 06:30 前的课程被负 top 值遮掉。
+// 将超出日历显示范围的课次裁切到可见区间，避免 06:00 前的课程被负 top 值遮掉。
 function occurrenceOverlapsCalendar(startAt: string, endAt: string): boolean {
   const start = dayjs(startAt);
   const end = dayjs(endAt);
