@@ -18,6 +18,7 @@ import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageDeductedHoursRequest;
+import com.classdeduction.system.modules.enrollment.dto.CoursePackageStartingHoursRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupEntity;
@@ -59,6 +60,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -741,6 +743,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .estimatedEndDate(item.getEstimatedEndDate())
                 .primaryTeacherName(primaryTeacherName)
                 .createdAt(item.getCreatedAt())
+                .version(item.getVersion())
                 .build();
     }
 
@@ -1052,6 +1055,31 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         hourLedgerMapper.insert(ledger);
         upsertBalanceSnapshot(coursePackage, ledger.getId());
         recurringScheduleRuleService.refreshPackageSchedule(id);
+    }
+
+    /** 在行锁内检查页面版本，直接按管理员输入的 Starting Hours 更新课包。 */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void updateStartingHours(Long id, CoursePackageStartingHoursRequest request, Long operatorId) {
+        CoursePackageEntity current = coursePackageMapper.selectByIdForUpdate(id);
+        if (current == null) {
+            throw new BusinessException("COURSE_PACKAGE_NOT_FOUND", "Course package not found.");
+        }
+        if (!"ONE_ON_ONE".equals(current.getTeachingMode())) {
+            throw new BusinessException("PACKAGE_HOURS_NOT_SUPPORTED", "Hour adjustments are only available for 1-on-1 packages.");
+        }
+        if (!Objects.equals(current.getVersion(), request.getExpectedVersion())) {
+            throw new BusinessException("PACKAGE_CONCURRENT_UPDATE", "The package was updated by another request. Please retry.");
+        }
+        int startingUnits = UnitConverter.toHalfHourUnits(request.getStartingHours());
+        int totalUnits = safeUnits(current.getTotalUnits());
+        if (startingUnits < 0 || startingUnits > totalUnits) {
+            throw new BusinessException("INVALID_STARTING_HOURS", "Starting Hours must be within the package total.");
+        }
+        int trackedUnits = Math.max(0, safeUnits(current.getConsumedUnits()) - safeUnits(current.getOpeningUsedUnits()));
+        CoursePackageDeductedHoursRequest calculated = new CoursePackageDeductedHoursRequest();
+        calculated.setDeductedHours(BigDecimal.valueOf(totalUnits - startingUnits + trackedUnits).divide(BigDecimal.valueOf(2)));
+        updateDeductedHours(id, calculated, operatorId);
     }
 
     @Override

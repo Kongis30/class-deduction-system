@@ -1495,21 +1495,246 @@ class RecurringScheduleRuleServiceImplTest {
             return 1;
         }).when(lessonOccurrenceMapper).insert(any(LessonOccurrenceEntity.class));
         when(recurringScheduleRuleMapper.updateById(any(RecurringScheduleRuleEntity.class))).thenReturn(1);
-        doAnswer(invocation -> {
-            RecurringScheduleSlotEntity inserted = invocation.getArgument(0);
-            inserted.setId(7001L);
-            return 1;
-        }).when(recurringScheduleSlotMapper).insert(any(RecurringScheduleSlotEntity.class));
-
         recurringScheduleRuleService.refreshPackageSchedule(1001L);
 
         assertThat(rule.getAllocationPeriodStartedAt())
                 .isEqualTo(rule.getCreatedAt());
-        verify(recurringScheduleSlotMapper).insert(slotCaptor.capture());
-        assertThat(slotCaptor.getValue().getAllocatedUnits()).isEqualTo(80);
+        verify(recurringScheduleSlotMapper, org.mockito.Mockito.never()).insert(any(RecurringScheduleSlotEntity.class));
+        assertThat(slot.getAllocatedUnits()).isEqualTo(80);
         verify(lessonOccurrenceMapper, times(12)).insert(occurrenceCaptor.capture());
         assertThat(occurrenceCaptor.getAllValues().stream().mapToInt(LessonOccurrenceEntity::getPlannedUnits).sum())
                 .isEqualTo(48);
+        assertThat(occurrenceCaptor.getAllValues()).allMatch(occurrence -> Long.valueOf(6001L).equals(occurrence.getScheduleSlotId()));
+    }
+
+    @Test
+    void balanceRefreshPreservesMultipleSlotsAndTheirConfirmedHistory() {
+        RecurringScheduleRuleEntity rule = buildExistingRule();
+        rule.setCreatedAt(LocalDateTime.of(2026, 9, 1, 9, 0));
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setTotalUnits(240);
+        coursePackage.setConsumedUnits(236);
+        coursePackage.setRemainingUnits(4);
+        List<RecurringScheduleSlotEntity> slots = new ArrayList<>();
+        for (int index = 0; index < 2; index++) {
+            RecurringScheduleSlotEntity slot = new RecurringScheduleSlotEntity();
+            slot.setId(6001L + index);
+            slot.setRuleId(5001L);
+            slot.setTeacherId(3001L);
+            slot.setSubjectName("Math");
+            slot.setWeekday(index == 0 ? 1 : 6);
+            slot.setStartTime(LocalTime.of(18, 0));
+            slot.setEndTime(LocalTime.of(20, 0));
+            slot.setPlannedUnits(4);
+            slot.setAllocatedUnits(8);
+            slot.setSlotStatus("ACTIVE");
+            slots.add(slot);
+        }
+        LessonOccurrenceEntity first = buildRuleOccurrence(9001L, AppTime.nowLocalDateTime().toLocalDate().minusDays(14), 4, "MERGED");
+        first.setScheduleSlotId(6001L);
+        first.setPlannedTeacherId(3001L);
+        first.setSubjectName("Math");
+        LessonOccurrenceEntity second = buildRuleOccurrence(9002L, AppTime.nowLocalDateTime().toLocalDate().minusDays(7), 4, "MERGED");
+        second.setScheduleSlotId(6002L);
+        second.setPlannedTeacherId(3001L);
+        second.setSubjectName("Math");
+        LessonRecordEntity firstRecord = buildRecord(first.getId(), 4);
+        firstRecord.setConfirmStage("CONFIRMED");
+        LessonRecordEntity secondRecord = buildRecord(second.getId(), 4);
+        secondRecord.setConfirmStage("CONFIRMED");
+        RecurringScheduleSlotEntity inactiveSlot = new RecurringScheduleSlotEntity();
+        inactiveSlot.setId(6003L);
+        inactiveSlot.setRuleId(5001L);
+        inactiveSlot.setSlotStatus("INACTIVE");
+        LessonOccurrenceEntity inactiveHistory = buildRuleOccurrence(9003L, AppTime.nowLocalDateTime().toLocalDate().minusDays(21), 4, "MERGED");
+        inactiveHistory.setScheduleSlotId(6003L);
+        LessonRecordEntity inactiveRecord = buildRecord(inactiveHistory.getId(), 4);
+        inactiveRecord.setConfirmStage("CONFIRMED");
+
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(rule), Collections.emptyList());
+        when(recurringScheduleRuleMapper.selectById(5001L)).thenReturn(rule);
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(slots, List.of(slots.get(0), slots.get(1), inactiveSlot));
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(first, second, inactiveHistory));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(firstRecord, secondRecord, inactiveRecord));
+        when(recurringScheduleRuleMapper.updateById(any(RecurringScheduleRuleEntity.class))).thenReturn(1);
+
+        recurringScheduleRuleService.refreshPackageSchedule(1001L);
+
+        verify(recurringScheduleSlotMapper, org.mockito.Mockito.never()).insert(any(RecurringScheduleSlotEntity.class));
+        verify(recurringScheduleSlotMapper, org.mockito.Mockito.never()).delete(any());
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.never()).softDeleteFutureUnprocessed(any(), any());
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).insert(occurrenceCaptor.capture());
+        assertThat(occurrenceCaptor.getAllValues()).allMatch(occurrence ->
+                List.of(6001L, 6002L).contains(occurrence.getScheduleSlotId()));
+        assertThat(occurrenceCaptor.getAllValues().stream().mapToInt(LessonOccurrenceEntity::getPlannedUnits).sum())
+                .isLessThanOrEqualTo(4);
+        assertThat(first.getScheduleSlotId()).isEqualTo(6001L);
+        assertThat(second.getScheduleSlotId()).isEqualTo(6002L);
+        assertThat(inactiveHistory.getScheduleSlotId()).isEqualTo(6003L);
+        assertThat(firstRecord.getDeductedUnits()).isEqualTo(4);
+        assertThat(secondRecord.getDeductedUnits()).isEqualTo(4);
+    }
+
+    @Test
+    void manualEditStillRejectsAmbiguousHistoricalSlotMapping() {
+        RecurringScheduleRuleUpdateRequest request = buildUpdateRequest(4);
+        request.setSlots(List.of(buildSlot(1, LocalTime.of(18, 0), 4, 8),
+                buildSlot(6, LocalTime.of(18, 0), 4, 8)));
+        RecurringScheduleSlotEntity firstSlot = new RecurringScheduleSlotEntity();
+        firstSlot.setId(6001L);
+        RecurringScheduleSlotEntity secondSlot = new RecurringScheduleSlotEntity();
+        secondSlot.setId(6002L);
+        LessonOccurrenceEntity first = buildRuleOccurrence(9001L, AppTime.nowLocalDateTime().toLocalDate().minusDays(14), 4, "MERGED");
+        first.setScheduleSlotId(6001L);
+        LessonOccurrenceEntity second = buildRuleOccurrence(9002L, AppTime.nowLocalDateTime().toLocalDate().minusDays(7), 4, "MERGED");
+        second.setScheduleSlotId(6002L);
+        when(recurringScheduleRuleMapper.selectById(5001L)).thenReturn(buildExistingRule());
+        when(coursePackageMapper.selectById(1001L)).thenReturn(buildPackage());
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(firstSlot, secondSlot));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(first, second));
+
+        assertThatThrownBy(() -> recurringScheduleRuleService.updateRule(5001L, request))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.getCode()).isEqualTo("AMBIGUOUS_SLOT_LINEAGE"));
+        verify(recurringScheduleSlotMapper, org.mockito.Mockito.never()).delete(any());
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.never()).softDeleteFutureUnprocessed(any(), any());
+    }
+
+    @Test
+    void zeroBalanceRemovesOnlyFutureUnrecordedRegularLessons() {
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setPackageStatus("COMPLETED");
+        coursePackage.setRemainingUnits(0);
+        LocalDate today = AppTime.nowLocalDateTime().toLocalDate();
+        LessonOccurrenceEntity history = buildRuleOccurrence(9001L, today.minusDays(2), 4, "SCHEDULED");
+        LessonOccurrenceEntity firstFuture = buildRuleOccurrence(9002L, today.plusDays(2), 4, "SCHEDULED");
+        LessonOccurrenceEntity secondFuture = buildRuleOccurrence(9003L, today.plusDays(7), 4, "SCHEDULED");
+        firstFuture.setOccurrenceType("REGULAR");
+        secondFuture.setOccurrenceType("REGULAR");
+        LessonRecordEntity historyRecord = buildRecord(9001L, 4);
+        historyRecord.setConfirmStage("CONFIRMED");
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(history, firstFuture, secondFuture));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(historyRecord));
+        when(lessonOccurrenceMapper.softDeleteFutureRegularUnprocessed(any(), any())).thenReturn(2);
+
+        recurringScheduleRuleService.refreshPackageSchedule(1001L);
+
+        verify(lessonOccurrenceMapper).softDeleteFutureRegularUnprocessed(org.mockito.ArgumentMatchers.eq(List.of(9002L, 9003L)), any());
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.never()).insert(any(LessonOccurrenceEntity.class));
+        verify(recurringScheduleSlotMapper, org.mockito.Mockito.never()).delete(any());
+        assertThat(historyRecord.getDeductedUnits()).isEqualTo(4);
+    }
+
+    @Test
+    void zeroBalanceRejectsUnresolvedPastAdjustedAndMakeupLessons() {
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setPackageStatus("COMPLETED");
+        coursePackage.setRemainingUnits(0);
+        LocalDate today = AppTime.nowLocalDateTime().toLocalDate();
+        LessonOccurrenceEntity past = buildRuleOccurrence(9001L, today.minusDays(2), 4, "SCHEDULED");
+        past.setOccurrenceType("REGULAR");
+        LessonOccurrenceEntity adjusted = buildRuleOccurrence(9002L, today.plusDays(2), 4, "ADJUSTED");
+        adjusted.setOccurrenceType("REGULAR");
+        LessonOccurrenceEntity makeup = buildRuleOccurrence(9003L, today.plusDays(3), 4, "SCHEDULED");
+        makeup.setOccurrenceType("MAKEUP");
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(past), List.of(adjusted), List.of(makeup));
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        for (String expected : List.of("in 1-on-1 Lessons", "was changed", "is a makeup lesson")) {
+            assertThatThrownBy(() -> recurringScheduleRuleService.refreshPackageSchedule(1001L))
+                    .isInstanceOfSatisfying(BusinessException.class, exception ->
+                            {
+                                assertThat(exception.getCode()).isEqualTo("ZERO_BALANCE_LESSON_REVIEW_REQUIRED");
+                                assertThat(exception.getMessage()).contains(expected).contains("before setting remaining hours to 0");
+                            });
+        }
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.never()).softDeleteFutureRegularUnprocessed(any(), any());
+    }
+
+    @Test
+    void zeroBalanceDoesNotCancelAnActiveSharedSchedule() {
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setPackageStatus("COMPLETED");
+        coursePackage.setRemainingUnits(0);
+        PrivateLessonGroupMemberEntity member = new PrivateLessonGroupMemberEntity();
+        member.setPrivateLessonGroupId(42L);
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(privateLessonGroupMemberMapper.selectOne(any())).thenReturn(member);
+        when(recurringScheduleRuleMapper.selectCount(any())).thenReturn(1L);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        assertThatThrownBy(() -> recurringScheduleRuleService.refreshPackageSchedule(1001L))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo("ZERO_BALANCE_SHARED_SCHEDULE"));
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.never()).softDeleteFutureRegularUnprocessed(any(), any());
+    }
+
+    @Test
+    void zeroBalanceRejectsSharedFutureLessonEvenWhenRuleIsEnded() {
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setPackageStatus("COMPLETED");
+        coursePackage.setRemainingUnits(0);
+        PrivateLessonGroupMemberEntity member = new PrivateLessonGroupMemberEntity();
+        member.setPrivateLessonGroupId(42L);
+        LessonOccurrenceEntity shared = buildRuleOccurrence(9001L, AppTime.nowLocalDateTime().toLocalDate().plusDays(2), 4, "SCHEDULED");
+        shared.setPrivateLessonGroupId(42L);
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(privateLessonGroupMemberMapper.selectOne(any())).thenReturn(member);
+        when(recurringScheduleRuleMapper.selectCount(any())).thenReturn(0L);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(shared));
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        assertThatThrownBy(() -> recurringScheduleRuleService.refreshPackageSchedule(1001L))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo("ZERO_BALANCE_SHARED_SCHEDULE"));
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.never()).softDeleteFutureRegularUnprocessed(any(), any());
+    }
+
+    @Test
+    void zeroBalanceAbortsWhenFutureLessonChangesDuringRemoval() {
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setPackageStatus("COMPLETED");
+        coursePackage.setRemainingUnits(0);
+        LessonOccurrenceEntity future = buildRuleOccurrence(9001L, AppTime.nowLocalDateTime().toLocalDate().plusDays(2), 4, "SCHEDULED");
+        future.setOccurrenceType("REGULAR");
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(future));
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(lessonOccurrenceMapper.softDeleteFutureRegularUnprocessed(any(), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> recurringScheduleRuleService.refreshPackageSchedule(1001L))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo("LESSON_CHANGED"));
+    }
+
+    @Test
+    void zeroBalanceExplainsThatRejectedFutureRecordNeedsReview() {
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setPackageStatus("COMPLETED");
+        coursePackage.setRemainingUnits(0);
+        LessonOccurrenceEntity future = buildRuleOccurrence(9001L, AppTime.nowLocalDateTime().toLocalDate().plusDays(2), 4, "SCHEDULED");
+        future.setOccurrenceType("REGULAR");
+        LessonRecordEntity rejected = buildRecord(9001L, 0);
+        rejected.setConfirmStage("REJECTED");
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(future));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(rejected));
+
+        assertThatThrownBy(() -> recurringScheduleRuleService.refreshPackageSchedule(1001L))
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    assertThat(exception.getCode()).isEqualTo("ZERO_BALANCE_LESSON_REVIEW_REQUIRED");
+                    assertThat(exception.getMessage()).contains("in 1-on-1 Lessons");
+                });
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.never()).softDeleteFutureRegularUnprocessed(any(), any());
     }
 
     @Test

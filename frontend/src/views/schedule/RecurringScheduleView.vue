@@ -309,6 +309,8 @@
       :title="`Package hours — ${selectedPackageName}`"
       width="640px"
       :close-on-click-modal="false"
+      :close-on-press-escape="!savingStartingHours"
+      :show-close="!savingStartingHours"
       class="schedule-dialog package-hours-dialog"
     >
       <section v-if="selectedPackage" class="package-hours-card">
@@ -317,7 +319,7 @@
             <div class="package-hours-card__eyebrow">PACKAGE HOURS</div>
             <strong>Hours overview</strong>
           </div>
-          <el-button type="primary" size="small" :loading="savingStartingHours" @click="saveStartingHours">
+          <el-button type="primary" size="small" :loading="savingStartingHours" :disabled="!startingHoursChanged || startingHoursSaveBlocked" @click="saveStartingHours">
             Save hours
           </el-button>
         </div>
@@ -327,15 +329,24 @@
           <div><span title="Past lesson hours without a final admin decision, including lessons the teacher has not submitted.">Pending deduction</span><strong>{{ pendingDeductionHours }}h</strong></div>
           <label class="package-hours-card__input">
             <span>Starting Hours</span>
-            <el-input-number v-model="startingHoursDraft" :min="startingHoursMin" :max="startingHoursMax" :step="0.5" :precision="1" controls-position="right" />
+            <el-input-number v-model="startingHoursDraft" :min="startingHoursMin" :max="startingHoursMax" :step="0.5" :precision="1" :disabled="savingStartingHours || startingHoursSaveBlocked" controls-position="right" />
           </label>
         </div>
-        <p class="package-hours-card__hint">Total includes added and bonus hours. Starting Hours is the manually set opening balance and stays the same when the weekly schedule changes. Remaining Hours decreases only when lessons are deducted.</p>
+        <p class="package-hours-card__hint">Starting Hours is the balance when tracking began. Already deducted hours are lessons confirmed in the system.</p>
+        <div v-if="startingHoursChanged" class="package-hours-card__impact">
+          <strong>After saving</strong>
+          <span>Starting {{ packageHours(selectedPackage.startingHours).toFixed(1) }}h → {{ startingHoursDraft.toFixed(1) }}h</span>
+          <span>Remaining {{ remainingForPackage(selectedPackage).toFixed(1) }}h → {{ projectedRemainingHours.toFixed(1) }}h</span>
+          <small v-if="projectedRemainingHours === 0">Upcoming regular lessons will be removed. Review any unfinished, changed, makeup, or shared lessons first.</small>
+          <small v-else>Future lessons may be shortened or removed when the balance decreases. Review the schedule after saving. Existing lesson history is kept.</small>
+        </div>
       </section>
+      <el-alert v-if="startingHoursCompleted && !selectedPackage" title="The hours were saved. The package has no remaining hours and is now completed." type="success" :closable="false" show-icon />
+      <el-alert v-if="startingHoursError" :title="startingHoursError" type="error" :closable="false" show-icon class="package-hours-card__error" />
 
       <template #footer>
         <div class="dialog-footer">
-          <el-button @click="packageHoursDialogVisible = false">Close</el-button>
+          <el-button :disabled="savingStartingHours" @click="packageHoursDialogVisible = false">Close</el-button>
         </div>
       </template>
     </el-dialog>
@@ -1077,6 +1088,7 @@
 <script setup lang="ts">
 import { ArrowLeft, ArrowRight, Calendar, Search, QuestionFilled, Delete, RefreshLeft, Close, Loading } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import axios from 'axios';
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import type { FormInstance, FormRules } from 'element-plus';
 import dayjs from 'dayjs';
@@ -1086,7 +1098,7 @@ import { extractErrorMessage } from '@/api/http';
 import { showScheduleError } from '@/utils/schedule-conflict-feedback';
 import { fetchAllClassrooms, fetchAllTeachers, fetchClassroom, fetchTeacher } from '@/api/base-data';
 import { useAppStore } from '@/stores/app';
-import { fetchCoursePackage, fetchCoursePackages, pauseCoursePackage, resumeCoursePackage, updateCoursePackageDeductedHours } from '@/api/enrollment';
+import { fetchCoursePackage, fetchCoursePackages, pauseCoursePackage, resumeCoursePackage, updateCoursePackageStartingHours } from '@/api/enrollment';
 import PauseConfirmationDialog from '@/components/shared/PauseConfirmationDialog.vue';
 import { fetchOneOnOneDeductions, fetchPrivateSignatureHistory, type OneOnOneLesson } from '@/api/one-on-one';
 import {
@@ -1323,6 +1335,9 @@ const resumingPackageId = ref<EntityId | null>(null);
 const packageHoursDialogVisible = ref(false);
 const startingHoursDraft = ref(0);
 const savingStartingHours = ref(false);
+const startingHoursError = ref('');
+const startingHoursSaveBlocked = ref(false);
+const startingHoursCompleted = ref(false);
 const selectedPackage = computed(() => studentPackages.value.find(p => String(p.id) === String(selectedPackageId.value)) ?? null);
 const packageHours = (hours?: number) => Number((hours ?? 0).toFixed(1));
 const confirmedDeductionHours = computed(() => {
@@ -1335,9 +1350,21 @@ const startingHoursMin = computed(() => packageHours(
   confirmedDeductionHours.value + pendingAdminDeductionHours.value,
 ));
 const startingHoursMax = computed(() => packageHours(selectedPackage.value?.totalUnits));
+const startingHoursChanged = computed(() => Number.isFinite(startingHoursDraft.value)
+  && startingHoursDraft.value !== packageHours(selectedPackage.value?.startingHours));
+const projectedRemainingHours = computed(() => packageHours(Math.max(0,
+  startingHoursDraft.value - confirmedDeductionHours.value)));
 watch(selectedPackage, pkg => {
   startingHoursDraft.value = packageHours(pkg?.startingHours);
+  startingHoursSaveBlocked.value = false;
 }, { immediate: true });
+watch(packageHoursDialogVisible, visible => {
+  if (visible) {
+    startingHoursCompleted.value = false;
+    if (!startingHoursSaveBlocked.value) startingHoursError.value = '';
+  }
+});
+watch(startingHoursDraft, () => { if (!startingHoursSaveBlocked.value) startingHoursError.value = ''; });
 function remainingForPackage(pkg: CoursePackageItem): number {
   return packageHours(Math.max(0, pkg.remainingUnits));
 }
@@ -1956,7 +1983,7 @@ watch(
 
 // ─── Student selection ─────────────────────────
 // 一次取得当前学生的在读与停课课包；分页取全，避免课包多时漏掉停课入口。
-async function fetchSchedulePackages(studentId: EntityId, signal: AbortSignal): Promise<CoursePackageItem[]> {
+async function fetchSchedulePackages(studentId: EntityId, signal?: AbortSignal): Promise<CoursePackageItem[]> {
   const pageSize = 200;
   const query = { studentId, packageStatuses: 'ACTIVE,PAUSED', teachingMode: 'ONE_ON_ONE', pageSize };
   const requestConfig = { signal, timeout: 8000 };
@@ -2075,7 +2102,7 @@ async function loadCurrentWeekOccurrences() {
   const packageId = selectedPackageId.value;
   const sequence = ++currentWeekLoadSequence;
   currentWeekOccurrences.value = [];
-  if (packageId == null) return;
+  if (packageId == null) return true;
   const { startDate, endExclusiveDate } = currentCalendarWeekRange();
   displayMonday.value = startDate;
   try {
@@ -2085,8 +2112,10 @@ async function loadCurrentWeekOccurrences() {
       endAt: `${endExclusiveDate}T00:00:00`,
     });
     if (sequence === currentWeekLoadSequence) currentWeekOccurrences.value = records;
+    return true;
   } catch {
     if (sequence === currentWeekLoadSequence) currentWeekOccurrences.value = [];
+    return false;
   }
 }
 
@@ -2291,24 +2320,78 @@ async function openPrintSheet(command: string | number | object) {
 async function saveStartingHours() {
   const pkg = selectedPackage.value;
   if (!pkg || !selectedStudentId.value || savingStartingHours.value) return;
+  startingHoursError.value = '';
+  if (pkg.version == null) {
+    startingHoursError.value = 'The hours could not be verified. Refresh the page and try again.';
+    startingHoursSaveBlocked.value = true;
+    return;
+  }
   if (!Number.isInteger(startingHoursDraft.value * 2)
     || startingHoursDraft.value < startingHoursMin.value
     || startingHoursDraft.value > startingHoursMax.value) {
-    ElMessage.warning('Starting Hours must use 0.5-hour increments and cover confirmed and pending deductions without exceeding the package total.');
+    startingHoursError.value = `Enter hours in 0.5-hour steps. The amount must be between ${startingHoursMin.value.toFixed(1)}h and ${startingHoursMax.value.toFixed(1)}h.`;
     return;
   }
   savingStartingHours.value = true;
+  const willComplete = startingHoursDraft.value === confirmedDeductionHours.value;
   try {
-    // 兼容现有课包接口：总已用量 = 录入前历史已用量 + 系统已确认消课。
-    const totalConsumedHours = packageHours(pkg.totalUnits - startingHoursDraft.value + confirmedDeductionHours.value);
-    await updateCoursePackageDeductedHours(pkg.id, totalConsumedHours);
-    studentPackages.value = await fetchSchedulePackages(selectedStudentId.value);
-    await Promise.all([loadAllPackageRules(), loadCurrentWeekOccurrences()]);
-    ElMessage.success('Package hours and future schedule updated.');
+    await updateCoursePackageStartingHours(pkg.id, startingHoursDraft.value, pkg.version);
   } catch (err) {
-    ElMessage.error(extractErrorMessage(err));
+    const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+    const code = axios.isAxiosError(err) ? err.response?.data?.code : undefined;
+    if (status && status >= 400 && status < 500) {
+      const reason = packageHoursErrorReason(code, err);
+      startingHoursError.value = `Hours were not saved. ${reason}`;
+      if (code === 'PACKAGE_CONCURRENT_UPDATE') startingHoursSaveBlocked.value = true;
+    } else {
+      startingHoursError.value = 'Could not confirm whether the hours were saved. Refresh the page and check the current hours before trying again.';
+      startingHoursSaveBlocked.value = true;
+    }
+    savingStartingHours.value = false;
+    return;
+  }
+  try {
+    studentPackages.value = await fetchSchedulePackages(selectedStudentId.value);
+    startingHoursCompleted.value = willComplete && !selectedPackage.value;
+    const refreshed = await Promise.all([loadAllPackageRules(), loadCurrentWeekOccurrences()]);
+    if (refreshed.some(result => !result)) throw new Error('Schedule refresh failed');
+    ElMessage.success('Package hours and future schedule updated.');
+  } catch {
+    startingHoursError.value = 'Hours were saved, but the page could not refresh. Refresh the page to see the latest balance and schedule.';
+    startingHoursSaveBlocked.value = true;
   } finally {
     savingStartingHours.value = false;
+  }
+}
+
+// 将课时保存失败转换成管理员能执行的下一步；未知错误不直接展示内部信息。
+function packageHoursErrorReason(code: unknown, error: unknown): string {
+  switch (code) {
+    case 'ZERO_BALANCE_LESSON_REVIEW_REQUIRED':
+    case 'ZERO_BALANCE_SHARED_SCHEDULE':
+      return extractErrorMessage(error);
+    case 'SCHEDULE_CONFLICT':
+      return `${extractErrorMessage(error)} Check the dates and teachers in Edit Schedule, then try again.`;
+    case 'INVALID_STARTING_HOURS':
+      return 'Starting Hours must be between 0 and the total hours in this package.';
+    case 'DEDUCTED_HOURS_BELOW_CONFIRMED':
+      return `Starting Hours cannot be less than the ${confirmedDeductionHours.value.toFixed(1)}h already used.`;
+    case 'DEDUCTED_HOURS_EXCEED_PACKAGE':
+      return 'There are lessons waiting for approval. Review them in 1-on-1 Lessons or leave enough hours for them.';
+    case 'INCOMPLETE_SLOT_ALLOCATION':
+      return 'Some lessons are missing a teacher, subject, or hours. Complete them in Edit Schedule and try again.';
+    case 'TEACHER_NOT_AVAILABLE':
+      return 'A teacher on this schedule is no longer available. Choose another teacher in Edit Schedule and try again.';
+    case 'LESSON_CHANGED':
+    case 'SCHEDULE_CHANGED':
+    case 'STALE_SCHEDULE_SLOT':
+    case 'PACKAGE_CONCURRENT_UPDATE':
+      return 'The hours or lessons changed while you were editing. Refresh the page and try again.';
+    case 'AMBIGUOUS_SLOT_LINEAGE':
+    case 'SCHEDULE_PERIOD_START_MISSING':
+      return 'This student’s schedule needs review. Contact support for help.';
+    default:
+      return 'Please try again. If the problem continues, contact support for help.';
   }
 }
 
@@ -2319,19 +2402,15 @@ async function loadAllPackageRules(
 ) {
   if (packages.length === 0) {
     allPackageRules.value = {};
-    return;
+    return true;
   }
   const results = await Promise.allSettled(
     packages.filter(pkg => pkg.packageStatus === 'ACTIVE').map(async (pkg) => {
       const res = await fetchRecurringScheduleRules({ packageId: pkg.id, ruleStatus: 'ACTIVE', pageSize: 1 });
       const rule = res.data.data.records[0];
       if (!rule) return { packageId: pkg.id, rule: null };
-      try {
-        const detailRes = await fetchRecurringScheduleRule(rule.id);
-        return { packageId: pkg.id, rule: { ...rule, ...detailRes.data.data } };
-      } catch {
-        return { packageId: pkg.id, rule: null };
-      }
+      const detailRes = await fetchRecurringScheduleRule(rule.id);
+      return { packageId: pkg.id, rule: { ...rule, ...detailRes.data.data } };
     })
   );
     const map: Record<string, any> = {};
@@ -2343,6 +2422,7 @@ async function loadAllPackageRules(
   if (requestSequence == null || requestSequence === packageLoadSequence) {
     allPackageRules.value = map;
   }
+  return results.every(result => result.status === 'fulfilled');
 }
 
 const totalSlotUnits = computed(() =>
@@ -3462,6 +3542,9 @@ function disabledPastDate(date: Date) {
 .package-hours-card__fields strong { color: #273b53; font-size: 14px; }
 .package-hours-card__input :deep(.el-input-number) { width: 100%; }
 .package-hours-card__hint { margin: 10px 0 0; color: #8795a5; font-size: 11px; }
+.package-hours-card__impact { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; padding: 10px; border-radius: 6px; background: #eaf3ff; color: #294665; font-size: 12px; }
+.package-hours-card__impact small { flex-basis: 100%; color: #536a82; }
+.package-hours-card__error { margin-top: 12px; white-space: pre-line; }
 
 .schedule-info {
   padding: 12px;

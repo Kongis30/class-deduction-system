@@ -9,6 +9,7 @@ import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageDeductedHoursRequest;
+import com.classdeduction.system.modules.enrollment.dto.CoursePackageStartingHoursRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageRenewalPriorityRequest;
 import com.classdeduction.system.modules.enrollment.service.CoursePackageService;
@@ -115,6 +116,16 @@ public class CoursePackageController {
             @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
         coursePackageService.updateDeductedHours(id, request, currentUser.userId());
         return ApiResponse.success("Already deducted hours updated successfully.", null);
+    }
+
+    @PutMapping("/{id}/starting-hours")
+    @Operation(summary = "Update starting hours using the displayed package version")
+    public ApiResponse<Void> updateStartingHours(
+            @PathVariable Long id,
+            @Valid @RequestBody CoursePackageStartingHoursRequest request,
+            @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
+        coursePackageService.updateStartingHours(id, request, currentUser.userId());
+        return ApiResponse.success("Starting hours updated successfully.", null);
     }
 
     @PostMapping("/{id}/pause")

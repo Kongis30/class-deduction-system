@@ -12,6 +12,7 @@ import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageDeductedHoursRequest;
+import com.classdeduction.system.modules.enrollment.dto.CoursePackageStartingHoursRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
@@ -408,6 +409,98 @@ class CoursePackageServiceImplTest {
         assertThat(ledgerCaptor.getValue().getChangeUnits()).isEqualTo(12);
         assertThat(ledgerCaptor.getValue().getReasonCode()).isEqualTo("OPENING_USED_HOURS");
         verify(recurringScheduleRuleService).refreshPackageSchedule(101L);
+    }
+
+    @Test
+    void zeroRemainingHoursCompletesPackageAndRefreshesItsSchedule() {
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(101L);
+        coursePackage.setTeachingMode("ONE_ON_ONE");
+        coursePackage.setTotalUnits(240);
+        coursePackage.setOpeningUsedUnits(201);
+        coursePackage.setConsumedUnits(235);
+        coursePackage.setRemainingUnits(5);
+        coursePackage.setPackageStatus("ACTIVE");
+        when(coursePackageMapper.selectById(101L)).thenReturn(coursePackage);
+        when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
+        when(packageBalanceSnapshotMapper.selectById(101L)).thenReturn(null);
+        when(hourLedgerMapper.insert(any(com.classdeduction.system.modules.lesson.entity.HourLedgerEntity.class)))
+                .thenAnswer(invocation -> {
+                    ((com.classdeduction.system.modules.lesson.entity.HourLedgerEntity) invocation.getArgument(0)).setId(501L);
+                    return 1;
+                });
+        CoursePackageDeductedHoursRequest request = new CoursePackageDeductedHoursRequest();
+        request.setDeductedHours(BigDecimal.valueOf(120));
+
+        coursePackageService.updateDeductedHours(101L, request, 9L);
+
+        assertThat(coursePackage.getOpeningUsedUnits()).isEqualTo(206);
+        assertThat(coursePackage.getConsumedUnits()).isEqualTo(240);
+        assertThat(coursePackage.getRemainingUnits()).isZero();
+        assertThat(coursePackage.getPackageStatus()).isEqualTo("COMPLETED");
+        ArgumentCaptor<com.classdeduction.system.modules.lesson.entity.HourLedgerEntity> ledgerCaptor =
+                ArgumentCaptor.forClass(com.classdeduction.system.modules.lesson.entity.HourLedgerEntity.class);
+        verify(hourLedgerMapper).insert(ledgerCaptor.capture());
+        assertThat(ledgerCaptor.getValue().getChangeUnits()).isEqualTo(-5);
+        assertThat(ledgerCaptor.getValue().getBalanceAfterUnits()).isZero();
+        verify(recurringScheduleRuleService).setPackageStartingHours(101L, 34);
+        verify(recurringScheduleRuleService).refreshPackageSchedule(101L);
+    }
+
+    @Test
+    void startingHoursSavesTheRequestedValueUsingLockedCurrentBalance() {
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(101L);
+        coursePackage.setVersion(7);
+        coursePackage.setTeachingMode("ONE_ON_ONE");
+        coursePackage.setTotalUnits(240);
+        coursePackage.setOpeningUsedUnits(201);
+        coursePackage.setConsumedUnits(235);
+        coursePackage.setRemainingUnits(5);
+        coursePackage.setPackageStatus("ACTIVE");
+        when(coursePackageMapper.selectByIdForUpdate(101L)).thenReturn(coursePackage);
+        when(coursePackageMapper.selectById(101L)).thenReturn(coursePackage);
+        when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
+        when(packageBalanceSnapshotMapper.selectById(101L)).thenReturn(null);
+        when(hourLedgerMapper.insert(any(com.classdeduction.system.modules.lesson.entity.HourLedgerEntity.class)))
+                .thenAnswer(invocation -> {
+                    ((com.classdeduction.system.modules.lesson.entity.HourLedgerEntity) invocation.getArgument(0)).setId(501L);
+                    return 1;
+                });
+        CoursePackageStartingHoursRequest request = new CoursePackageStartingHoursRequest();
+        request.setStartingHours(BigDecimal.valueOf(19));
+        request.setExpectedVersion(7);
+
+        coursePackageService.updateStartingHours(101L, request, 9L);
+
+        assertThat(coursePackage.getOpeningUsedUnits()).isEqualTo(202);
+        assertThat(coursePackage.getConsumedUnits()).isEqualTo(236);
+        assertThat(coursePackage.getRemainingUnits()).isEqualTo(4);
+        verify(recurringScheduleRuleService).setPackageStartingHours(101L, 38);
+        verify(recurringScheduleRuleService).refreshPackageSchedule(101L);
+    }
+
+    @Test
+    void startingHoursRejectsAPageOpenedBeforeAnotherLessonWasDeducted() {
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(101L);
+        coursePackage.setVersion(8);
+        coursePackage.setTeachingMode("ONE_ON_ONE");
+        coursePackage.setTotalUnits(240);
+        coursePackage.setOpeningUsedUnits(201);
+        coursePackage.setConsumedUnits(237);
+        coursePackage.setRemainingUnits(3);
+        when(coursePackageMapper.selectByIdForUpdate(101L)).thenReturn(coursePackage);
+        CoursePackageStartingHoursRequest request = new CoursePackageStartingHoursRequest();
+        request.setStartingHours(BigDecimal.valueOf(19));
+        request.setExpectedVersion(7);
+
+        assertThatThrownBy(() -> coursePackageService.updateStartingHours(101L, request, 9L))
+                .isInstanceOfSatisfying(com.classdeduction.system.common.exception.BusinessException.class,
+                        error -> assertThat(error.getCode()).isEqualTo("PACKAGE_CONCURRENT_UPDATE"));
+        verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
+        verify(hourLedgerMapper, never()).insert(any(com.classdeduction.system.modules.lesson.entity.HourLedgerEntity.class));
+        verify(recurringScheduleRuleService, never()).refreshPackageSchedule(101L);
     }
 
     @Test

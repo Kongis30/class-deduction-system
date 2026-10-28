@@ -387,6 +387,7 @@ export interface EnrollmentOrderLineItem {
 
 export interface CoursePackageItem {
   id: EntityId;
+  version?: number;
   packageNo: string;
   enrollmentOrderId: EntityId;
   studentId: EntityId;

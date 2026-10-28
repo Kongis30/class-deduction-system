@@ -4,6 +4,7 @@ import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageDeductedHoursRequest;
+import com.classdeduction.system.modules.enrollment.dto.CoursePackageStartingHoursRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageDetailVO;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageListItemVO;
@@ -49,6 +50,9 @@ public interface CoursePackageService {
 
     /** 更新已消课总课时，保留已确认课次并同步重算未来排课。 */
     void updateDeductedHours(Long id, CoursePackageDeductedHoursRequest request, Long operatorId);
+
+    /** 校验页面版本并按管理员输入的起始课时调整余额。 */
+    void updateStartingHours(Long id, CoursePackageStartingHoursRequest request, Long operatorId);
 
     /**
      * Pause a 1-on-1 package and stop future unrecorded lessons.

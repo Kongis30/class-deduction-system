@@ -65,6 +65,7 @@ import org.springframework.util.StringUtils;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -682,7 +683,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                         .eq(RecurringScheduleSlotEntity::getRuleId, id));
         preserveUnambiguousEditedSlotLineages(request.getSlots(), existingSlots, allOccurrences);
         boolean reclaimEndedUnconfirmed = Boolean.TRUE.equals(request.getReclaimEndedUnconfirmedLessons());
-        if (!reclaimEndedUnconfirmed
+        // 余额刷新必须继续重算未来课次，不能被普通编辑的“仅更新课程信息”快捷路径截断。
+        if (allowNewPeriod && !reclaimEndedUnconfirmed
                 && isCourseDetailsOnlyChange(existingRule, existingSlots, request, privateLessonGroupId, newStatus)) {
             Set<Long> existingOccurrenceIds = allOccurrences.stream()
                     .map(LessonOccurrenceEntity::getId).collect(Collectors.toSet());
@@ -709,8 +711,11 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 && !"ENDED".equals(newStatus)
                 && hasScheduleDefinitionChanged(existingRule, existingSlots, request, privateLessonGroupId);
         // 暂停、恢复等状态变更不改变排课分配，必须沿用原课位及周期边界。
+        // 内部余额刷新只提交有效课位；历史停用课位仍保留在原规则中供旧课次关联。
+        List<RecurringScheduleSlotEntity> comparableSlots = allowNewPeriod ? existingSlots : existingSlots.stream()
+                .filter(slot -> "ACTIVE".equals(slot.getSlotStatus())).toList();
         boolean reuseExistingSlots = !startsNewPeriod
-                && hasUnchangedSlotDetails(existingRule, existingSlots, request.getSlots());
+                && hasUnchangedSlotDetails(existingRule, comparableSlots, request.getSlots());
         if (!startsNewPeriod && !reuseExistingSlots && !existingSlots.isEmpty()) {
             freezeLegacyAllocationPeriod(existingRule);
         }
@@ -836,7 +841,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
 
         Long targetRuleId = targetRule.getId();
         List<RecurringScheduleSlotEntity> newSlots = reuseExistingSlots
-                ? existingSlots
+                ? comparableSlots
                 : request.getSlots().stream()
                         .map(slotRequest -> toSlotEntity(targetRuleId, slotRequest, existingSlotsById)).toList();
         if (!reuseExistingSlots) {
@@ -1290,7 +1295,14 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     @Transactional(rollbackFor = Exception.class)
     public void refreshPackageSchedule(Long packageId) {
         CoursePackageEntity coursePackage = coursePackageMapper.selectById(packageId);
-        if (coursePackage == null || !"ACTIVE".equals(coursePackage.getPackageStatus())) {
+        if (coursePackage == null) {
+            return;
+        }
+        if ("COMPLETED".equals(coursePackage.getPackageStatus()) && safeUnits(coursePackage.getRemainingUnits()) == 0) {
+            clearFutureLessonsForExhaustedPackage(packageId);
+            return;
+        }
+        if (!"ACTIVE".equals(coursePackage.getPackageStatus())) {
             return;
         }
         List<RecurringScheduleRuleEntity> rules = recurringScheduleRuleMapper.selectList(
@@ -1340,6 +1352,87 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         reconcilePackageSchedule(packageId);
     }
 
+    /** 余额耗尽时仅回收未开始且无记录的普通课；特殊课次及共享课程须先由管理员处理。 */
+    private void clearFutureLessonsForExhaustedPackage(Long packageId) {
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        PrivateLessonGroupMemberEntity member = privateLessonGroupMemberMapper.selectOne(
+                new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .eq(PrivateLessonGroupMemberEntity::getPackageId, packageId)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0)
+                        .last("LIMIT 1"));
+        if (member != null) {
+            Long activeRules = recurringScheduleRuleMapper.selectCount(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                    .eq(RecurringScheduleRuleEntity::getPrivateLessonGroupId, member.getPrivateLessonGroupId())
+                    .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE"));
+            List<LessonOccurrenceEntity> groupOccurrences = lessonOccurrenceMapper.selectList(
+                    new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                            .eq(LessonOccurrenceEntity::getPrivateLessonGroupId, member.getPrivateLessonGroupId())
+                            .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED"));
+            Map<Long, LessonRecordEntity> groupRecords = listActiveRecordsByOccurrenceId(groupOccurrences, packageId);
+            boolean unresolvedGroupLesson = groupOccurrences.stream().anyMatch(occurrence ->
+                    !"MERGED".equals(occurrence.getPlanningStatus())
+                            && ((occurrence.getPlannedStartAt() != null && !occurrence.getPlannedStartAt().isBefore(now))
+                            || PrivateLessonAllocation.reservedUnits(occurrence, groupRecords.get(occurrence.getId())) > 0));
+            if ((activeRules != null && activeRules > 0) || unresolvedGroupLesson) {
+                throw new BusinessException("ZERO_BALANCE_SHARED_SCHEDULE",
+                        "This student has lessons with other students. Review their shared schedule before setting remaining hours to 0.");
+            }
+        }
+
+        List<LessonOccurrenceEntity> occurrences = listActivePackageOccurrences(packageId);
+        if (occurrences.isEmpty()) return;
+        Map<Long, LessonRecordEntity> records = listActiveRecordsByOccurrenceId(occurrences, packageId);
+        // 被退回的记录仍是有效历史，写入保护不会删除带任何记录的课次。
+        Set<Long> occurrenceIdsWithRecords = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                        .select(LessonRecordEntity::getOccurrenceId)
+                        .in(LessonRecordEntity::getOccurrenceId, occurrences.stream().map(LessonOccurrenceEntity::getId).toList())
+                        .eq(LessonRecordEntity::getIsDeleted, 0))
+                .stream().map(LessonRecordEntity::getOccurrenceId).collect(Collectors.toSet());
+        List<Long> removableIds = new ArrayList<>();
+        for (LessonOccurrenceEntity occurrence : occurrences) {
+            if ("MERGED".equals(occurrence.getPlanningStatus())) continue;
+            LessonRecordEntity record = records.get(occurrence.getId());
+            boolean future = occurrence.getPlannedStartAt() != null && !occurrence.getPlannedStartAt().isBefore(now);
+            if (!future && record != null && "CONFIRMED".equals(record.getConfirmStage())) continue;
+            if (future && !occurrenceIdsWithRecords.contains(occurrence.getId()) && "SCHEDULED".equals(occurrence.getPlanningStatus())
+                    && "REGULAR".equals(occurrence.getOccurrenceType())
+                    && occurrence.getPrivateLessonGroupId() == null && occurrence.getClassGroupId() == null) {
+                removableIds.add(occurrence.getId());
+            } else {
+                throw new BusinessException("ZERO_BALANCE_LESSON_REVIEW_REQUIRED",
+                        zeroBalanceReviewMessage(occurrence, occurrenceIdsWithRecords.contains(occurrence.getId()), future));
+            }
+        }
+        if (!removableIds.isEmpty()
+                && lessonOccurrenceMapper.softDeleteFutureRegularUnprocessed(removableIds, now) != removableIds.size()) {
+            throw new BusinessException("LESSON_CHANGED",
+                    "A lesson changed while saving. Refresh and review the schedule before trying again.");
+        }
+    }
+
+    /** 告知管理员需要核对的具体课程与入口，避免暴露课次状态等内部术语。 */
+    private String zeroBalanceReviewMessage(LessonOccurrenceEntity occurrence, boolean hasRecord, boolean future) {
+        if (occurrence.getPlannedStartAt() == null) {
+            return "A lesson needs review. Contact support before setting remaining hours to 0.";
+        }
+        String lessonTime = occurrence.getPlannedStartAt().format(
+                DateTimeFormatter.ofPattern("MM/dd/yyyy h:mm a", Locale.US));
+        if (!future || hasRecord) {
+            return "Review the lesson on " + lessonTime + " in 1-on-1 Lessons before setting remaining hours to 0.";
+        }
+        if (occurrence.getPrivateLessonGroupId() != null) {
+            return "The lesson on " + lessonTime + " is shared with another student. Review it in Schedule before setting remaining hours to 0.";
+        }
+        if ("MAKEUP".equals(occurrence.getOccurrenceType())) {
+            return "The lesson on " + lessonTime + " is a makeup lesson. Review it in Schedule before setting remaining hours to 0.";
+        }
+        if ("ADJUSTED".equals(occurrence.getPlanningStatus())) {
+            return "The lesson on " + lessonTime + " was changed. Review it in Schedule before setting remaining hours to 0.";
+        }
+        return "Review the lesson on " + lessonTime + " in Schedule before setting remaining hours to 0.";
+    }
+
     /** 同周期重建旧课位前固定周期起点；课位创建时间不作为排课变更证据。 */
     private void freezeLegacyAllocationPeriod(RecurringScheduleRuleEntity rule) {
         if (rule.getSupersedesRuleId() != null || rule.getAllocationPeriodStartedAt() != null) {
@@ -1387,6 +1480,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
 
     private RecurringScheduleSlotRequest toSlotRequest(RecurringScheduleSlotEntity slot) {
         RecurringScheduleSlotRequest request = new RecurringScheduleSlotRequest();
+        // 余额刷新复用现有课位，必须保留身份以关联历史课次并避免重建课位。
+        request.setSlotId(slot.getId());
         request.setTeacherId(slot.getTeacherId());
         request.setDeliveryMode(slot.getDeliveryMode());
         request.setClassroomId(slot.getClassroomId());
@@ -2360,8 +2455,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         }
 
         throw new BusinessException("AMBIGUOUS_SLOT_LINEAGE",
-                "This schedule contains lesson history that cannot be matched safely to the edited slots. "
-                        + "Refresh the schedule and edit the existing slot rows so lesson history remains attached.");
+                "This student's schedule needs review before these changes can be saved. Contact support for help.");
     }
 
     /** 检查本次是否只更换既有周课位的老师，供服务端安全推导未手动改写的各 slot 新额度。 */

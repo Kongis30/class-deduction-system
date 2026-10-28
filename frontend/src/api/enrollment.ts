@@ -78,6 +78,11 @@ export function updateCoursePackageDeductedHours(id: EntityId, deductedHours: nu
   return http.put(`/v1/enrollment/packages/${id}/deducted-hours`, { deductedHours });
 }
 
+/** 保存管理员看到的起始课时，版本变化时要求先刷新。 */
+export function updateCoursePackageStartingHours(id: EntityId, startingHours: number, expectedVersion: number) {
+  return http.put(`/v1/enrollment/packages/${id}/starting-hours`, { startingHours, expectedVersion });
+}
+
 export interface EnrollmentOrderCorrectionPayload {
   expectedVersion?: number;
   correctionReason?: string;

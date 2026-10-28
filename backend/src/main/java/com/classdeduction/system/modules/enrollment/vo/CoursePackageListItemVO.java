@@ -41,6 +41,7 @@ public record CoursePackageListItemVO(
         LocalDate startDate,
         LocalDate estimatedEndDate,
         String primaryTeacherName,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        Integer version
 ) {
 }
