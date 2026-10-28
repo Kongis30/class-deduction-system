@@ -1760,6 +1760,7 @@ const editingCorrection = ref(false);
 const savingCorrection = ref(false);
 const correctionBaseline = ref<EnrollmentOrderCorrectionPayload | null>(null);
 const correctionSetupLoading = ref(false);
+const lastAttendanceSelection = new WeakMap<RegistrationCourseLine, RegistrationCourseLine['attendanceOption']>();
 const historicalOrder = ref<EnrollmentOrderDetailItem | null>(null);
 // 只有已保存且当前处于查看状态的订单收据可以打印。
 const canPrintSavedReceipt = computed(() => isReadOnly.value
@@ -2520,6 +2521,7 @@ async function startCorrection() {
         .map((line) => loadGroupClassDates(line, true)));
     }
     correctionBaseline.value = structuredClone(buildCurrentCorrectionPayload());
+    courseLines.value.forEach((line) => lastAttendanceSelection.set(line, line.attendanceOption));
   } catch (error) {
     editingCorrection.value = false;
     correctionBaseline.value = null;
@@ -2682,7 +2684,7 @@ function correctionImpactSummary(changes: EnrollmentOrderCorrectionPayload): str
     if (newQuantity !== oldQuantity) impact.push(`${label}: purchased quantity ${oldQuantity ?? '—'} → ${newQuantity ?? '—'}.`);
     if (item.priceAmount !== before.priceAmount) impact.push(`${label}: price ${formatMoney(before.priceAmount ?? 0)} → ${formatMoney(item.priceAmount ?? 0)}.`);
     if (item.attendanceOption !== before.attendanceOption) {
-      impact.push(`${label}: Attendance changed. Confirm the saved price is still correct.`);
+      impact.push(`${label}: Attendance changed; student participation in class sessions will be updated.`);
     }
   }
   if (changes.payments) impact.push('Payment records will be corrected. Confirm the amounts and methods.');
@@ -4054,7 +4056,12 @@ function remainingCoursePaymentAmount(payment: PaymentLine, courseRowKey: string
 function maxCoursePaymentAmount(payment: PaymentLine, courseRowKey: string) {
   const remainingAmount = remainingCoursePaymentAmount(payment, courseRowKey);
   const creditAmount = maxStudentCreditPaymentAmount(payment, courseRowKey);
-  return creditAmount === undefined ? remainingAmount : Math.min(remainingAmount, creditAmount);
+  const payableAmount = creditAmount === undefined ? remainingAmount : Math.min(remainingAmount, creditAmount);
+  // 更正历史收据时，降价可能让旧付款高于新应收；保留原付款金额供用户明确决定如何处理超收。
+  // 新增付款仍受当前应收和 Credit 余额约束，不能借此扩大可支付金额。
+  return editingCorrection.value && payment.isHistorical
+    ? Math.max(payableAmount, coursePaymentAmount(payment, courseRowKey))
+    : payableAmount;
 }
 
 function normalizePaymentAmount(payment: PaymentLine, courseRowKey: string) {
@@ -4585,6 +4592,7 @@ async function handleGroupPlanChange(line: RegistrationCourseLine) {
   line.groupSessionCount = plan.packageUnit === 'SESSION' ? plan.packageQuantity : undefined;
   line.groupPurchasedMonths = plan.packageUnit === 'MONTH' ? plan.packageQuantity : undefined;
   line.attendanceOption = plan.fullDayPrice != null ? 'FULL_DAY' : plan.halfDayPrice != null ? 'MORNING' : 'NONE';
+  lastAttendanceSelection.set(line, line.attendanceOption);
   const signupDate = form.signupDate || today;
   const classStart = selectedGroupActualClass(line)?.startDate;
   if (!line.classId) {
@@ -5523,8 +5531,14 @@ function attendanceOptionsForLine(line: RegistrationCourseLine) {
 }
 
 function handleAttendanceChange(line: RegistrationCourseLine) {
-  // 历史价格可能已调整；更正时先保留原价，金额变化由操作员明确输入。
-  if (editingCorrection.value) return;
+  const previous = lastAttendanceSelection.has(line)
+    ? lastAttendanceSelection.get(line)
+    : correctionBaseline.value?.items?.find((item) => String(item.orderItemId) === String(line.orderItemId))?.attendanceOption;
+  lastAttendanceSelection.set(line, line.attendanceOption);
+  // 历史订单未保存 Attendance 时，第一次选择只补齐缺失信息；再次切换才代表明确改收费档位。
+  if (editingCorrection.value && line.orderItemId && (!previous || previous === 'NONE')) return;
+  // Edit Receipt 中切换收费档位是对原报名的明确更正，价格按所选方案同步重算；
+  // recalculateLinePrice 会保留手动改价行的实际价格，只更新该档位的标准价快照。
   recalculateLinePrice(line);
 }
 

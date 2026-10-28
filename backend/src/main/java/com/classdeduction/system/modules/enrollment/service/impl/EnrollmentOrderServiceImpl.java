@@ -2135,6 +2135,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
     private void updateClassEnrollmentAttendance(EnrollmentOrderItemEntity item) {
         if (!isGroupItem(item)) return;
+        // 班级课次是全班共享排课；只更新本报名行对应的学生参与档位，查询时据此筛选 AM/PM，不能改全班课表。
         List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(
                 new LambdaQueryWrapper<ClassEnrollmentEntity>()
                         .eq(ClassEnrollmentEntity::getEnrollmentOrderItemId, item.getId())
@@ -3166,7 +3167,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 ? requestedPaid.add(sumActiveRefunds(order.getId(), null)).max(ZERO_AMOUNT)
                 : defaultAmount(order.getReceivedAmount());
         BigDecimal due = original.subtract(discount).setScale(2, RoundingMode.HALF_UP);
-        if (received.compareTo(due) > 0) {
+        // 改课程收费档位不会撤回已实际收到的款项；价格下降形成超收时保留原流水并显示负余额。
+        // 只有本次明确更改了付款金额，且更正后的金额仍超出应收时，才拒绝保存该付款更正。
+        if (received.compareTo(due) > 0 && correctedPaymentAmountsChanged(order.getId(), request)) {
             throw new BusinessException("PAYMENT_EXCEEDS_AMOUNT_DUE", "Paid amount cannot exceed amount due.");
         }
         order.setTuitionSubtotalAmount(tuition);

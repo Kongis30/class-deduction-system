@@ -932,6 +932,83 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
+    void shouldKeepPaymentAndUpdateAttendanceAndBalanceAcrossRepeatedReceiptCorrections() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setOrderStatus("CONFIRMED");
+        order.setPaymentStatus("PAID");
+        order.setStudentId(101L);
+        order.setClassId(801L);
+        order.setTuitionSubtotalAmount(new BigDecimal("3398.00"));
+        order.setOriginalAmount(new BigDecimal("3398.00"));
+        order.setAmountDue(new BigDecimal("3398.00"));
+        order.setReceivedAmount(new BigDecimal("3398.00"));
+        order.setBalanceAmount(BigDecimal.ZERO);
+
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(8001L);
+        item.setEnrollmentOrderId(2001L);
+        item.setLineNo(1);
+        item.setCourseType("GROUP");
+        item.setCourseProductId(202L);
+        item.setGroupProjectId(910L);
+        item.setGroupRegistrationPlanId(920L);
+        item.setClassId(801L);
+        item.setPackageUnit("SESSION");
+        item.setPackageQuantity(new BigDecimal("8"));
+        item.setAttendanceOption("FULL_DAY");
+        item.setPriceAmount(new BigDecimal("3398.00"));
+        item.setOriginalPriceAmount(new BigDecimal("3398.00"));
+
+        ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
+        enrollment.setId(9001L);
+        enrollment.setEnrollmentOrderItemId(8001L);
+        enrollment.setStatus("ACTIVE");
+        enrollment.setAttendanceOption("FULL_DAY");
+        enrollment.setIsDeleted(0);
+
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(studentMapper.selectById(101L)).thenReturn(buildStudent());
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        when(receiptRecordMapper.selectList(any())).thenReturn(List.of());
+
+        EnrollmentOrderCorrectionRequest halfDay = attendanceAndPriceCorrection("MORNING", "2898.00");
+        enrollmentOrderService.correctOrder(2001L, halfDay);
+
+        assertThat(item.getAttendanceOption()).isEqualTo("MORNING");
+        assertThat(enrollment.getAttendanceOption()).isEqualTo("MORNING");
+        assertThat(order.getAmountDue()).isEqualByComparingTo("2898.00");
+        assertThat(order.getReceivedAmount()).isEqualByComparingTo("3398.00");
+        assertThat(order.getBalanceAmount()).isEqualByComparingTo("-500.00");
+        assertThat(order.getPaymentStatus()).isEqualTo("PAID");
+
+        EnrollmentOrderCorrectionRequest fullDay = attendanceAndPriceCorrection("FULL_DAY", "3398.00");
+        enrollmentOrderService.correctOrder(2001L, fullDay);
+
+        assertThat(item.getAttendanceOption()).isEqualTo("FULL_DAY");
+        assertThat(enrollment.getAttendanceOption()).isEqualTo("FULL_DAY");
+        assertThat(order.getAmountDue()).isEqualByComparingTo("3398.00");
+        assertThat(order.getReceivedAmount()).isEqualByComparingTo("3398.00");
+        assertThat(order.getBalanceAmount()).isEqualByComparingTo("0.00");
+        verify(paymentRecordMapper, never()).updateById(any(PaymentRecordEntity.class));
+        verify(paymentRecordMapper, never()).delete(any());
+    }
+
+    private EnrollmentOrderCorrectionRequest attendanceAndPriceCorrection(String attendance, String price) {
+        EnrollmentOrderCorrectionRequest request = new EnrollmentOrderCorrectionRequest();
+        RegistrationIntakeRequest.CourseItemPayload payload = new RegistrationIntakeRequest.CourseItemPayload();
+        payload.setOrderItemId(8001L);
+        payload.setAttendanceOption(attendance);
+        payload.setPriceAmount(new BigDecimal(price));
+        payload.setOriginalPriceAmount(new BigDecimal(price));
+        payload.setPackageTotalPrice(new BigDecimal(price));
+        payload.setCorrectionChangedFields(List.of("attendanceOption", "priceAmount", "originalPriceAmount", "packageTotalPrice"));
+        request.setItems(List.of(payload));
+        return request;
+    }
+
+    @Test
     void shouldAllowReceiptCorrectionWhenUnchangedPlanWasReducedAfterPurchase() {
         // 订单购买时的方案上限是 13；管理员后来把当前方案上限调到 3，旧收据仍可编辑其他字段。
         EnrollmentOrderCorrectionRequest request = stubSessionCorrection(4, 4, new BigDecimal("3"));

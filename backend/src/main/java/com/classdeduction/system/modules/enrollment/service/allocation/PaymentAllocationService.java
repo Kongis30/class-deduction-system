@@ -75,6 +75,8 @@ public class PaymentAllocationService {
         Map<Long, BigDecimal> remaining = items.stream()
                 .collect(Collectors.toMap(EnrollmentOrderItemEntity::getId,
                         item -> defaultAmount(item.getAmountDue())));
+        boolean orderHasOverpayment = defaultAmount(order.getReceivedAmount())
+                .compareTo(defaultAmount(order.getAmountDue())) > 0;
 
         int createdAllocationCount = 0;
         for (PaymentRecordEntity record : ledger) {
@@ -84,7 +86,7 @@ public class PaymentAllocationService {
             }
             List<PaymentAllocationEntity> saved = existingByPaymentId.get(record.getId());
             if (saved != null && !saved.isEmpty()) {
-                validateSavedAllocation(record, saved, remaining, items);
+                validateSavedAllocation(record, saved, remaining, items, orderHasOverpayment);
                 applySavedAllocation(saved, remaining);
             } else {
                 List<PaymentAllocationCalculator.AllocationLine> lines = amount.compareTo(BigDecimal.ZERO) > 0
@@ -262,7 +264,8 @@ public class PaymentAllocationService {
     private void validateSavedAllocation(PaymentRecordEntity payment,
                                          List<PaymentAllocationEntity> allocations,
                                          Map<Long, BigDecimal> remaining,
-                                         List<EnrollmentOrderItemEntity> items) {
+                                         List<EnrollmentOrderItemEntity> items,
+                                         boolean orderHasOverpayment) {
         BigDecimal allocatedTotal = allocations.stream()
                 .map(PaymentAllocationEntity::getAmount)
                 .map(this::defaultAmount)
@@ -289,7 +292,9 @@ public class PaymentAllocationService {
                     items.stream().filter(item -> Objects.equals(item.getId(), itemId)).findFirst()
                             .map(EnrollmentOrderItemEntity::getItemStatus).orElse(null))
                     ? historicalAmountDue(items, itemId).subtract(paid).max(BigDecimal.ZERO) : available;
-            if (amount.signum() > 0 && amount.compareTo(paymentCapacity) > 0) {
+            // 已保存的付款归属是历史财务事实。改价导致应收下降时保留原分摊，订单负余额体现超收；
+            // 新付款仍由分摊器按当前应收封顶，退款仍须受已收金额校验。
+            if (amount.signum() > 0 && amount.compareTo(paymentCapacity) > 0 && !orderHasOverpayment) {
                 throw new BusinessException("PAYMENT_ALLOCATION_INVALID",
                         "Saved course payment allocation exceeds the course's valid payment amount.");
             }
