@@ -381,8 +381,8 @@
         </div>
 
         <el-radio-group v-if="isEditing" v-model="editMode" class="edit-schedule__mode" @change="resetEditModeDraft">
-          <el-radio-button value="CURRENT">Adjust current schedule</el-radio-button>
-          <el-radio-button value="REPLAN">Adjust weekly timetable</el-radio-button>
+          <el-radio-button value="CURRENT">Change Teacher / Classroom</el-radio-button>
+          <el-radio-button value="REPLAN">Reschedule Lesson</el-radio-button>
         </el-radio-group>
         <p v-if="isEditing" class="edit-schedule__hint">
           {{ editMode === 'CURRENT'

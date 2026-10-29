@@ -2713,7 +2713,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                     || request.getSlots().size() != existingSlots.size()
                     || requestedIds.size() != existingSlots.size()) {
                 throw new BusinessException("CURRENT_SCHEDULE_SCOPE",
-                        "To change dates or add or remove time slots, use Adjust weekly timetable.");
+                        "To change dates or add or remove time slots, use Reschedule Lesson.");
             }
             for (RecurringScheduleSlotRequest slot : request.getSlots()) {
                 RecurringScheduleSlotEntity previous = existingById.get(slot.getSlotId());
@@ -2722,7 +2722,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                         || !Objects.equals(previous.getEndTime(), slot.getEndTime())
                         || !Objects.equals(previous.getPlannedUnits(), slot.getPlannedUnits())) {
                     throw new BusinessException("CURRENT_SCHEDULE_SCOPE",
-                            "To change a lesson day, time, or length, use Adjust weekly timetable.");
+                            "To change a lesson day, time, or length, use Reschedule Lesson.");
                 }
             }
             return;

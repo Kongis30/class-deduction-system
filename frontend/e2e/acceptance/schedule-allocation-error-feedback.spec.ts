@@ -118,7 +118,7 @@ test('Edit Schedule shows the exact allocation shortfall and clears it after cor
   await expect(dialog.locator('.edit-schedule__balance')).toContainText('Allocated Hours 40.0h');
   await expect(dialog.locator('.edit-schedule__balance')).toContainText('Remaining 24.0h');
   await expect(dialog.locator('.weekly-time-selector')).toBeVisible();
-  await dialog.getByText('Adjust weekly timetable').click();
+  await dialog.getByText('Reschedule Lesson').click();
   await expect(dialog).toContainText('Saving ends the current recurring schedule immediately');
   await dialog.getByPlaceholder('Select start date').fill(futureStart);
   await dialog.getByPlaceholder('Select start date').press('Tab');
