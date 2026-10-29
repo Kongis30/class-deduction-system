@@ -146,6 +146,7 @@ class ScheduleAdjustmentServiceImplTest {
         );
         lenient().when(coursePackageMapper.selectById(501L)).thenReturn(activeOneOnOnePackage());
         lenient().when(coursePackageMapper.selectByIdForUpdate(501L)).thenReturn(activeOneOnOnePackage());
+        lenient().when(coursePackageMapper.selectUniqueActiveOneOnOneSubjectName(501L)).thenReturn("Math");
         // 调课写入现在会校验受影响行数，默认让 updateById 返回成功，避免误报并发冲突。
         lenient().when(lessonOccurrenceMapper.updateById(any(LessonOccurrenceEntity.class))).thenReturn(1);
     }
@@ -403,7 +404,7 @@ class ScheduleAdjustmentServiceImplTest {
     }
 
     @Test
-    void shouldAdjustWeeklyOccurrenceAndReturnPositiveDelta() {
+    void shouldAdjustWeeklyOccurrenceWithoutSilentlyChangingUnselectedFutureLessons() {
         LocalDate weekStartDate = currentWeekStartDate();
         LocalDateTime firstStartAt = weekStartDate.atTime(18, 0);
         LocalDateTime secondStartAt = weekStartDate.plusDays(2).atTime(18, 0);
@@ -429,14 +430,12 @@ class ScheduleAdjustmentServiceImplTest {
                 .filter(item -> Objects.equals(item.getId(), 1001L))
                 .findFirst()
                 .orElseThrow();
-        LessonOccurrenceEntity balancedFuture = occurrenceCaptor.getAllValues().stream()
+        boolean futureWasChanged = occurrenceCaptor.getAllValues().stream()
                 .filter(item -> Objects.equals(item.getId(), 2001L))
-                .findFirst()
-                .orElseThrow();
+                .findAny().isPresent();
         assertThat(adjustedCurrent.getPlannedUnits()).isEqualTo(6);
         assertThat(adjustedCurrent.getPlanningStatus()).isEqualTo("ADJUSTED");
-        assertThat(balancedFuture.getPlannedUnits()).isEqualTo(2);
-        assertThat(balancedFuture.getPlannedEndAt()).isEqualTo(futureStartAt.plusHours(1));
+        assertThat(futureWasChanged).isFalse();
         assertThat(logCaptor.getValue().getAdjustmentType()).isEqualTo("WEEKLY_TEMP_UPDATE");
         assertThat(result.originalWeeklyUnits()).isEqualTo(8);
         assertThat(result.adjustedWeeklyUnits()).isEqualTo(10);
@@ -470,16 +469,14 @@ class ScheduleAdjustmentServiceImplTest {
         assertThat(result.adjustedWeeklyUnits()).isEqualTo(6);
         assertThat(result.unitDelta()).isEqualTo(-2);
         verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).updateById(occurrenceCaptor.capture());
-        LessonOccurrenceEntity balancedFuture = occurrenceCaptor.getAllValues().stream()
+        boolean futureWasChanged = occurrenceCaptor.getAllValues().stream()
                 .filter(item -> Objects.equals(item.getId(), 2001L))
-                .findFirst()
-                .orElseThrow();
-        assertThat(balancedFuture.getPlannedUnits()).isEqualTo(6);
-        assertThat(balancedFuture.getPlannedEndAt()).isEqualTo(futureStartAt.plusHours(3));
+                .findAny().isPresent();
+        assertThat(futureWasChanged).isFalse();
     }
 
     @Test
-    void shouldIncreaseEarlierFutureOccurrenceWhenTailWouldConflictAfterWeeklyUnitsDecrease() {
+    void shouldNotMoveHoursBetweenFutureLessonsWhenWeeklyUnitsDecrease() {
         LocalDate weekStartDate = currentWeekStartDate();
         LocalDateTime firstStartAt = weekStartDate.atTime(18, 0);
         LocalDateTime secondStartAt = weekStartDate.plusDays(2).atTime(18, 0);
@@ -502,20 +499,18 @@ class ScheduleAdjustmentServiceImplTest {
         );
 
         verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).updateById(occurrenceCaptor.capture());
-        LessonOccurrenceEntity balancedFuture = occurrenceCaptor.getAllValues().stream()
+        boolean futureWasChanged = occurrenceCaptor.getAllValues().stream()
                 .filter(item -> Objects.equals(item.getId(), 2001L))
-                .findFirst()
-                .orElseThrow();
+                .findAny().isPresent();
         boolean conflictTailTouched = occurrenceCaptor.getAllValues().stream()
                 .anyMatch(item -> Objects.equals(item.getId(), 2002L));
         assertThat(result.unitDelta()).isEqualTo(-2);
-        assertThat(balancedFuture.getPlannedUnits()).isEqualTo(6);
-        assertThat(balancedFuture.getPlannedEndAt()).isEqualTo(availableStartAt.plusHours(3));
+        assertThat(futureWasChanged).isFalse();
         assertThat(conflictTailTouched).isFalse();
     }
 
     @Test
-    void shouldCancelTailFutureAndShortenPreviousWhenWeeklyUsesMuchMoreUnits() {
+    void shouldLeaveFutureLessonsUntouchedWhenPackageHasUnallocatedHours() {
         LocalDate weekStartDate = currentWeekStartDate();
         LocalDateTime currentStartAt = weekStartDate.atTime(18, 0);
         LocalDateTime futureStartAt = weekStartDate.plusDays(8).atTime(18, 0);
@@ -536,22 +531,14 @@ class ScheduleAdjustmentServiceImplTest {
         );
 
         verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).updateById(occurrenceCaptor.capture());
-        LessonOccurrenceEntity shortenedFuture = occurrenceCaptor.getAllValues().stream()
-                .filter(item -> Objects.equals(item.getId(), 2001L))
-                .findFirst()
-                .orElseThrow();
-        LessonOccurrenceEntity cancelledTail = occurrenceCaptor.getAllValues().stream()
-                .filter(item -> Objects.equals(item.getId(), 2002L))
-                .findFirst()
-                .orElseThrow();
+        boolean futureWasChanged = occurrenceCaptor.getAllValues().stream()
+                .anyMatch(item -> Objects.equals(item.getId(), 2002L));
         assertThat(result.unitDelta()).isEqualTo(6);
-        assertThat(shortenedFuture.getPlannedUnits()).isEqualTo(2);
-        assertThat(shortenedFuture.getPlannedEndAt()).isEqualTo(futureStartAt.plusHours(1));
-        assertThat(cancelledTail.getPlanningStatus()).isEqualTo("CANCELLED");
+        assertThat(futureWasChanged).isFalse();
     }
 
     @Test
-    void shouldSkipFutureOccurrenceWithTeacherConfirmedRecordWhenBalancingWeeklyChange() {
+    void shouldReleaseOnlySelectedFutureAndLeavePendingRecordUntouched() {
         LocalDate weekStartDate = currentWeekStartDate();
         LocalDateTime currentStartAt = weekStartDate.atTime(18, 0);
         LocalDateTime adjustableStartAt = weekStartDate.plusDays(8).atTime(18, 0);
@@ -568,20 +555,26 @@ class ScheduleAdjustmentServiceImplTest {
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
         when(jsonHelper.toJson(any())).thenReturn("{\"ok\":true}");
 
-        WeeklyScheduleAdjustmentResultVO result = adjustWeekly(
-                buildWeeklyRequest(weeklyItem(1001L, currentStartAt, 6))
-        );
+        WeeklyScheduleAdjustmentRequest request = buildWeeklyRequest(weeklyItem(1001L, currentStartAt, 6));
+        request.setReleaseFutureOccurrenceIds(List.of(2001L));
+        when(coursePackageMapper.selectByIdForUpdate(501L)).thenReturn(packageWithRemainingUnits(8));
+        when(lessonOccurrenceMapper.selectById(2001L)).thenReturn(adjustableFuture);
+        WeeklyScheduleAdjustmentResultVO result = adjustWeekly(request);
 
         verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).updateById(occurrenceCaptor.capture());
-        LessonOccurrenceEntity shortenedFuture = occurrenceCaptor.getAllValues().stream()
-                .filter(item -> Objects.equals(item.getId(), 2001L))
-                .findFirst()
-                .orElseThrow();
+        boolean pendingFutureWasChanged = occurrenceCaptor.getAllValues().stream()
+                .anyMatch(item -> Objects.equals(item.getId(), 2002L));
         boolean recordedFutureTouched = occurrenceCaptor.getAllValues().stream()
                 .anyMatch(item -> Objects.equals(item.getId(), 2002L));
         assertThat(result.unitDelta()).isEqualTo(2);
-        assertThat(shortenedFuture.getPlannedUnits()).isEqualTo(2);
+        assertThat(pendingFutureWasChanged).isFalse();
         assertThat(recordedFutureTouched).isFalse();
+        LessonOccurrenceEntity explicitlyReleased = occurrenceCaptor.getAllValues().stream()
+                .filter(item -> Objects.equals(item.getId(), 2001L))
+                .findFirst()
+                .orElseThrow();
+        assertThat(explicitlyReleased.getPlannedUnits()).isEqualTo(2);
+        assertThat(explicitlyReleased.getPlannedEndAt()).isEqualTo(adjustableStartAt.plusHours(1));
     }
 
     @Test
@@ -593,6 +586,7 @@ class ScheduleAdjustmentServiceImplTest {
         when(lessonRecordMapper.selectCount(any())).thenReturn(0L);
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(current), List.of());
         when(lessonOccurrenceMapper.selectCount(any())).thenReturn(0L);
+        when(coursePackageMapper.selectByIdForUpdate(501L)).thenReturn(packageWithRemainingUnits(0));
         when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
         when(jsonHelper.toJson(any())).thenReturn("{\"ok\":true}");
@@ -602,7 +596,7 @@ class ScheduleAdjustmentServiceImplTest {
         ))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
-                .isEqualTo("FUTURE_SCHEDULE_NOT_ENOUGH");
+                .isEqualTo("PACKAGE_UNALLOCATED_HOURS_INSUFFICIENT");
     }
 
     @Test
@@ -620,15 +614,16 @@ class ScheduleAdjustmentServiceImplTest {
     }
 
     @Test
-    void shouldRejectWeeklyAdjustmentWhenRequestedWeekIsNotCurrentWeek() {
-        LocalDateTime lastWeekStartAt = currentWeekStartDate().minusDays(7).atTime(18, 0);
-        WeeklyScheduleAdjustmentRequest request = buildWeeklyRequest(weeklyItem(1001L, lastWeekStartAt, 4));
-        request.setWeekStartDate(currentWeekStartDate().minusDays(7));
+    void shouldRejectWeeklyAdjustmentOutsideSupportedHistoryWindow() {
+        LocalDateTime oldWeekStartAt = currentWeekStartDate().minusWeeks(5).atTime(18, 0);
+        WeeklyScheduleAdjustmentRequest request = buildWeeklyRequest(weeklyItem(1001L, oldWeekStartAt, 4));
+        request.setWeekStartDate(currentWeekStartDate().minusWeeks(5));
+        request.setReason("historical correction");
 
         assertThatThrownBy(() -> adjustWeekly(request))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
-                .isEqualTo("WEEKLY_ADJUSTMENT_NOT_CURRENT_WEEK");
+                .isEqualTo("WEEKLY_ADJUSTMENT_WEEK_OUT_OF_RANGE");
     }
 
     @Test
@@ -774,13 +769,9 @@ class ScheduleAdjustmentServiceImplTest {
                 .filter(item -> Objects.equals(item.getId(), 1001L))
                 .findFirst()
                 .orElseThrow();
-        LessonOccurrenceEntity balancedFuture = occurrenceCaptor.getAllValues().stream()
-                .filter(item -> Objects.equals(item.getId(), 2001L))
-                .findFirst()
-                .orElseThrow();
         assertThat(cancelledCurrent.getPlanningStatus()).isEqualTo("CANCELLED");
-        assertThat(balancedFuture.getPlannedUnits()).isEqualTo(8);
-        assertThat(balancedFuture.getPlannedEndAt()).isEqualTo(futureStartAt.plusHours(4));
+        assertThat(occurrenceCaptor.getAllValues())
+                .noneMatch(item -> Objects.equals(item.getId(), 2001L));
         assertThat(logCaptor.getValue().getAdjustmentType()).isEqualTo("WEEKLY_TEMP_DELETE");
         assertThat(result.deletedCount()).isEqualTo(1);
         assertThat(result.originalWeeklyUnits()).isEqualTo(8);
@@ -959,6 +950,7 @@ class ScheduleAdjustmentServiceImplTest {
         occurrence.setPlannedStartAt(startAt);
         occurrence.setPlannedEndAt(startAt.plusMinutes(plannedUnits * 30L));
         occurrence.setPlannedUnits(plannedUnits);
+        occurrence.setSubjectName("Math");
         return occurrence;
     }
 
@@ -1045,6 +1037,13 @@ class ScheduleAdjustmentServiceImplTest {
         coursePackage.setId(501L);
         coursePackage.setTeachingMode("ONE_ON_ONE");
         coursePackage.setPackageStatus("ACTIVE");
+        coursePackage.setRemainingUnits(120);
+        return coursePackage;
+    }
+
+    private CoursePackageEntity packageWithRemainingUnits(Integer remainingUnits) {
+        CoursePackageEntity coursePackage = activeOneOnOnePackage();
+        coursePackage.setRemainingUnits(remainingUnits);
         return coursePackage;
     }
 }

@@ -444,7 +444,6 @@
                   v-model="slot.teacherId"
                   filterable
                   placeholder="Select teacher"
-                  @change="onEditSlotTeacherChanged(slot)"
                 >
                   <el-option v-for="teacher in teachers" :key="String(teacher.id)" :label="teacher.teacherName" :value="String(teacher.id)" />
                 </el-select>
@@ -489,7 +488,7 @@
                 <span class="slot-teacher-row__hours-control">
                   <el-input-number
                     v-model="slot.allocatedHours"
-                    :min="isEditing && hasTeacherHandoffChanges && slot.rolloverAllocatedHours === 0 ? 0 : 0.5"
+                    :min="0.5"
                     :step="0.5"
                     :precision="1"
                     controls-position="right"
@@ -567,7 +566,7 @@
           class="edit-schedule__change-hint"
           type="warning"
           :closable="false"
-          title="Changing only allocated hours keeps the current schedule period. Changing a teacher or recurring time starts a new period. The new teacher receives the full lesson timeline and can handle unfinished lessons; historical teaching and deduction records stay unchanged."
+          title="Changing allocated hours or the teacher keeps the current schedule period. Changing the start date or recurring time starts a new period. The new teacher can review the full lesson history and handle unfinished lessons."
         />
       </div>
 
@@ -2435,9 +2434,10 @@ const allocatedHours = computed(() =>
   editForm.slots.reduce((sum, s) => sum + (s.allocatedHours || 0), 0)
 );
 
-// 老师、每周时段或单课时长变化建立新排课版本；分配额变化沿用周期并校准末尾课次。
+// 该提示覆盖额度、老师与固定时段变更；具体周期由服务端按实际排课定义判断。
 const hasSchedulePlanChanges = computed(() => {
   if (!isEditing.value) return false;
+  if (editForm.startDate !== currentRule.value?.startDate) return true;
   if (editForm.slots.length !== originalEditSlots.value.length) return true;
   const originalById = new Map(originalEditSlots.value.map(slot => [String(slot.slotId), slot]));
   return editForm.slots.some(slot => {
@@ -2589,45 +2589,12 @@ function showAllocationSaveError(error: unknown): boolean {
 
 function validateSlotAllocations(): boolean {
   const incompleteSlot = editForm.slots.find(slot => {
-    const emptyHandoffSlot = isEditing.value && hasTeacherHandoffChanges.value
-      && slot.rolloverAllocatedHours === 0 && slot.allocatedHours === 0;
     return !slot.teacherId || !slot.subjectName?.trim()
-      || (!emptyHandoffSlot && (!slot.allocatedHours || slot.allocatedHours <= 0));
+      || !slot.allocatedHours || slot.allocatedHours <= 0;
   });
   if (!incompleteSlot) return true;
   ElMessage.warning('Each time slot requires a teacher, lesson name, and schedule total hours.');
   return false;
-}
-
-function onEditSlotTeacherChanged(slot: SlotDef & {
-  slotId?: EntityId;
-  teacherId?: EntityId;
-  allocatedHours?: number;
-  rolloverAllocatedHours?: number;
-}) {
-  if (!isEditing.value || slot.slotId == null) return;
-  const original = originalEditSlots.value.find(item => String(item.slotId) === String(slot.slotId));
-  if (!original || slot.teacherId === original.teacherId) return;
-  // 老师交接会建立新周期；保留用户手动改过的输入，其余旧 slot 显示可转入新周期的余额。
-  const sameWeeklySlots = editForm.slots.length === originalEditSlots.value.length
-    && editForm.slots.every(current => {
-      if (current.slotId == null) return false;
-      const previous = originalEditSlots.value.find(item => String(item.slotId) === String(current.slotId));
-      return Boolean(previous
-        && current.weekday === previous.weekday
-        && current.startTime === previous.startTime
-        && current.endTime === previous.endTime
-        && current.plannedUnits === previous.plannedUnits);
-    });
-  if (!sameWeeklySlots) return;
-  for (const current of editForm.slots) {
-    if (current.slotId == null) continue;
-    const previous = originalEditSlots.value.find(item => String(item.slotId) === String(current.slotId));
-    if (previous && Number(current.allocatedHours || 0) === Number(previous.allocatedHours || 0)
-        && current.rolloverAllocatedHours != null) {
-      current.allocatedHours = current.rolloverAllocatedHours;
-    }
-  }
 }
 
 async function submitCreateForm() {

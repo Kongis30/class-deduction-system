@@ -968,7 +968,6 @@ class RecurringScheduleRuleServiceImplTest {
         coursePackage.setRemainingUnits(100);
 
         when(recurringScheduleRuleMapper.selectById(5001L)).thenReturn(rule);
-        when(recurringScheduleRuleMapper.updateById(any(RecurringScheduleRuleEntity.class))).thenReturn(1);
         when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
         when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
         when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
@@ -1080,7 +1079,7 @@ class RecurringScheduleRuleServiceImplTest {
     }
 
     @Test
-    void shouldCreateNewSchedulePeriodWhenOnlyTeacherChanges() {
+    void shouldKeepSchedulePeriodWhenOnlyTeacherChanges() {
         RecurringScheduleRuleEntity existing = buildExistingRule();
         CoursePackageEntity coursePackage = buildPackage();
         coursePackage.setTotalUnits(28);
@@ -1110,24 +1109,13 @@ class RecurringScheduleRuleServiceImplTest {
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
         when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(oldSlot));
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
-        doAnswer(invocation -> {
-            RecurringScheduleRuleEntity inserted = invocation.getArgument(0);
-            inserted.setId(5002L);
-            return 1;
-        }).when(recurringScheduleRuleMapper).insert(any(RecurringScheduleRuleEntity.class));
-        doAnswer(invocation -> {
-            RecurringScheduleSlotEntity inserted = invocation.getArgument(0);
-            inserted.setId(6002L);
-            return 1;
-        }).when(recurringScheduleSlotMapper).insert(any(RecurringScheduleSlotEntity.class));
-
         ScheduleRuleUpdateResultVO result = recurringScheduleRuleService.updateRule(5001L, request);
 
-        assertThat(result.ruleId()).isEqualTo(5002L);
-        assertThat(existing.getRuleStatus()).isEqualTo("ENDED");
-        assertThat(existing.getSupersededByRuleId()).isEqualTo(5002L);
-        verify(recurringScheduleRuleMapper).insert(ruleCaptor.capture());
-        assertThat(ruleCaptor.getValue().getSupersedesRuleId()).isEqualTo(5001L);
+        assertThat(result.ruleId()).isEqualTo(5001L);
+        assertThat(existing.getRuleStatus()).isEqualTo("ACTIVE");
+        assertThat(oldSlot.getTeacherId()).isEqualTo(3002L);
+        assertThat(oldSlot.getAllocatedUnits()).isEqualTo(28);
+        verify(recurringScheduleRuleMapper, org.mockito.Mockito.never()).insert(any(RecurringScheduleRuleEntity.class));
     }
 
     @Test
@@ -1186,63 +1174,37 @@ class RecurringScheduleRuleServiceImplTest {
         when(teacherMapper.selectById(3002L)).thenReturn(replacement);
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
         when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(oldSlot));
-        when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(oldSlot));
-        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(lessonOccurrenceMapper.selectList(any())).thenAnswer(invocation ->
                 occurrenceQueries[0]++ < 2 ? sourceOccurrences : Collections.emptyList());
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(historicalRecord));
-        when(lessonOccurrenceMapper.softDeleteFutureUnprocessed(any(), any())).thenReturn(1);
         when(lessonOccurrenceMapper.handoffFutureOccurrence(any(), any(), any(), any(), any(),
                 any(), any(), any(), any())).thenReturn(1);
-        doAnswer(invocation -> {
-            RecurringScheduleRuleEntity inserted = invocation.getArgument(0);
-            inserted.setId(5002L);
-            return 1;
-        }).when(recurringScheduleRuleMapper).insert(any(RecurringScheduleRuleEntity.class));
-        doAnswer(invocation -> {
-            RecurringScheduleSlotEntity inserted = invocation.getArgument(0);
-            inserted.setId(6002L);
-            return 1;
-        }).when(recurringScheduleSlotMapper).insert(any(RecurringScheduleSlotEntity.class));
+        when(lessonOccurrenceMapper.updateRecurringDetails(any(), any(), any(), any(), any(), any())).thenReturn(1);
 
         ScheduleRuleUpdateResultVO result = recurringScheduleRuleService.updateRule(5001L, request);
 
-        assertThat(result.ruleId()).isEqualTo(5002L);
+        assertThat(result.ruleId()).isEqualTo(5001L);
+        assertThat(oldSlot.getTeacherId()).isEqualTo(3002L);
+        assertThat(oldSlot.getAllocatedUnits()).isEqualTo(28);
+        assertThat(coursePackage.getRemainingUnits()).isEqualTo(24);
         assertThat(historical.getPlannedTeacherId()).isEqualTo(3001L);
-        assertThat(historicalRecord.getOccurrenceId()).isEqualTo(historical.getId());
-        assertThat(historicalRecord.getDeductedUnits()).isEqualTo(4);
-        assertThat(historicalRecord.getConfirmStage()).isEqualTo("CONFIRMED");
-        assertThat(historicalRecord.getPlannedTeacherId()).isEqualTo(3001L);
         assertThat(historicalRecord.getActualTeacherId()).isEqualTo(3001L);
-        assertThat(adjustedFuture.getScheduleRuleId()).isEqualTo(5002L);
-        assertThat(adjustedFuture.getScheduleSlotId()).isEqualTo(6002L);
-        assertThat(adjustedFuture.getPlannedTeacherId()).isEqualTo(3002L);
-        assertThat(adjustedFuture.getAllocationOwnerTeacherId()).isEqualTo(3002L);
-        verify(lessonOccurrenceMapper).softDeleteFutureUnprocessed(
-                org.mockito.ArgumentMatchers.eq(List.of(ordinaryFuture.getId())), any());
+        assertThat(historicalRecord.getDeductedUnits()).isEqualTo(4);
+        verify(lessonOccurrenceMapper).updateRecurringDetails(
+                org.mockito.ArgumentMatchers.eq(ordinaryFuture.getId()),
+                org.mockito.ArgumentMatchers.eq(3002L), any(), any(), any(), any());
         verify(lessonOccurrenceMapper).handoffFutureOccurrence(
                 org.mockito.ArgumentMatchers.eq(adjustedFuture.getId()),
-                org.mockito.ArgumentMatchers.eq(existing.getId()),
-                org.mockito.ArgumentMatchers.eq(oldSlot.getId()),
-                org.mockito.ArgumentMatchers.eq(5002L),
-                org.mockito.ArgumentMatchers.eq(6002L), any(),
-                org.mockito.ArgumentMatchers.eq(3001L),
-                org.mockito.ArgumentMatchers.eq(3002L), any());
+                org.mockito.ArgumentMatchers.eq(5001L), org.mockito.ArgumentMatchers.eq(6001L),
+                org.mockito.ArgumentMatchers.eq(5001L), org.mockito.ArgumentMatchers.eq(6001L),
+                any(), org.mockito.ArgumentMatchers.eq(3001L), org.mockito.ArgumentMatchers.eq(3002L), any());
         verify(lessonRecordMapper, org.mockito.Mockito.never()).updateById(any(LessonRecordEntity.class));
-
-        verify(recurringScheduleSlotMapper).insert(slotCaptor.capture());
-        assertThat(slotCaptor.getValue().getSlotLineageId()).isEqualTo(7001L);
-        assertThat(slotCaptor.getValue().getAllocatedUnits()).isEqualTo(24);
-        verify(lessonOccurrenceMapper, times(5)).insert(occurrenceCaptor.capture());
-        List<LessonOccurrenceEntity> generated = occurrenceCaptor.getAllValues();
-        assertThat(generated).allSatisfy(occurrence ->
-                assertThat(occurrence.getPlannedTeacherId()).isEqualTo(3002L));
-        assertThat(generated.stream().mapToInt(LessonOccurrenceEntity::getPlannedUnits).sum()
-                + adjustedFuture.getPlannedUnits()).isEqualTo(24);
+        verify(recurringScheduleRuleMapper, org.mockito.Mockito.never()).insert(any(RecurringScheduleRuleEntity.class));
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.never()).softDeleteFutureUnprocessed(any(), any());
     }
 
     @Test
-    void teacherHandoffKeepsFutureLessonRecordAndTransfersRemainingHours() {
+    void teacherHandoffRejectsFutureLessonWithReviewRecord() {
         RecurringScheduleRuleEntity existing = buildExistingRule();
         CoursePackageEntity coursePackage = buildPackage();
         coursePackage.setTotalUnits(28);
@@ -1280,37 +1242,18 @@ class RecurringScheduleRuleServiceImplTest {
         when(teacherMapper.selectById(3002L)).thenReturn(replacement);
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
         when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(oldSlot));
-        when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(oldSlot));
-        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(Collections.emptyList());
         int[] occurrenceQueries = {0};
         when(lessonOccurrenceMapper.selectList(any())).thenAnswer(invocation ->
                 occurrenceQueries[0]++ < 2 ? List.of(future) : Collections.emptyList());
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(futureRecord));
-        doAnswer(invocation -> {
-            RecurringScheduleRuleEntity inserted = invocation.getArgument(0);
-            inserted.setId(5002L);
-            return 1;
-        }).when(recurringScheduleRuleMapper).insert(any(RecurringScheduleRuleEntity.class));
-        doAnswer(invocation -> {
-            RecurringScheduleSlotEntity inserted = invocation.getArgument(0);
-            inserted.setId(6002L);
-            return 1;
-        }).when(recurringScheduleSlotMapper).insert(any(RecurringScheduleSlotEntity.class));
-
-        ScheduleRuleUpdateResultVO result = recurringScheduleRuleService.updateRule(5001L, request);
-
-        assertThat(result.ruleId()).isEqualTo(5002L);
-        assertThat(future.getScheduleRuleId()).isEqualTo(5001L);
-        assertThat(future.getScheduleSlotId()).isEqualTo(6001L);
+        assertThatThrownBy(() -> recurringScheduleRuleService.updateRule(5001L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("future lesson already has a review record");
         assertThat(future.getPlannedTeacherId()).isEqualTo(3001L);
         assertThat(futureRecord.getPlannedTeacherId()).isEqualTo(3001L);
-        verify(recurringScheduleSlotMapper).insert(slotCaptor.capture());
-        assertThat(slotCaptor.getValue().getAllocatedUnits()).isEqualTo(24);
-        verify(lessonOccurrenceMapper, times(6)).insert(occurrenceCaptor.capture());
-        assertThat(occurrenceCaptor.getAllValues()).allSatisfy(occurrence ->
-                assertThat(occurrence.getPlannedTeacherId()).isEqualTo(3002L));
-        verify(lessonOccurrenceMapper, org.mockito.Mockito.never())
-                .handoffFutureOccurrence(any(), any(), any(), any(), any(), any(), any(), any(), any());
+        assertThat(coursePackage.getRemainingUnits()).isEqualTo(28);
+        verify(recurringScheduleSlotMapper, org.mockito.Mockito.never())
+                .updateCourseDetails(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -1374,6 +1317,105 @@ class RecurringScheduleRuleServiceImplTest {
                 .allSatisfy(occurrence -> assertThat(occurrence.getPlannedTeacherId()).isEqualTo(3001L));
         assertThat(occurrenceCaptor.getAllValues().stream()
                 .mapToInt(LessonOccurrenceEntity::getPlannedUnits).sum()).isEqualTo(32);
+    }
+
+    @Test
+    void increasingSlotAllocationByHalfHourKeepsPeriodAndGeneratesPartialLastLesson() {
+        RecurringScheduleRuleEntity rule = buildExistingRule();
+        LocalDateTime originalPeriodStart = LocalDateTime.of(2026, 9, 1, 9, 0);
+        rule.setAllocationPeriodStartedAt(originalPeriodStart);
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setTotalUnits(40);
+        coursePackage.setRemainingUnits(40);
+        RecurringScheduleRuleUpdateRequest request = buildUpdateRequest(4);
+        RecurringScheduleSlotRequest requested = request.getSlots().get(0);
+        requested.setSlotId(6001L);
+        requested.setAllocatedUnits(29);
+        requested.setDeliveryMode("IN_PERSON");
+        requested.setClassroomId(4001L);
+
+        RecurringScheduleSlotEntity currentSlot = new RecurringScheduleSlotEntity();
+        currentSlot.setId(6001L);
+        currentSlot.setRuleId(rule.getId());
+        currentSlot.setTeacherId(3001L);
+        currentSlot.setSubjectName("Math");
+        currentSlot.setWeekday(requested.getWeekday());
+        currentSlot.setStartTime(requested.getStartTime());
+        currentSlot.setEndTime(requested.getEndTime());
+        currentSlot.setPlannedUnits(requested.getPlannedUnits());
+        currentSlot.setAllocatedUnits(28);
+        currentSlot.setDeliveryMode("IN_PERSON");
+        currentSlot.setClassroomId(4001L);
+        currentSlot.setSlotStatus("ACTIVE");
+
+        when(recurringScheduleRuleMapper.selectById(5001L)).thenReturn(rule);
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(currentSlot));
+        List<LessonOccurrenceEntity> persistedOccurrences = new ArrayList<>();
+        when(lessonOccurrenceMapper.selectList(any())).thenAnswer(invocation -> persistedOccurrences);
+        doAnswer(invocation -> {
+            persistedOccurrences.add(invocation.getArgument(0));
+            return 1;
+        }).when(lessonOccurrenceMapper).insert(any(LessonOccurrenceEntity.class));
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(recurringScheduleSlotMapper.updateAllocatedUnits(6001L, 5001L, 28, 29))
+                .thenAnswer(invocation -> {
+                    currentSlot.setAllocatedUnits(29);
+                    return 1;
+                });
+
+        ScheduleRuleUpdateResultVO result = recurringScheduleRuleService.updateRule(5001L, request);
+
+        assertThat(result.ruleId()).isEqualTo(5001L);
+        assertThat(rule.getAllocationPeriodStartedAt()).isEqualTo(originalPeriodStart);
+        assertThat(result.generatedOccurrenceCount()).isEqualTo(8);
+        verify(recurringScheduleRuleMapper, org.mockito.Mockito.never())
+                .insert(any(RecurringScheduleRuleEntity.class));
+        verify(lessonOccurrenceMapper, times(8)).insert(occurrenceCaptor.capture());
+        assertThat(occurrenceCaptor.getAllValues())
+                .allSatisfy(occurrence -> assertThat(occurrence.getPlannedTeacherId()).isEqualTo(3001L));
+        assertThat(occurrenceCaptor.getAllValues().stream()
+                .mapToInt(LessonOccurrenceEntity::getPlannedUnits).sum()).isEqualTo(29);
+        assertThat(occurrenceCaptor.getAllValues()).filteredOn(o -> o.getPlannedUnits() == 1).hasSize(1);
+        assertThat(coursePackage.getRemainingUnits()).isEqualTo(40);
+    }
+
+    @Test
+    void ruleDetailsCountOnlyDeductionsInCurrentPeriod() {
+        RecurringScheduleRuleEntity rule = buildExistingRule();
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        rule.setAllocationPeriodStartedAt(now.minusDays(30));
+        rule.setDefaultClassroomId(null);
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setTotalUnits(240);
+        coursePackage.setRemainingUnits(5);
+        LessonOccurrenceEntity oldLesson = buildRuleOccurrence(9301L, now.minusDays(40).toLocalDate(), 20, "SCHEDULED");
+        LessonOccurrenceEntity currentLesson = buildRuleOccurrence(9302L, now.minusDays(7).toLocalDate(), 12, "SCHEDULED");
+        LessonRecordEntity oldRecord = buildRecord(oldLesson.getId(), 20);
+        oldRecord.setPackageId(coursePackage.getId());
+        oldRecord.setConfirmStage("CONFIRMED");
+        oldRecord.setConfirmedAt(now.minusDays(39));
+        LessonRecordEntity currentRecord = buildRecord(currentLesson.getId(), 12);
+        currentRecord.setPackageId(coursePackage.getId());
+        currentRecord.setConfirmStage("CONFIRMED");
+        currentRecord.setConfirmedAt(now.minusDays(6));
+        when(recurringScheduleRuleMapper.selectById(5001L)).thenReturn(rule);
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(oldLesson, currentLesson));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(oldRecord, currentRecord));
+
+        var detail = recurringScheduleRuleService.getRule(5001L);
+
+        assertThat(detail.deductedHours()).isEqualTo(6.0);
+        assertThat(detail.pendingHours()).isZero();
+        assertThat(coursePackage.getRemainingUnits()).isEqualTo(5);
+        assertThat(oldRecord.getDeductedUnits()).isEqualTo(20);
+        assertThat(currentRecord.getDeductedUnits()).isEqualTo(12);
     }
 
     @Test

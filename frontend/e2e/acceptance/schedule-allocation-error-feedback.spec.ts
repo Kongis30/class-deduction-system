@@ -109,6 +109,8 @@ test('Edit Schedule shows the exact allocation shortfall and clears it after cor
   await dialog.locator('.slot-teacher-row__field').nth(0).locator('.el-select').click();
   await page.getByRole('option', { name: 'Ms. Beatrice' }).click();
   const allocationInput = dialog.locator('.slot-teacher-row__field--hours input');
+  await expect(allocationInput).toHaveValue('40.0');
+  await expect(dialog).toContainText('Changing allocated hours or the teacher keeps the current schedule period');
   await allocationInput.fill('30');
   await allocationInput.press('Tab');
   await dialog.getByRole('button', { name: 'Save Changes' }).click();

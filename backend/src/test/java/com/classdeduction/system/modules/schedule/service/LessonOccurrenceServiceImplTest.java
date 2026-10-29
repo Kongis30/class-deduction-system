@@ -1194,6 +1194,79 @@ class LessonOccurrenceServiceImplTest {
     }
 
     @Test
+    void currentTeacherReceivesWholeSlotLedgerAndHistoricalLessons() {
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        coursePackage.setTotalUnits(40);
+        coursePackage.setConsumedUnits(12);
+        coursePackage.setRemainingUnits(28);
+        RecurringScheduleRuleEntity rule = new RecurringScheduleRuleEntity();
+        rule.setId(5001L);
+        rule.setPackageId(coursePackage.getId());
+        rule.setRuleStatus("ACTIVE");
+        rule.setAllocationPeriodStartedAt(now.minusDays(30));
+        RecurringScheduleSlotEntity slot = new RecurringScheduleSlotEntity();
+        slot.setId(6001L);
+        slot.setRuleId(rule.getId());
+        slot.setTeacherId(302L);
+        slot.setAllocatedUnits(16);
+        slot.setSlotStatus("ACTIVE");
+        LessonOccurrenceEntity completed = buildOneOnOneOccurrence();
+        completed.setScheduleRuleId(rule.getId());
+        completed.setScheduleSlotId(slot.getId());
+        completed.setAllocationOwnerTeacherId(301L);
+        completed.setPlannedStartAt(now.minusDays(7));
+        completed.setPlannedEndAt(now.minusDays(7).plusHours(6));
+        completed.setPlannedUnits(12);
+        LessonRecordEntity record = confirmedDeduction(5001L, completed, 12);
+        record.setActualTeacherId(301L);
+        record.setPlannedTeacherId(301L);
+        record.setConfirmedAt(now.minusDays(6));
+        LessonOccurrenceEntity future = buildOneOnOneOccurrence();
+        future.setId(4002L);
+        future.setScheduleRuleId(rule.getId());
+        future.setScheduleSlotId(slot.getId());
+        future.setPlannedTeacherId(302L);
+        future.setAllocationOwnerTeacherId(302L);
+        future.setPlannedStartAt(now.plusDays(1));
+        future.setPlannedEndAt(now.plusDays(1).plusHours(2));
+        future.setPlannedUnits(4);
+        TeacherEntity newTeacher = buildTeacher();
+        newTeacher.setId(302L);
+        newTeacher.setTeacherName("Ms New");
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(completed, future));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(record));
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(rule));
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
+        when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(slot));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher(), newTeacher));
+
+        List<OneOnOneTeacherVO> teachers = lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), null);
+        assertThat(teachers).singleElement().satisfies(teacher -> {
+            assertThat(teacher.teacherId()).isEqualTo(302L);
+            var pkg = teacher.students().get(0).packages().get(0);
+            assertThat(pkg.totalUnits()).isEqualTo(20.0);
+            assertThat(pkg.remainingUnits()).isEqualTo(14.0);
+            assertThat(pkg.lessons()).extracting(lesson -> lesson.occurrenceId())
+                    .containsExactlyInAnyOrder(4001L, 4002L);
+            assertThat(pkg.lessons()).anySatisfy(lesson -> {
+                assertThat(lesson.occurrenceId()).isEqualTo(4001L);
+                assertThat(lesson.plannedTeacherId()).isEqualTo(301L);
+            });
+            assertThat(pkg.teacherHours()).singleElement().satisfies(hours -> {
+                assertThat(hours.allocatedUnits()).isEqualTo(8.0);
+                assertThat(hours.deductedUnits()).isEqualTo(6.0);
+                assertThat(hours.remainingUnits()).isEqualTo(2.0);
+            });
+        });
+        assertThat(record.getActualTeacherId()).isEqualTo(301L);
+        assertThat(record.getDeductedUnits()).isEqualTo(12);
+    }
+
+    @Test
     void shouldMoveLegacyTeacherTimelineToCurrentTeacherWhenSlotOwnershipChanges() {
         LocalDateTime now = AppTime.nowLocalDateTime();
         CoursePackageEntity coursePackage = buildOneOnOnePackage();

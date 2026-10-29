@@ -376,7 +376,7 @@
                 </span>
                 <span class="oo-student-context__metric">
                   <el-tooltip content="Hours finally deducted in the current schedule period, including student cancellations. Formal leave and pending reviews do not count." placement="top" :show-after="200">
-                    <small>{{ appStore.isMobileViewport ? 'Deducted' : `Deducted by ${activeTeacher?.teacherName || 'teacher'}` }}</small>
+                    <small title="Includes completed lessons for the slots this teacher currently manages, including lessons taught by previous teachers.">Deducted for assigned slots</small>
                   </el-tooltip>{{ formatHours(activeTeacherHours?.deductedUnits ?? 0) }}h
                 </span>
               </div>

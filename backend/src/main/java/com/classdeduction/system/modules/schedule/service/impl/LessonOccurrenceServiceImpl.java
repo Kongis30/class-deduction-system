@@ -1820,7 +1820,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     }
                     boolean currentPeriod = belongsToCurrentSchedulePeriod(occurrence, record,
                             currentRule, periodStartByRule.get(currentRuleId));
-                    RecurringScheduleSlotEntity historicalSlot = historicalSlotsById.get(
+                    RecurringScheduleSlotEntity historicalSlot = recurringSlotsById.get(
                             occurrence.getScheduleSlotId());
                     Long historicalLineageId = historicalSlot == null ? null
                             : historicalSlot.getSlotLineageId() == null
@@ -1849,15 +1849,18 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                         }
                     }
                     int units = record == null ? 0 : Math.max(0, safeUnits(record.getDeductedUnits()));
-                    // 分配归属来自课次创建时保存的快照；代课、改期不能推断额度已经转给当前老师。
+                    // 当前 slot 的周期账目归现任负责老师；授课老师和历史快照不改写。
                     if (record == null || !Objects.equals(record.getShouldDeduct(), 1)
                             || Objects.equals(record.getIsDeleted(), 1)) continue;
+                    Long accountingTeacherId = currentSlotTeacherByLineageByPackage
+                            .getOrDefault(packageId, Collections.emptyMap())
+                            .getOrDefault(historicalLineageId, allocationTeacherId);
                     // 老师页只展示当前周期的消课；旧版本未来保留例外在本周期上完也应计入。
-                    if ("CONFIRMED".equals(record.getConfirmStage()) && allocationTeacherId != null
+                    if ("CONFIRMED".equals(record.getConfirmStage()) && accountingTeacherId != null
                             && currentPeriod) {
                         deductedByTeacherByPackage
                                 .computeIfAbsent(packageId, key -> new HashMap<>())
-                                .merge(allocationTeacherId, units, Integer::sum);
+                                .merge(accountingTeacherId, units, Integer::sum);
                     }
                 }
             }

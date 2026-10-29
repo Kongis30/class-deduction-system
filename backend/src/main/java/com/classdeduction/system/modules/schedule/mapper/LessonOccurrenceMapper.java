@@ -89,7 +89,8 @@ public interface LessonOccurrenceMapper extends BaseMapper<LessonOccurrenceEntit
                                  @Param("effectiveAt") LocalDateTime effectiveAt);
 
     /** 周排课信息调整只同步未来普通课次，保留单次教室覆盖和课次身份。 */
-    @Update("UPDATE lesson_occurrence SET planned_teacher_id = #{teacherId}, subject_name = #{subjectName}, "
+    @Update("UPDATE lesson_occurrence SET allocation_owner_teacher_id = IF(planned_teacher_id <=> #{teacherId}, allocation_owner_teacher_id, #{teacherId}), "
+            + "planned_teacher_id = #{teacherId}, subject_name = #{subjectName}, "
             + "delivery_mode = IF(classroom_overridden = 1, delivery_mode, #{deliveryMode}), "
             + "planned_classroom_id = IF(classroom_overridden = 1, planned_classroom_id, #{classroomId}), "
             + "updated_at = CURRENT_TIMESTAMP WHERE id = #{id} AND is_deleted = 0 "
