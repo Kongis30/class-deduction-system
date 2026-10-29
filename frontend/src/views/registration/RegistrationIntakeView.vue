@@ -438,7 +438,7 @@
                       :disabled="!receiptEditingEnabled || Boolean(renewPackageId) || productOptionsForLine(line).length === 0"
                       no-data-text="No linked courses"
                       no-match-text="No matching course"
-                      filterable
+                      :filterable="!appStore.isMobileViewport"
                       @change="() => handleCourseProductChange(line)"
                     >
                       <el-option-group
@@ -536,7 +536,7 @@
                             class="table-select option"
                             :placeholder="v2ClassSelectPlaceholder(line)"
                             :disabled="!receiptEditingEnabled || !line.groupRegistrationPlanId || groupActualClassGroupsForLine(line).length === 0"
-                            filterable
+                            :filterable="!appStore.isMobileViewport"
                             @change="() => handleGroupActualClassChange(line)"
                           >
                             <template #prefix v-if="selectedCampus">
@@ -767,7 +767,7 @@
                             class="table-select option"
                             :placeholder="classSelectPlaceholder(line)"
                             :disabled="!receiptEditingEnabled || !line.coursePriceOptionId || (!selectedCampus && classOptionsForLine(line).length === 0)"
-                            filterable
+                            :filterable="!appStore.isMobileViewport"
                             @change="() => handleClassChange(line)"
                           >
                             <template #prefix v-if="selectedCampus">
@@ -1067,19 +1067,22 @@
                         Payment {{ paymentIndex + 1 }}
                         <small v-if="payment.isHistorical">Historical</small>
                       </span>
-                      <el-select
-                        v-if="canEditCoursePaymentDetails(payment, line.rowKey)"
-                        v-model="payment.paymentMethod"
-                        placeholder="Method"
-                        filterable
-                        @change="normalizePaymentAmount(payment, line.rowKey)"
-                      >
-                        <el-option v-for="method in paymentMethods" :key="method.id" :label="method.methodName" :value="method.methodCode" />
-                      </el-select>
+                      <label v-if="canEditCoursePaymentDetails(payment, line.rowKey)" class="course-payment-field course-payment-field--method">
+                        <span class="payment-field-label">Method</span>
+                        <el-select
+                          v-model="payment.paymentMethod"
+                          placeholder="Select method"
+                          :filterable="!appStore.isMobileViewport"
+                          @change="normalizePaymentAmount(payment, line.rowKey)"
+                        >
+                          <el-option v-for="method in paymentMethods" :key="method.id" :label="method.methodName" :value="method.methodCode" />
+                        </el-select>
+                      </label>
                       <span v-else class="course-payment-entry__history">
                         {{ displayPaymentMethod(payment.paymentMethod) }} · {{ formatDateValue(payment.paidAt) }}
                       </span>
                       <div class="payment-amount-field">
+                        <span class="payment-field-label">Amount</span>
                         <MoneyAmountInput
                           :model-value="coursePaymentAmount(payment, line.rowKey)"
                           :min="0"
@@ -1094,13 +1097,15 @@
                         role="status"
                       >{{ paymentLimitHint(payment) }}</span>
                       </div>
-                      <el-date-picker
-                        v-if="canEditCoursePaymentDetails(payment, line.rowKey)"
-                        v-model="payment.paidAt"
-                        type="date"
-                        value-format="YYYY-MM-DD"
-                        placeholder="Date"
-                      />
+                      <label v-if="canEditCoursePaymentDetails(payment, line.rowKey)" class="course-payment-field course-payment-field--date">
+                        <span class="payment-field-label">Date</span>
+                        <el-date-picker
+                          v-model="payment.paidAt"
+                          type="date"
+                          value-format="YYYY-MM-DD"
+                          placeholder="Select date"
+                        />
+                      </label>
                       <el-button
                         v-if="!editingCorrection && activePaymentLines.length > 1 && canEditCoursePaymentDetails(payment, line.rowKey)"
                         class="remove-adjustment-row"
@@ -1151,11 +1156,20 @@
                 <div class="course-payment-entry">
                   <div class="course-payment-entry__fields">
                     <span class="course-payment-entry__number">Credit payment</span>
-                    <el-select v-model="creditTopUpPayment.paymentMethod" placeholder="Method" filterable :disabled="isReadOnly">
-                      <el-option v-for="method in realPaymentMethods" :key="method.id" :label="method.methodName" :value="method.methodCode" />
-                    </el-select>
-                    <MoneyAmountInput :model-value="creditTopUpAmount" :min="0" disabled />
-                    <el-date-picker v-model="creditTopUpPayment.paidAt" type="date" value-format="YYYY-MM-DD" placeholder="Date" :disabled="isReadOnly" />
+                    <label class="course-payment-field course-payment-field--method">
+                      <span class="payment-field-label">Method</span>
+                      <el-select v-model="creditTopUpPayment.paymentMethod" placeholder="Select method" :filterable="!appStore.isMobileViewport" :disabled="isReadOnly">
+                        <el-option v-for="method in realPaymentMethods" :key="method.id" :label="method.methodName" :value="method.methodCode" />
+                      </el-select>
+                    </label>
+                    <div class="payment-amount-field">
+                      <span class="payment-field-label">Amount</span>
+                      <MoneyAmountInput :model-value="creditTopUpAmount" :min="0" disabled />
+                    </div>
+                    <label class="course-payment-field course-payment-field--date">
+                      <span class="payment-field-label">Date</span>
+                      <el-date-picker v-model="creditTopUpPayment.paidAt" type="date" value-format="YYYY-MM-DD" placeholder="Select date" :disabled="isReadOnly" />
+                    </label>
                     <el-input
                       v-if="isOtherPaymentMethod(creditTopUpPayment.paymentMethod)"
                       v-model="creditTopUpPayment.remark"
@@ -5614,6 +5628,7 @@ async function submitForm() {
             cancelButtonText: 'Cancel registration',
             distinguishCancelAndClose: true,
             type: 'warning',
+            customClass: 'registration-schedule-conflict-dialog',
           },
         );
       } catch {
@@ -8533,6 +8548,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   min-width: 0;
 }
 
+.course-payment-field,
+.payment-amount-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.payment-field-label {
+  display: none;
+}
+
 .course-payment-entry__number {
   color: #334155;
   font-size: 11px;
@@ -9772,6 +9798,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     background: transparent;
   }
 
+  .registration-page[data-mobile-step="4"] .payment-line {
+    display: none;
+  }
+
   .registration-page[data-mobile-step="3"] .adjustment-column,
   .registration-page[data-mobile-step="4"] .adjustment-column {
     gap: 8px;
@@ -9808,6 +9838,160 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     font-size: 13px;
   }
 
+  .registration-page[data-mobile-step="4"] .adjustment-column--payments {
+    gap: 10px;
+  }
+
+  .registration-page[data-mobile-step="4"] .adjustment-heading {
+    align-items: center;
+    padding-bottom: 8px;
+  }
+
+  .registration-page[data-mobile-step="4"] .adjustment-heading strong {
+    font-size: 16px;
+  }
+
+  .registration-page[data-mobile-step="4"] .adjustment-heading span {
+    font-size: 12px;
+  }
+
+  .registration-page[data-mobile-step="4"] .course-adjustment-card--payment {
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid #d7e1ed;
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgb(23 43 77 / 5%);
+  }
+
+  .registration-page[data-mobile-step="4"] .course-adjustment-card__header {
+    align-items: center;
+    padding-bottom: 10px;
+    border-bottom-color: #e6edf4;
+  }
+
+  .registration-page[data-mobile-step="4"] .course-adjustment-card__title strong {
+    font-size: 15px;
+    line-height: 20px;
+    white-space: normal;
+  }
+
+  .registration-page[data-mobile-step="4"] .course-adjustment-card__context {
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: #f1f6fc;
+    color: #48627f;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .registration-page[data-mobile-step="4"] .course-payment-entry {
+    padding: 10px;
+    border-color: #e0e7ef;
+    border-radius: 8px;
+    background: #f9fbfd;
+  }
+
+  .registration-page[data-mobile-step="4"] .course-payment-entry__fields {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 28px;
+    align-items: end;
+    gap: 10px 8px;
+  }
+
+  .registration-page[data-mobile-step="4"] .course-payment-entry__number {
+    padding-bottom: 2px;
+    color: #34465b;
+    font-size: 13px;
+  }
+
+  .registration-page[data-mobile-step="4"] .payment-field-label {
+    display: block;
+    color: #66778b;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 15px;
+  }
+
+  .registration-page[data-mobile-step="4"] .course-payment-field :deep(.el-select),
+  .registration-page[data-mobile-step="4"] .course-payment-field :deep(.el-date-editor),
+  .registration-page[data-mobile-step="4"] .payment-amount-field .money-amount-input {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .registration-page[data-mobile-step="4"] .course-payment-field--date {
+    grid-column: 1 / 3;
+  }
+
+  .registration-page[data-mobile-step="4"] .course-payment-entry__fields > .remove-adjustment-row {
+    grid-column: 3;
+    grid-row: 2 / span 2;
+    align-self: center;
+  }
+
+  .registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-select__wrapper),
+  .registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-input__wrapper),
+  .registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-date-editor .el-input__wrapper) {
+    min-height: 42px;
+    padding: 0 10px;
+    border: 1px solid #d2dce8;
+    border-radius: 7px;
+    background: #fff;
+    box-shadow: none;
+  }
+
+  .registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-input__inner),
+  .registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-select__selected-item),
+  .registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-select__placeholder) {
+    font-size: 14px;
+  }
+
+  .registration-page[data-mobile-step="4"] .course-payment-entry .payment-amount-field {
+    gap: 4px;
+  }
+
+  .registration-page[data-mobile-step="4"] .course-payment-entry .payment-amount-field .el-input__wrapper {
+    min-height: 42px;
+  }
+
+  .registration-page[data-mobile-step="4"] .course-adjustment-card__footer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px 10px;
+    padding-top: 10px;
+    border-top: 1px solid #e6edf4;
+    color: #53657c;
+    font-size: 12px;
+  }
+
+  .registration-page[data-mobile-step="4"] .course-adjustment-card__footer > .el-button {
+    grid-column: 1 / -1;
+    justify-self: start;
+    min-height: 34px;
+    margin: 0;
+    padding: 0 8px;
+    font-size: 14px;
+  }
+
+  .registration-page[data-mobile-step="4"] .course-adjustment-card__footer > strong {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+    color: #20344f;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .registration-page[data-mobile-step="4"] .course-adjustment-card__empty {
+    margin: 0;
+    padding: 12px;
+    border-radius: 8px;
+    background: #f8fafc;
+    color: #667085;
+    font-size: 13px;
+  }
+
   .registration-page[data-mobile-step="3"] .adjustment-column :deep(.el-input__wrapper),
   .registration-page[data-mobile-step="3"] .adjustment-column :deep(.el-select__wrapper),
   .registration-page[data-mobile-step="4"] .adjustment-column :deep(.el-input__wrapper),
@@ -9817,8 +10001,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
   .registration-page[data-mobile-step="5"] .paper-form {
     min-height: 0;
-    padding: 16px 12px;
+    padding: 12px 10px;
     border-radius: 12px;
+    font-size: 13px;
   }
 
   .registration-page[data-mobile-step="5"] .contact-block {
@@ -9841,12 +10026,160 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
   .mobile-registration-review {
     margin: 10px 0 14px;
-    padding: 10px 0;
+    gap: 7px;
+    padding: 10px;
+    border: 1px solid #dbe5f1;
+    border-radius: 10px;
+    background: #f8fafc;
+  }
+
+  .registration-page[data-mobile-step="5"] .course-table-wrap {
+    margin: 8px 0 12px;
+    overflow: visible;
+  }
+
+  .registration-page[data-mobile-step="5"] .course-table {
+    display: block;
+    width: 100%;
     border: 0;
-    border-top: 1px solid #dbe5f1;
-    border-bottom: 1px solid #dbe5f1;
-    border-radius: 0;
-    background: transparent;
+    font-size: 13px;
+  }
+
+  .registration-page[data-mobile-step="5"] .course-table thead {
+    display: none;
+  }
+
+  .registration-page[data-mobile-step="5"] .course-table tbody,
+  .registration-page[data-mobile-step="5"] .course-table .course-entry-row {
+    display: block;
+    width: 100%;
+  }
+
+  .registration-page[data-mobile-step="5"] .course-table .course-entry-row {
+    margin-bottom: 8px;
+    padding: 8px;
+    border: 1px solid #dce5ef;
+    border-radius: 9px;
+    background: #fff;
+  }
+
+  .registration-page[data-mobile-step="5"] .course-table .course-entry-row td {
+    display: grid;
+    grid-template-columns: 82px minmax(0, 1fr);
+    align-items: start;
+    gap: 6px;
+    width: 100% !important;
+    height: auto;
+    min-height: 0;
+    padding: 5px 0;
+    border: 0;
+  }
+
+  .registration-page[data-mobile-step="5"] .course-table .course-entry-row td::before {
+    color: #61738a;
+    font-size: 11px;
+    font-weight: 650;
+    line-height: 1.4;
+  }
+
+  .registration-page[data-mobile-step="5"] .course-table .course-entry-row td:nth-child(1)::before { content: 'Course'; }
+  .registration-page[data-mobile-step="5"] .course-table .course-entry-row td:nth-child(2)::before { content: 'Program & details'; }
+  .registration-page[data-mobile-step="5"] .course-table .course-entry-row td:nth-child(3)::before { content: 'Price'; }
+
+  .registration-page[data-mobile-step="5"] .course-table .course-class-cell,
+  .registration-page[data-mobile-step="5"] .course-table .course-detail-cell,
+  .registration-page[data-mobile-step="5"] .course-table .group-v2-registration,
+  .registration-page[data-mobile-step="5"] .course-table .detail-row,
+  .registration-page[data-mobile-step="5"] .course-table .teacher-class-line {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+    min-width: 0;
+  }
+
+  .registration-page[data-mobile-step="5"] .course-table .group-v2-registration .detail-row--group,
+  .registration-page[data-mobile-step="5"] .course-table .group-v2-registration .detail-row:not(.detail-row--group) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .registration-page[data-mobile-step="5"] .course-table .group-v2-registration__full-row {
+    grid-column: 1 / -1;
+  }
+
+  .registration-page[data-mobile-step="5"] .course-table .course-picker-control,
+  .registration-page[data-mobile-step="5"] .course-table .course-control {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .registration-page[data-mobile-step="5"] .course-table .course-control > span {
+    font-size: 10px;
+    line-height: 14px;
+  }
+
+  .registration-page[data-mobile-step="5"] .course-table :deep(.table-select .el-select__wrapper),
+  .registration-page[data-mobile-step="5"] .course-table :deep(.table-price .el-input__wrapper),
+  .registration-page[data-mobile-step="5"] .course-table :deep(.el-date-editor .el-input__wrapper) {
+    min-height: 40px;
+    padding: 0 8px;
+    border: 1px solid #d2dce8;
+    border-radius: 7px;
+    background: #fff;
+    box-shadow: none;
+  }
+
+  .registration-page[data-mobile-step="5"] .course-table .registration-class-option {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .registration-page[data-mobile-step="5"] .course-table .registration-class-select-row {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .registration-page[data-mobile-step="5"] .course-table .price-cell {
+    display: grid;
+    grid-template-columns: 82px minmax(0, 1fr);
+    white-space: normal;
+  }
+
+  .registration-page[data-mobile-step="5"] .course-table .price-cell .money-amount-input,
+  .registration-page[data-mobile-step="5"] .course-table .price-cell .table-price {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .registration-page[data-mobile-step="5"] .mobile-registration-review header {
+    gap: 2px;
+  }
+
+  .registration-page[data-mobile-step="5"] .mobile-registration-review header span,
+  .registration-page[data-mobile-step="5"] .mobile-registration-review small {
+    font-size: 11px;
+  }
+
+  .registration-page[data-mobile-step="5"] .mobile-registration-review header strong {
+    font-size: 16px;
+    line-height: 20px;
+  }
+
+  .registration-page[data-mobile-step="5"] .mobile-registration-review article {
+    gap: 8px;
+    padding-top: 7px;
+  }
+
+  .registration-page[data-mobile-step="5"] .mobile-registration-review article > div > strong {
+    font-size: 13px;
+    line-height: 18px;
+  }
+
+  .registration-page[data-mobile-step="5"] .mobile-registration-review article > strong {
+    font-size: 13px;
+  }
+
+  .registration-page[data-mobile-step="5"] .mobile-registration-review footer {
+    display: none;
   }
 }
 
@@ -9933,6 +10266,73 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     min-height: 40px;
     font-size: 16px;
     line-height: 20px;
+  }
+}
+
+@media screen and (max-width: 640px) {
+  :global(.registration-schedule-conflict-dialog.el-message-box) {
+    width: min(420px, calc(100vw - 32px)) !important;
+    max-width: calc(100vw - 32px);
+    padding: 16px;
+    border-radius: 12px;
+  }
+
+  :global(.registration-schedule-conflict-dialog .el-message-box__header) {
+    padding: 0 28px 8px 0;
+  }
+
+  :global(.registration-schedule-conflict-dialog .el-message-box__title) {
+    color: #22344d;
+    font-size: 17px;
+    font-weight: 650;
+    line-height: 23px;
+  }
+
+  :global(.registration-schedule-conflict-dialog .el-message-box__headerbtn) {
+    top: 12px;
+    right: 12px;
+    width: 30px;
+    height: 30px;
+  }
+
+  :global(.registration-schedule-conflict-dialog .el-message-box__content) {
+    max-height: min(48dvh, 390px);
+    padding: 8px 0 0;
+    overflow-y: auto;
+    color: #53657c;
+    font-size: 13px;
+    line-height: 1.45;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  :global(.registration-schedule-conflict-dialog .el-message-box__container) {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  :global(.registration-schedule-conflict-dialog .el-message-box__status) {
+    margin-top: 1px;
+    font-size: 20px !important;
+  }
+
+  :global(.registration-schedule-conflict-dialog .el-message-box__btns) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 16px;
+    padding: 0;
+  }
+
+  :global(.registration-schedule-conflict-dialog .el-message-box__btns .el-button) {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    height: auto;
+    margin: 0;
+    padding: 7px 8px;
+    font-size: 13px;
+    line-height: 18px;
+    white-space: normal;
   }
 }
 
