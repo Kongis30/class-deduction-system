@@ -33,7 +33,7 @@
           <span class="wts-row__label">
             <template v-if="time.isLastSlot">
               <span>{{ time.label }}</span>
-              <span>24:00</span>
+              <span>{{ SCHEDULE_DAY_END_TIME }}</span>
             </template>
             <template v-else>{{ time.label }}</template>
           </span>
@@ -137,6 +137,7 @@
 import { computed, nextTick, onUnmounted, ref } from 'vue';
 import {
   SCHEDULE_DAY_END_MINUTES,
+  SCHEDULE_DAY_END_TIME,
   SCHEDULE_DAY_START_MINUTES,
   SCHEDULE_SLOT_MINUTES,
   scheduleEndTimeForDisplay,

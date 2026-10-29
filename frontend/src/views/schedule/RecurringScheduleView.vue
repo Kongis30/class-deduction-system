@@ -711,7 +711,7 @@
               >
                 <template v-if="index === calendarRows.length - 1">
                   <span>{{ r.label }}</span>
-                  <span>24:00</span>
+                  <span>{{ SCHEDULE_DAY_END_TIME }}</span>
                 </template>
                 <template v-else>{{ r.label }}</template>
               </span>
@@ -1119,6 +1119,7 @@ import { APP_TIMEZONE } from '@/config/app-config';
 import { calendarWeekRange } from '@/utils/calendar-week';
 import {
   SCHEDULE_DAY_END_MINUTES,
+  SCHEDULE_DAY_END_TIME,
   SCHEDULE_DAY_START_MINUTES,
   SCHEDULE_DAY_START_TIME,
   SCHEDULE_LAST_SLOT_START_TIME,
