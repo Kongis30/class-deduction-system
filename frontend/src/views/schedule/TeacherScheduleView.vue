@@ -65,9 +65,6 @@
               <el-icon><ArrowDown /></el-icon>
             </button>
             <div v-if="mobileRosterOpen" class="calendar-mobile-roster__panel">
-              <div class="calendar-mobile-roster__search">
-                <el-input v-model="searchText" placeholder="Search teachers..." clearable :prefix-icon="Search" />
-              </div>
               <div v-loading="teacherRosterLoading" class="calendar-mobile-roster__groups">
                 <div v-if="!teacherRosterLoading && filteredTeacherGroups.length === 0" class="teacher-list-panel__empty">
                   No teachers found
@@ -782,6 +779,11 @@ onMounted(async () => {
 
   .teacher-calendar__body {
     display: block;
+    overflow: visible;
+  }
+
+  .teacher-calendar .calendar-panel {
+    overflow: visible;
   }
 
   .teacher-list-panel {
@@ -800,14 +802,15 @@ onMounted(async () => {
     align-items: center;
     justify-content: space-between;
     width: 100%;
-    min-height: 36px;
-    padding: 0 10px;
+    min-height: 42px;
+    padding: 0 12px;
     border: 1px solid #dcdfe6;
     border-radius: 6px;
     background: #fff;
     color: #606266;
     font: inherit;
-    font-size: 13px;
+    font-size: 14px;
+    line-height: 20px;
     text-align: left;
   }
 
@@ -821,17 +824,33 @@ onMounted(async () => {
     left: 0;
     display: flex;
     flex-direction: column;
-    max-height: min(55vh, 440px);
-    overflow: hidden;
-    border: 1px solid #dce4ed;
+    height: min(55dvh, 440px);
+    box-sizing: border-box;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+    scrollbar-width: none;
+    border: 1px solid #aebed0;
     border-radius: 8px;
     background: #fff;
-    box-shadow: 0 12px 28px rgba(31, 42, 68, 0.18);
+    box-shadow: 0 12px 28px rgba(31, 42, 68, 0.2), 0 0 0 2px rgba(174, 190, 208, 0.16);
   }
+  .calendar-mobile-roster__panel::-webkit-scrollbar { display: none; }
 
-  .calendar-mobile-roster__search { padding: 8px; border-bottom: 1px solid #e8edf2; }
-  .calendar-mobile-roster__groups { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-  .calendar-mobile-roster__item { width: 100%; border: 0; background: #fff; font: inherit; text-align: left; }
+  .calendar-mobile-roster__groups {
+    flex: 0 0 auto;
+    min-height: 0;
+    padding-bottom: 12px;
+    overflow: visible;
+  }
+  .calendar-mobile-roster__item { width: 100%; min-height: 42px; box-sizing: border-box; border: 0; background: #fff; font: inherit; text-align: left; }
+  .calendar-mobile-roster .teacher-group__header { min-height: 38px; padding: 8px 12px; border-bottom: 1px solid #dce4ed; background: #f3f6fa; font-size: 13px; line-height: 20px; }
+  .calendar-mobile-roster .teacher-item { min-height: 42px; padding: 10px 12px; border-bottom: 1px solid #e4eaf1; }
+  .calendar-mobile-roster .teacher-item--active { padding-left: 9px; }
+  .calendar-mobile-roster .teacher-item__name { font-size: 14px; line-height: 20px; }
 
   .calendar-controls {
     flex-wrap: wrap;

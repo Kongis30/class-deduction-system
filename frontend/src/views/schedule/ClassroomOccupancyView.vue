@@ -68,7 +68,7 @@
               :model-value="selectedClassroomId"
               class="classroom-mobile-select"
               placeholder="Select a classroom"
-              filterable
+              popper-class="calendar-room-select-popper"
               @change="onClassroomSelect"
             >
               <el-option-group v-for="group in classroomGroups" :key="group.campus" :label="group.campus">

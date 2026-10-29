@@ -260,7 +260,7 @@
           <button type="button" @click="openCurrentStudentHistory">View history</button>
         </div>
 
-        <div class="two-col-line">
+        <div class="two-col-line student-details-grid">
           <label>
             <span>Grade:</span>
             <el-input v-model="activeStudentGrade" :disabled="contactLocked" class="line-input" />
@@ -271,7 +271,7 @@
           </label>
         </div>
 
-        <div class="two-col-line">
+        <div class="two-col-line student-details-grid">
           <label>
             <span>Guardian phone:</span>
             <el-input
@@ -9631,6 +9631,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     gap: 8px;
   }
 
+  .registration-page[data-mobile-step="1"] .student-lines .student-details-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
   .registration-page[data-mobile-step="1"] .student-lines :deep(.el-input__wrapper),
   .registration-page[data-mobile-step="1"] .student-lines :deep(.el-date-editor .el-input__wrapper) {
     min-height: 44px;
@@ -9845,10 +9850,89 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   }
 }
 
-@media screen and (max-width: 380px) {
+@media screen and (max-width: 430px) {
+  .registration-page {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: clip;
+  }
+
+  .registration-student-picker__select {
+    min-height: 42px;
+  }
+
+  .registration-student-picker__select :deep(.el-select__wrapper) {
+    min-height: 42px;
+    padding: 0 10px;
+    border: 1px solid #d2dbe7;
+    border-radius: 7px;
+    background: #fff;
+    box-shadow: none;
+  }
+
   .registration-page[data-mobile-step="1"] .student-name-fields,
   .registration-page[data-mobile-step="1"] .student-lines .two-col-line {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .registration-page[data-mobile-step="1"] .student-name-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .registration-page[data-mobile-step="1"] .contact-block .campus-line {
+    min-width: 0;
+  }
+
+  .registration-page[data-mobile-step="1"] .contact-block .campus-line span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .registration-page[data-mobile-step="1"] .student-lines .full-line,
+  .registration-page[data-mobile-step="1"] .student-lines .two-col-line {
+    gap: 6px;
+  }
+
+  .registration-page[data-mobile-step="1"] .student-lines .two-col-line {
+    margin-top: 8px;
+  }
+
+  .registration-page[data-mobile-step="1"] .student-lines .full-line > span,
+  .registration-page[data-mobile-step="1"] .student-lines .two-col-line label > span:first-child {
+    color: #53657c;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 18px;
+  }
+
+  .registration-page[data-mobile-step="1"] .student-lines .two-col-line label {
+    gap: 4px;
+  }
+
+  .registration-page[data-mobile-step="1"] .student-lines :deep(.el-input__wrapper),
+  .registration-page[data-mobile-step="1"] .student-lines :deep(.el-date-editor .el-input__wrapper) {
+    min-height: 42px;
+    padding: 0 10px;
+    border: 1px solid #d2dbe7;
+    border-radius: 7px;
+    background: #fff;
+    box-shadow: none;
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+
+  .registration-page[data-mobile-step="1"] .student-lines :deep(.el-input__wrapper.is-focus),
+  .registration-page[data-mobile-step="1"] .student-lines :deep(.el-date-editor .el-input__wrapper.is-focus),
+  .registration-student-picker__select :deep(.el-select__wrapper.is-focused) {
+    border-color: #6ea5f5;
+    box-shadow: 0 0 0 3px rgb(59 130 246 / 12%);
+  }
+
+  .registration-page[data-mobile-step="1"] .student-lines :deep(.el-input__inner) {
+    min-height: 40px;
+    font-size: 16px;
+    line-height: 20px;
   }
 }
 

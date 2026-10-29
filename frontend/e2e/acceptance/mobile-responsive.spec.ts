@@ -60,6 +60,23 @@ test.describe('mobile responsive workspace', () => {
     await expect(page.locator('.mobile-tab-bar')).toBeVisible();
     await expect(page.locator('.mobile-registration-progress__copy strong')).toHaveText('Student');
     await page.screenshot({ path: testInfo.outputPath('registration-student-step.png') });
+    for (const width of [320, 360, 390, 430]) {
+      await page.setViewportSize({ width, height: 844 });
+      const layout = await page.evaluate(() => ({
+        viewport: document.documentElement.clientWidth,
+        document: document.documentElement.scrollWidth,
+        registration: document.querySelector('.registration-page')?.getBoundingClientRect().width ?? 0,
+        nameColumns: getComputedStyle(document.querySelector('.student-name-fields')!).gridTemplateColumns.split(' ').length,
+        fieldRight: Math.max(...[...document.querySelectorAll('.student-lines .el-input__wrapper')]
+          .map(element => element.getBoundingClientRect().right)),
+      }));
+      expect(layout.document, `Student step should fit a ${width}px viewport: ${JSON.stringify(layout)}`)
+        .toBeLessThanOrEqual(layout.viewport + 1);
+      expect(layout.fieldRight, `Student fields should stay inside a ${width}px viewport: ${JSON.stringify(layout)}`)
+        .toBeLessThanOrEqual(layout.viewport + 1);
+      expect(layout.nameColumns, 'First and last name should share one row').toBe(2);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
     const registrationScrollRegion = page.locator('.app-shell__content--registration');
     await registrationScrollRegion.evaluate(element => { element.scrollTop = element.scrollHeight; });
     const signupDateVisibility = await page.evaluate(() => ({

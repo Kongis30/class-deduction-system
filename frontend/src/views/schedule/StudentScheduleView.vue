@@ -80,9 +80,6 @@
               <el-icon><ArrowDown /></el-icon>
             </button>
             <div v-if="mobileRosterOpen" class="calendar-mobile-roster__panel">
-              <div class="calendar-mobile-roster__search">
-                <el-input v-model="searchText" placeholder="Search students..." clearable :prefix-icon="Search" />
-              </div>
               <div v-loading="studentsLoading" class="calendar-mobile-roster__groups">
                 <div v-if="!studentsLoading && filteredStudentGroups.length === 0" class="student-list-panel__empty">
                   {{ students.length === 0 ? 'No active 1-on-1 students' : 'No students found' }}
@@ -1248,6 +1245,11 @@ button.student-conflict-card:hover {
 
   .student-calendar .student-calendar__body {
     display: block;
+    overflow: visible;
+  }
+
+  .student-calendar .calendar-panel {
+    overflow: visible;
   }
 
   .student-list-panel {
@@ -1273,6 +1275,8 @@ button.student-conflict-card:hover {
     background: #fff;
     color: #606266;
     font: inherit;
+    font-size: 14px;
+    line-height: 20px;
     text-align: left;
   }
 
@@ -1286,17 +1290,34 @@ button.student-conflict-card:hover {
     left: 0;
     display: flex;
     flex-direction: column;
-    max-height: min(55vh, 440px);
-    overflow: hidden;
-    border: 1px solid #dce4ed;
+    height: min(55dvh, 440px);
+    box-sizing: border-box;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+    scrollbar-width: none;
+    border: 1px solid #aebed0;
     border-radius: 8px;
     background: #fff;
-    box-shadow: 0 12px 28px rgba(31, 42, 68, 0.18);
+    box-shadow: 0 12px 28px rgba(31, 42, 68, 0.2), 0 0 0 2px rgba(174, 190, 208, 0.16);
   }
+  .calendar-mobile-roster__panel::-webkit-scrollbar { display: none; }
 
-  .calendar-mobile-roster__search { padding: 8px; border-bottom: 1px solid #e8edf2; }
-  .calendar-mobile-roster__groups { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-  .calendar-mobile-roster__item { width: 100%; border: 0; background: #fff; font: inherit; text-align: left; }
+  .calendar-mobile-roster__groups {
+    flex: 0 0 auto;
+    min-height: 0;
+    padding-bottom: 12px;
+    overflow: visible;
+  }
+  .calendar-mobile-roster__item { width: 100%; min-height: 42px; box-sizing: border-box; border: 0; background: #fff; font: inherit; text-align: left; }
+  .calendar-mobile-roster .student-group__header { min-height: 38px; padding: 8px 12px; border-bottom: 1px solid #dce4ed; background: #f3f6fa; font-size: 13px; line-height: 20px; }
+  .calendar-mobile-roster .student-grade-group__header { padding-left: 24px; }
+  .calendar-mobile-roster .student-item { min-height: 42px; padding: 10px 12px; border-bottom: 1px solid #e4eaf1; }
+  .calendar-mobile-roster .student-item--active { padding-left: 9px; }
+  .calendar-mobile-roster .student-item__name { font-size: 14px; line-height: 20px; }
 
   .calendar-controls {
     align-items: flex-start;

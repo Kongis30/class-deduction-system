@@ -1045,6 +1045,11 @@ a {
     overflow-y: auto;
     overscroll-behavior-y: contain;
     -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .app-shell__content--calendar::-webkit-scrollbar {
+    display: none;
   }
 
   .app-shell__content--data-summary {
@@ -1225,6 +1230,49 @@ body.app-desktop-override {
     flex: 1 1 auto;
     min-width: 96px;
   }
+}
+
+/* 房间选择菜单固定可视高度，选项区域支持触屏滑动和滚动条拖动。 */
+.calendar-room-select-popper .el-select-dropdown__wrap {
+  max-height: min(55dvh, 360px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  scrollbar-width: none;
+}
+
+.calendar-room-select-popper .el-select-dropdown__wrap::-webkit-scrollbar {
+  display: none;
+}
+
+.calendar-room-select-popper.el-popper.is-light {
+  border: 1px solid #aebed0 !important;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(31, 42, 68, 0.2), 0 0 0 2px rgba(174, 190, 208, 0.16);
+}
+
+.calendar-room-select-popper .el-select-group__title {
+  height: auto;
+  padding: 7px 12px 5px;
+  color: #718096;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  border-bottom: 1px solid #dce4ed;
+}
+
+.calendar-room-select-popper .el-select-dropdown__item {
+  height: 42px;
+  padding: 0 12px;
+  color: #303133;
+  font-size: 14px;
+  line-height: 42px;
+  border-bottom: 1px solid #e4eaf1;
+}
+
+.calendar-room-select-popper .el-select-dropdown__item.is-selected {
+  font-weight: 600;
 }
 
 /* 全局窄屏约束：统一让页面内容、筛选栏和弹层适应手机视口。 */
