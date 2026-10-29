@@ -481,6 +481,35 @@ class CoursePackageServiceImplTest {
     }
 
     @Test
+    void startingHoursDoesNotWriteWhenScheduleNeedsMoreThanNewBalance() {
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(101L);
+        coursePackage.setVersion(3);
+        coursePackage.setTeachingMode("ONE_ON_ONE");
+        coursePackage.setTotalUnits(120);
+        coursePackage.setOpeningUsedUnits(8);
+        coursePackage.setConsumedUnits(14);
+        coursePackage.setRemainingUnits(106);
+        when(coursePackageMapper.selectByIdForUpdate(101L)).thenReturn(coursePackage);
+        when(coursePackageMapper.selectById(101L)).thenReturn(coursePackage);
+        org.mockito.Mockito.doThrow(new com.classdeduction.system.common.exception.BusinessException(
+                "PACKAGE_BALANCE_BELOW_SCHEDULE", "Existing schedules need 53.0h."))
+                .when(recurringScheduleRuleService).validateBalanceReduction(101L, 105);
+        CoursePackageStartingHoursRequest request = new CoursePackageStartingHoursRequest();
+        request.setStartingHours(BigDecimal.valueOf(55.5));
+        request.setExpectedVersion(3);
+
+        assertThatThrownBy(() -> coursePackageService.updateStartingHours(101L, request, 9L))
+                .isInstanceOfSatisfying(com.classdeduction.system.common.exception.BusinessException.class,
+                        error -> assertThat(error.getCode()).isEqualTo("PACKAGE_BALANCE_BELOW_SCHEDULE"));
+        assertThat(coursePackage.getRemainingUnits()).isEqualTo(106);
+        assertThat(coursePackage.getOpeningUsedUnits()).isEqualTo(8);
+        verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
+        verify(hourLedgerMapper, never()).insert(any(com.classdeduction.system.modules.lesson.entity.HourLedgerEntity.class));
+        verify(recurringScheduleRuleService, never()).refreshPackageSchedule(101L);
+    }
+
+    @Test
     void startingHoursRejectsAPageOpenedBeforeAnotherLessonWasDeducted() {
         CoursePackageEntity coursePackage = new CoursePackageEntity();
         coursePackage.setId(101L);

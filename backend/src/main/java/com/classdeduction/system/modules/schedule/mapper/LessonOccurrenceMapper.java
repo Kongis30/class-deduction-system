@@ -27,6 +27,19 @@ public interface LessonOccurrenceMapper extends BaseMapper<LessonOccurrenceEntit
     @Select("SELECT * FROM lesson_occurrence WHERE id = #{id} AND is_deleted = 0 FOR UPDATE")
     LessonOccurrenceEntity selectByIdForUpdate(@Param("id") Long id);
 
+    /** 仅为未关联课位的已确认私教历史设置继承归属；不更改授课或消课快照。 */
+    @Update("UPDATE lesson_occurrence SET history_owner_lineage_id = #{lineageId} "
+            + "WHERE id = #{id} AND is_deleted = 0 AND class_group_id IS NULL "
+            + "AND schedule_slot_id IS NULL AND history_owner_lineage_id IS NULL")
+    int assignUnlinkedHistory(@Param("id") Long id, @Param("lineageId") Long lineageId);
+
+    /** 固化旧版同一周期中已显示的唯一课位映射，保留原始课位和授课快照。 */
+    @Update("UPDATE lesson_occurrence SET history_owner_lineage_id = #{lineageId} "
+            + "WHERE id = #{id} AND schedule_slot_id = #{sourceSlotId} AND is_deleted = 0 "
+            + "AND history_owner_lineage_id IS NULL")
+    int preserveLegacyHistoryOwner(@Param("id") Long id, @Param("sourceSlotId") Long sourceSlotId,
+                                   @Param("lineageId") Long lineageId);
+
     /** 改排课只能撤销尚未开始且未进入消课流程的普通课次；条件在写入时再次校验。 */
     @Update({"<script>",
             "UPDATE lesson_occurrence lo SET lo.is_deleted = 1, lo.deleted_at = #{effectiveAt},",

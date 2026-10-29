@@ -58,6 +58,7 @@ import com.classdeduction.system.modules.schedule.service.RecurringScheduleRuleS
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
@@ -1007,8 +1008,9 @@ public class CoursePackageServiceImpl implements CoursePackageService {
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public void adjustPackageHours(Long id, CoursePackageHoursAdjustmentRequest request, Long operatorId) {
+        recurringScheduleRuleService.lockSchedulePackages(id);
         CoursePackageEntity coursePackage = requireCoursePackage(id);
         if (!"ONE_ON_ONE".equals(coursePackage.getTeachingMode())) {
             throw new BusinessException("PACKAGE_HOURS_NOT_SUPPORTED", "Hour adjustments are only available for 1-on-1 packages.");
@@ -1024,6 +1026,9 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         int newRemainingUnits = coursePackage.getRemainingUnits() + changeUnits;
         if (newTotalUnits < coursePackage.getConsumedUnits() || newRemainingUnits < 0) {
             throw new BusinessException("INSUFFICIENT_PACKAGE_HOURS", "The adjustment cannot reduce hours below the consumed balance.");
+        }
+        if (changeUnits < 0) {
+            recurringScheduleRuleService.validateBalanceReduction(id, newRemainingUnits);
         }
         coursePackage.setTotalUnits(newTotalUnits);
         if ("BONUS_HOURS".equals(request.getAdjustmentType())) {
@@ -1059,8 +1064,9 @@ public class CoursePackageServiceImpl implements CoursePackageService {
 
     /** 在行锁内检查页面版本，直接按管理员输入的 Starting Hours 更新课包。 */
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public void updateStartingHours(Long id, CoursePackageStartingHoursRequest request, Long operatorId) {
+        recurringScheduleRuleService.lockSchedulePackages(id);
         CoursePackageEntity current = coursePackageMapper.selectByIdForUpdate(id);
         if (current == null) {
             throw new BusinessException("COURSE_PACKAGE_NOT_FOUND", "Course package not found.");
@@ -1083,8 +1089,9 @@ public class CoursePackageServiceImpl implements CoursePackageService {
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public void updateDeductedHours(Long id, CoursePackageDeductedHoursRequest request, Long operatorId) {
+        recurringScheduleRuleService.lockSchedulePackages(id);
         CoursePackageEntity coursePackage = requireOneOnOnePackage(id);
         int requestedConsumedUnits = UnitConverter.toHalfHourUnits(request.getDeductedHours());
         int currentOpeningUsedUnits = safeUnits(coursePackage.getOpeningUsedUnits());
@@ -1119,6 +1126,10 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 : coursePackage.getRemainingUnits();
         int nextRemainingUnits = totalUnits - nextConsumedUnits;
         int balanceChangeUnits = nextRemainingUnits - currentRemainingUnits;
+
+        if (balanceChangeUnits < 0) {
+            recurringScheduleRuleService.validateBalanceReduction(id, nextRemainingUnits);
+        }
 
         coursePackage.setOpeningUsedUnits(nextOpeningUsedUnits);
         coursePackage.setConsumedUnits(nextConsumedUnits);

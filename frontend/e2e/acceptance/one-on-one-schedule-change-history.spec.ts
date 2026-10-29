@@ -66,6 +66,7 @@ test('lesson history separates schedule versions without counting the divider as
   await expect(page.locator('.oo-table-title')).toContainText('4 records');
 
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'Math 40 hours' }).click();
   await expect(page.locator('.oo-mobile-lessons .oo-schedule-change')).toHaveCount(1);
   await expect(page.locator('.oo-mobile-lessons .oo-mobile-lesson')).toHaveCount(4);
 });

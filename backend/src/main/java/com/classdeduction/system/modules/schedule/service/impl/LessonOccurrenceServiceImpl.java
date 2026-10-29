@@ -1265,17 +1265,17 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
 
     /** 课次详情与消课操作采用相同的交接归属：同一 slot lineage 由现任老师接手，历史授课快照不改。 */
     private boolean canTeacherViewOccurrence(LessonOccurrenceEntity occurrence, Long teacherId) {
-        if (occurrence.getClassGroupId() != null || occurrence.getScheduleSlotId() == null) {
+        if (occurrence.getClassGroupId() != null || occurrence.getScheduleSlotId() == null
+                && occurrence.getHistoryOwnerLineageId() == null) {
             return Objects.equals(occurrence.getPlannedTeacherId(), teacherId);
         }
-        RecurringScheduleSlotEntity sourceSlot = recurringScheduleSlotMapper
-                .selectIncludingDeletedByIds(List.of(occurrence.getScheduleSlotId()))
-                .stream().findFirst().orElse(null);
-        if (sourceSlot == null) {
+        RecurringScheduleSlotEntity sourceSlot = occurrence.getScheduleSlotId() == null ? null : recurringScheduleSlotMapper
+                .selectIncludingDeletedByIds(List.of(occurrence.getScheduleSlotId())).stream().findFirst().orElse(null);
+        if (sourceSlot == null && occurrence.getHistoryOwnerLineageId() == null) {
             return Objects.equals(occurrence.getPlannedTeacherId(), teacherId);
         }
-        Long lineageId = sourceSlot.getSlotLineageId() == null
-                ? sourceSlot.getId() : sourceSlot.getSlotLineageId();
+        Long lineageId = occurrence.getHistoryOwnerLineageId() != null ? occurrence.getHistoryOwnerLineageId()
+                : sourceSlot.getSlotLineageId() == null ? sourceSlot.getId() : sourceSlot.getSlotLineageId();
         List<Long> activeRuleIds = recurringScheduleRuleMapper.selectList(
                         new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
                                 .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE")
@@ -1744,11 +1744,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         if (!rules.isEmpty()) {
             rules.forEach(rule -> {
                 rulesById.putIfAbsent(rule.getId(), rule);
-                if (rule.getAllocationPeriodStartedAt() != null) {
-                    periodStartByRule.put(rule.getId(), rule.getAllocationPeriodStartedAt());
-                } else if (rule.getCreatedAt() != null) {
-                    periodStartByRule.put(rule.getId(), rule.getCreatedAt());
-                }
+                LocalDateTime periodStart = PrivateSchedulePeriod.startAt(rule);
+                if (periodStart != null) periodStartByRule.put(rule.getId(), periodStart);
             });
             // Schedule 列表每个课包只取最新 ACTIVE 规则，避免把旧的 PAUSED 规则再次计入。
             for (RecurringScheduleRuleEntity rule : rules) {
@@ -1907,8 +1904,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                         Long teacherId = currentPeriod && occurrence.getAllocationOwnerTeacherId() != null
                                 ? occurrence.getAllocationOwnerTeacherId() : occurrence.getPlannedTeacherId();
                         RecurringScheduleSlotEntity sourceSlot = recurringSlotsById.get(occurrence.getScheduleSlotId());
-                        if (sourceSlot != null) {
-                            Long lineageId = sourceSlot.getSlotLineageId() == null
+                        if (sourceSlot != null || occurrence.getHistoryOwnerLineageId() != null) {
+                            Long lineageId = occurrence.getHistoryOwnerLineageId() != null
+                                    ? occurrence.getHistoryOwnerLineageId() : sourceSlot.getSlotLineageId() == null
                                     ? sourceSlot.getId() : sourceSlot.getSlotLineageId();
                             teacherId = currentSlotTeacherByLineageByPackage
                                     .getOrDefault(packageId, Collections.emptyMap())
@@ -2033,7 +2031,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                         && Objects.equals(item.getPlannedTeacherId(), teacherId))
                 .anyMatch(item -> {
                     RecurringScheduleSlotEntity sourceSlot = slots.get(item.getScheduleSlotId());
-                    Long lineageId = sourceSlot == null ? null
+                    Long lineageId = item.getHistoryOwnerLineageId() != null ? item.getHistoryOwnerLineageId()
+                            : sourceSlot == null ? null
                             : sourceSlot.getSlotLineageId() == null ? sourceSlot.getId() : sourceSlot.getSlotLineageId();
                     Long currentOwner = lineageId == null ? null : currentTeacherByLineage.get(lineageId);
                     Long allocationOwner = item.getAllocationOwnerTeacherId() != null
@@ -2146,12 +2145,13 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .filter(item -> {
                     if (teacherId == null) return item.getPlannedTeacherId() == null;
                     RecurringScheduleSlotEntity sourceSlot = allRecurringSlots.get(item.getScheduleSlotId());
-                    Long lineageId = sourceSlot == null ? null
+                    Long lineageId = item.getHistoryOwnerLineageId() != null ? item.getHistoryOwnerLineageId()
+                            : sourceSlot == null ? null
                             : sourceSlot.getSlotLineageId() == null ? sourceSlot.getId() : sourceSlot.getSlotLineageId();
                     if (lineageId != null && currentTeacherByLineage.containsKey(lineageId)) {
                         Long currentOwner = currentTeacherByLineage.get(lineageId);
                         Long allocationOwner = item.getAllocationOwnerTeacherId() != null
-                                ? item.getAllocationOwnerTeacherId() : sourceSlot.getTeacherId();
+                                ? item.getAllocationOwnerTeacherId() : sourceSlot == null ? null : sourceSlot.getTeacherId();
                         return Objects.equals(currentOwner, teacherId)
                                 || ("ADJUSTED".equals(item.getPlanningStatus())
                                 && Objects.equals(item.getPlannedTeacherId(), teacherId)

@@ -8,6 +8,7 @@ import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
 import java.time.LocalTime;
+import java.util.List;
 
 /**
  * 周期排课时段请求：定义每周某一天的固定上课时间与课时单位。
@@ -18,6 +19,9 @@ public class RecurringScheduleSlotRequest {
 
     @Schema(description = "Existing weekly slot ID when editing a schedule")
     private Long slotId;
+
+    @Schema(description = "Unlinked confirmed historical lessons explicitly assigned to this current slot")
+    private List<Long> inheritedOccurrenceIds;
 
     @NotNull(message = "Teacher is required for every slot")
     @Schema(description = "Teacher assigned to this slot")

@@ -1064,17 +1064,17 @@ public class LessonRecordServiceImpl implements LessonRecordService {
 
     /** 老师提交考勤时按当前 slot 接手人授权；课次原老师快照和消课归属不随授权变化。 */
     private boolean canTeacherHandleOccurrence(Long teacherId, LessonOccurrenceEntity occurrence) {
-        if (teacherId == null || occurrence.getScheduleSlotId() == null) {
+        if (teacherId == null || occurrence.getScheduleSlotId() == null
+                && occurrence.getHistoryOwnerLineageId() == null) {
             return Objects.equals(teacherId, occurrence.getPlannedTeacherId());
         }
-        RecurringScheduleSlotEntity sourceSlot = recurringScheduleSlotMapper
-                .selectIncludingDeletedByIds(List.of(occurrence.getScheduleSlotId()))
-                .stream().findFirst().orElse(null);
-        if (sourceSlot == null) {
+        RecurringScheduleSlotEntity sourceSlot = occurrence.getScheduleSlotId() == null ? null : recurringScheduleSlotMapper
+                .selectIncludingDeletedByIds(List.of(occurrence.getScheduleSlotId())).stream().findFirst().orElse(null);
+        if (sourceSlot == null && occurrence.getHistoryOwnerLineageId() == null) {
             return Objects.equals(teacherId, occurrence.getPlannedTeacherId());
         }
-        Long lineageId = sourceSlot.getSlotLineageId() == null
-                ? sourceSlot.getId() : sourceSlot.getSlotLineageId();
+        Long lineageId = occurrence.getHistoryOwnerLineageId() != null ? occurrence.getHistoryOwnerLineageId()
+                : sourceSlot.getSlotLineageId() == null ? sourceSlot.getId() : sourceSlot.getSlotLineageId();
         LambdaQueryWrapper<RecurringScheduleRuleEntity> ruleQuery = new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
                 .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE")
                 .and(scope -> scope.eq(RecurringScheduleRuleEntity::getPackageId, occurrence.getPackageId())

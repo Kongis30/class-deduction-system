@@ -45,6 +45,9 @@ public class LessonOccurrenceEntity extends BaseEntity {
 
     private Long scheduleSlotId;
 
+    /** 管理员为未关联课位的历史课次指定的时间线继承关系，不改变原课次归属。 */
+    private Long historyOwnerLineageId;
+
     /** 分配额度归属快照；单课临时代课只能改变 plannedTeacherId，不能改此值。 */
     private Long allocationOwnerTeacherId;
 

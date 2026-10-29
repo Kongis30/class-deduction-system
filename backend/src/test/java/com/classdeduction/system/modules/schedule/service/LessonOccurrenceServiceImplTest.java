@@ -58,6 +58,7 @@ import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -1328,6 +1329,103 @@ class LessonOccurrenceServiceImplTest {
                 });
             });
         });
+    }
+
+    @Test
+    void splitSlotShowsInheritedHistoryOnlyToChosenTeacherWithoutChargingNewPeriod() {
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        coursePackage.setTotalUnits(40);
+        coursePackage.setConsumedUnits(12);
+        coursePackage.setRemainingUnits(28);
+        RecurringScheduleRuleEntity rule = new RecurringScheduleRuleEntity();
+        rule.setId(5002L);
+        rule.setPackageId(coursePackage.getId());
+        rule.setRuleStatus("ACTIVE");
+        rule.setCreatedAt(now.minusDays(2));
+        rule.setSupersedesRuleId(5001L);
+        RecurringScheduleSlotEntity source = new RecurringScheduleSlotEntity();
+        source.setId(6001L);
+        source.setRuleId(5001L);
+        source.setTeacherId(301L);
+        source.setSlotLineageId(6001L);
+        RecurringScheduleSlotEntity heir = new RecurringScheduleSlotEntity();
+        heir.setId(6002L);
+        heir.setRuleId(5002L);
+        heir.setSlotLineageId(6001L);
+        heir.setTeacherId(302L);
+        heir.setAllocatedUnits(8);
+        heir.setSlotStatus("ACTIVE");
+        RecurringScheduleSlotEntity other = new RecurringScheduleSlotEntity();
+        other.setId(6003L);
+        other.setRuleId(5002L);
+        other.setSlotLineageId(6003L);
+        other.setTeacherId(303L);
+        other.setAllocatedUnits(4);
+        other.setSlotStatus("ACTIVE");
+        LessonOccurrenceEntity historical = buildOneOnOneOccurrence();
+        historical.setScheduleRuleId(5001L);
+        historical.setScheduleSlotId(6001L);
+        historical.setPlannedStartAt(now.minusDays(10));
+        historical.setPlannedEndAt(now.minusDays(10).plusHours(6));
+        LessonRecordEntity record = confirmedDeduction(5001L, historical, 12);
+        record.setConfirmedAt(now.minusDays(9));
+        record.setActualTeacherId(301L);
+        LessonOccurrenceEntity futureB = buildOneOnOneOccurrence();
+        futureB.setId(4002L);
+        futureB.setScheduleRuleId(5002L);
+        futureB.setScheduleSlotId(6002L);
+        futureB.setPlannedTeacherId(302L);
+        futureB.setAllocationOwnerTeacherId(302L);
+        futureB.setPlannedStartAt(now.plusDays(1));
+        futureB.setPlannedEndAt(now.plusDays(1).plusHours(2));
+        LessonOccurrenceEntity futureC = buildOneOnOneOccurrence();
+        futureC.setId(4003L);
+        futureC.setScheduleRuleId(5002L);
+        futureC.setScheduleSlotId(6003L);
+        futureC.setPlannedTeacherId(303L);
+        futureC.setAllocationOwnerTeacherId(303L);
+        futureC.setPlannedStartAt(now.plusDays(2));
+        futureC.setPlannedEndAt(now.plusDays(2).plusHours(2));
+        TeacherEntity teacherB = buildTeacher(); teacherB.setId(302L); teacherB.setTeacherName("B");
+        TeacherEntity teacherC = buildTeacher(); teacherC.setId(303L); teacherC.setTeacherName("C");
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(historical, futureB, futureC));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(record));
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(rule));
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(heir, other));
+        when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(source, heir, other));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher(), teacherB, teacherC));
+
+        List<OneOnOneTeacherVO> teachers = lessonOccurrenceService.listOneOnOneDeductions(new OneOnOneDeductionQuery(), null);
+        assertThat(teachers).filteredOn(teacher -> Objects.equals(teacher.teacherId(), 302L))
+                .singleElement().satisfies(teacher -> {
+                    var pkg = teacher.students().get(0).packages().get(0);
+                    assertThat(pkg.totalUnits()).isEqualTo(20.0);
+                    assertThat(pkg.startingHours()).isEqualTo(20.0);
+                    assertThat(pkg.remainingUnits()).isEqualTo(14.0);
+                    assertThat(pkg.lessons()).extracting(lesson -> lesson.occurrenceId()).containsExactlyInAnyOrder(4001L, 4002L);
+                    assertThat(pkg.teacherHours()).filteredOn(hours -> Objects.equals(hours.teacherId(), 302L))
+                            .singleElement().satisfies(hours -> {
+                                assertThat(hours.allocatedUnits()).isEqualTo(4.0);
+                                assertThat(hours.deductedUnits()).isZero();
+                                assertThat(hours.remainingUnits()).isEqualTo(4.0);
+                            });
+                });
+        assertThat(teachers).filteredOn(teacher -> Objects.equals(teacher.teacherId(), 303L))
+                .singleElement().satisfies(teacher -> {
+                    var pkg = teacher.students().get(0).packages().get(0);
+                    assertThat(pkg.lessons()).extracting(lesson -> lesson.occurrenceId()).containsExactly(4003L);
+                    assertThat(pkg.teacherHours()).filteredOn(hours -> Objects.equals(hours.teacherId(), 303L))
+                            .singleElement().satisfies(hours -> {
+                                assertThat(hours.allocatedUnits()).isEqualTo(2.0);
+                                assertThat(hours.deductedUnits()).isZero();
+                                assertThat(hours.remainingUnits()).isEqualTo(2.0);
+                            });
+                });
+        assertThat(record.getActualTeacherId()).isEqualTo(301L);
+        assertThat(record.getDeductedUnits()).isEqualTo(12);
     }
 
     @Test

@@ -354,7 +354,7 @@
     <!-- Create / Edit Schedule dialog -->
     <el-dialog
       v-model="editDialogVisible"
-      :title="isEditing ? 'Edit Weekly Schedule' : 'Create Weekly Schedule'"
+      :title="isEditing ? 'Edit Schedule' : 'Create Weekly Schedule'"
       width="min(980px, calc(100vw - 32px))"
       :close-on-click-modal="false"
       class="schedule-dialog"
@@ -375,14 +375,37 @@
         </div>
         <div v-if="selectedPackage" class="edit-schedule__balance" aria-label="Package balance summary">
           <strong>Package hours</strong>
-          <span>Total {{ packageHours(selectedPackage.totalUnits).toFixed(1) }}h</span>
-          <span>Confirmed deducted {{ confirmedDeductionHours.toFixed(1) }}h</span>
-          <span>Pending admin review {{ pendingAdminDeductionHours.toFixed(1) }}h</span>
-          <span class="edit-schedule__balance-remaining">Remaining {{ remainingPackageHours.toFixed(1) }}h</span>
+          <span>Starting Hours {{ packageHours(selectedPackage.startingHours).toFixed(1) }}h</span>
+          <span>Allocated Hours {{ scheduleAllocatedHours == null ? '—' : `${scheduleAllocatedHours.toFixed(1)}h` }}</span>
+          <span class="edit-schedule__balance-remaining">Remaining {{ packageHours(selectedPackage.remainingUnits).toFixed(1) }}h</span>
         </div>
 
+        <el-radio-group v-if="isEditing" v-model="editMode" class="edit-schedule__mode" @change="resetEditModeDraft">
+          <el-radio-button value="CURRENT">Adjust current schedule</el-radio-button>
+          <el-radio-button value="REPLAN">Adjust weekly timetable</el-radio-button>
+        </el-radio-group>
+        <p v-if="isEditing" class="edit-schedule__hint">
+          {{ editMode === 'CURRENT'
+            ? 'Change a current slot’s teacher, allocated hours, lesson name, or classroom. Its day, time, and schedule period stay the same.'
+            : 'Change the start date or weekly times. Assign each previous slot’s lesson history to one new slot before saving.' }}
+        </p>
+        <el-alert v-if="isEditing && editMode === 'REPLAN' && pendingStartedLessons.length"
+          type="warning" :closable="false" show-icon
+          :title="`${pendingStartedLessons.length} previous lessons are still unconfirmed`">
+          <p>Review them in 1-on-1 Lessons, or choose to withdraw those pending records and reuse their hours in the new timetable.</p>
+          <ul class="edit-deduction-prompt__lessons">
+            <li v-for="lesson in pendingStartedLessons" :key="lesson.occurrenceId">
+              {{ dayjs(lesson.plannedStartAt).format('MMM D, YYYY') }} ·
+              {{ scheduleOccurrenceTimeRange(lesson.plannedStartAt, lesson.plannedEndAt) }} ·
+              {{ lesson.subjectName || 'Lesson' }} · {{ Number(lesson.plannedUnits || 0).toFixed(1) }}h
+            </li>
+          </ul>
+          <el-checkbox v-model="reclaimEndedUnconfirmedLessons">Withdraw these pending records and continue</el-checkbox>
+          <el-button link type="primary" @click="goToOneOnOneDeduction">Open 1-on-1 Lessons</el-button>
+        </el-alert>
+
         <el-form ref="editFormRef" :model="editForm" :rules="editFormRules" label-width="130px">
-          <el-form-item label="Start Date" prop="startDate">
+          <el-form-item v-if="!isEditing || editMode === 'REPLAN'" label="Start Date" prop="startDate">
             <el-date-picker
               v-model="editForm.startDate"
               type="date"
@@ -392,14 +415,7 @@
               :disabled-date="disabledPastDate"
             />
           </el-form-item>
-          <el-form-item v-if="isEditing" label="Status">
-            <el-select v-model="editForm.ruleStatus" style="width: 100%;">
-              <el-option label="Active" value="ACTIVE" />
-              <el-option label="Paused" value="PAUSED" />
-              <el-option label="Ended" value="ENDED" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="Notes">
+          <el-form-item v-if="!isEditing" label="Notes">
             <el-input
               v-model="editForm.notes"
               type="textarea"
@@ -409,10 +425,20 @@
             />
           </el-form-item>
         </el-form>
+        <el-alert v-if="isEditing && editMode === 'REPLAN'"
+          type="warning" :closable="false" show-icon
+          title="Saving ends the current recurring schedule immediately. New lessons start on the selected date; there may be a gap in lessons." />
 
         <!-- Weekly time selector -->
-        <el-divider content-position="left">Weekly Time Slots</el-divider>
-        <p class="edit-schedule__hint">
+        <el-divider content-position="left">{{ isEditing && editMode === 'CURRENT' ? 'Current time slots' : 'Weekly time slots' }}</el-divider>
+        <div v-if="isEditing && editMode === 'REPLAN'" class="edit-schedule__sources">
+          <strong>Previous time slots and teachers</strong>
+          <div v-for="source in originalEditSlots" :key="String(source.slotId)">
+            {{ scheduleSlotLabel(source) }} · {{ teacherNameForSlot(source.teacherId) }} · {{ source.subjectName || 'Lesson' }}
+            <span>{{ editForm.slots.some(slot => String(slot.slotId) === String(source.slotId)) ? '→ assigned' : '→ choose a successor below' }}</span>
+          </div>
+        </div>
+        <p v-if="!isEditing" class="edit-schedule__hint">
           Click and drag on the calendar to select class time slots. For each slot, assign a teacher,
           lesson name, and its schedule total, including deducted and pending lessons. Each slot is scheduled independently until
           its schedule total runs out (the last class takes the remainder if it does not divide evenly).
@@ -420,8 +446,16 @@
           saving checks conflicts on the actual lesson dates.
         </p>
         <el-alert v-if="editBusyError" :title="editBusyError" type="error" :closable="false" show-icon />
-        <div v-if="editBusyLoading" class="edit-schedule__hint">Loading student availability...</div>
+        <div v-if="editBusyLoading && (!isEditing || editMode === 'REPLAN')" class="edit-schedule__hint">Loading student availability...</div>
         <WeeklyTimeSelector
+          v-if="isEditing && editMode === 'CURRENT'"
+          :model-value="[]"
+          :occupied-slots="currentScheduleCalendarSlots"
+          :readonly="true"
+          :hide-hint="true"
+        />
+        <WeeklyTimeSelector
+          v-if="!isEditing || editMode === 'REPLAN'"
           v-model="editForm.slots"
           :week-start-date="editWeekMonday"
           :occupied-slots="otherPackageOccupiedSlots"
@@ -436,7 +470,26 @@
             <div class="slot-teacher-row__time">
               <strong>{{ scheduleSlotLabel(slot) }}</strong>
               <small>First class {{ firstOccurrenceDate(slot) }} · Each lesson {{ formatSlotHours(slot.plannedUnits) }} · {{ slotLessonPlan(slot) }}</small>
+              <label v-if="isEditing && editMode === 'REPLAN'" class="slot-teacher-row__field">
+                <span>Inherit previous lesson history</span>
+                <el-select v-model="slot.slotId" clearable placeholder="New slot, no previous history">
+                  <el-option
+                    v-for="source in originalEditSlots.filter(item => !editForm.slots.some(other => other !== slot && String(other.slotId) === String(item.slotId)))"
+                    :key="String(source.slotId)" :value="source.slotId!"
+                    :label="`${scheduleSlotLabel(source)} · ${teacherNameForSlot(source.teacherId)} · ${source.subjectName || 'Lesson'}`"
+                  />
+                </el-select>
+              </label>
             </div>
+            <label v-if="isEditing && editMode === 'CURRENT'" class="slot-teacher-row__field">
+              <span>Inherit previous lesson history</span>
+              <el-select v-model="selectedUnlinkedBySlot[String(slot.slotId)]" multiple filterable clearable
+                placeholder="Choose unassigned historical lessons" no-data-text="No unassigned historical lessons">
+                <el-option v-for="item in availableUnlinkedHistory(String(slot.slotId))"
+                  :key="String(item.occurrenceId)" :value="String(item.occurrenceId)"
+                  :label="`${item.plannedStartAt?.replace('T', ' ').slice(0, 16) || 'Unknown date'} · ${item.subjectName || 'Lesson'} · ${item.teacherName || 'Unknown teacher'}`" />
+              </el-select>
+            </label>
             <div class="slot-teacher-row__fields">
               <label class="slot-teacher-row__field">
                 <span>Teacher</span>
@@ -548,32 +601,32 @@
           </p>
         </el-alert>
         <el-alert
-          v-if="hasTeacherHandoffChanges"
+          v-if="isEditing && editMode === 'CURRENT' && hasTeacherHandoffChanges"
           class="edit-schedule__change-hint"
           type="info"
           :closable="false"
           title="The new teacher takes over this slot’s full lesson timeline. Completed and processed records keep their original teacher and deduction. Unprocessed, individually adjusted future lessons keep their date, time, classroom, and lesson name while moving to the new teacher; regular future lessons follow the edited weekly schedule."
         />
         <el-alert
-          v-if="isEditing && !hasSchedulePlanChanges"
+          v-if="isEditing && editMode === 'CURRENT' && !hasSchedulePlanChanges"
           class="edit-schedule__change-hint"
           type="info"
           :closable="false"
           title="Changing a classroom or lesson name updates future lessons only. Existing lesson records and allocated hours stay unchanged."
         />
         <el-alert
-          v-else-if="isEditing && hasSchedulePlanChanges"
+          v-else-if="isEditing && editMode === 'REPLAN' && hasSchedulePlanChanges"
           class="edit-schedule__change-hint"
           type="warning"
           :closable="false"
-          title="Changing allocated hours or the teacher keeps the current schedule period. Changing the start date or recurring time starts a new period. The new teacher can review the full lesson history and handle unfinished lessons."
+          title="The new timetable starts a new schedule period. Previous lesson records follow the history assignment selected above; completed lessons keep their original teacher and deduction."
         />
       </div>
 
       <template #footer>
         <div class="dialog-footer">
           <el-button @click="editDialogVisible = false">Cancel</el-button>
-          <el-button type="primary" :loading="submitting || editBusyLoading" :disabled="Boolean(editBusyError) || submitting" @click="submitForm">
+          <el-button type="primary" :loading="submitting || editBusyLoading || checkingEditDeduction" :disabled="Boolean(editBusyError) || submitting || checkingEditDeduction" @click="submitForm">
             {{ isEditing ? 'Save Changes' : 'Create Schedule' }}
           </el-button>
         </div>
@@ -1041,35 +1094,6 @@
       </template>
     </el-dialog>
 
-    <el-dialog
-      v-model="editDeductionPromptVisible"
-      title="Unconfirmed Lessons Need a Decision"
-      width="min(540px, calc(100vw - 32px))"
-      :close-on-click-modal="false"
-    >
-      <el-alert
-        :title="`${pendingStartedLessons.length} ended lesson(s) are not yet confirmed.`"
-        type="warning"
-        :closable="false"
-        show-icon
-      />
-      <p class="edit-deduction-prompt__message">
-        Review these lessons in 1-on-1 Lessons first. If you continue, their pending submissions and schedule records will be withdrawn, and those hours will be available for the new schedule. Confirmed lessons stay in the history.
-      </p>
-      <ul class="edit-deduction-prompt__lessons">
-        <li v-for="lesson in pendingStartedLessons" :key="lesson.occurrenceId">
-          {{ dayjs(lesson.plannedStartAt).format('MMM D, YYYY') }} ·
-          {{ scheduleOccurrenceTimeRange(lesson.plannedStartAt, lesson.plannedEndAt) }} ·
-          {{ lesson.subjectName || 'Lesson' }} · {{ Number(lesson.plannedUnits || 0).toFixed(1) }}h
-        </li>
-      </ul>
-
-      <template #footer>
-        <el-button type="primary" plain @click="goToOneOnOneDeduction">Go to 1-on-1 Lessons</el-button>
-        <el-button type="warning" @click="continueEditSchedule">Continue Edit Schedule</el-button>
-      </template>
-    </el-dialog>
-
     <PauseConfirmationDialog
       v-model="pauseConfirmationVisible"
       title="Pause Course"
@@ -1178,6 +1202,23 @@ const weeklyLoading = ref(false);
 const submitting = ref(false);
 const allocationSaveError = ref<ScheduleAllocationErrorDetails | null>(null);
 const isEditing = ref(false);
+type EditMode = 'CURRENT' | 'REPLAN';
+const editMode = ref<EditMode>('CURRENT');
+let activeEditMode: EditMode = 'CURRENT';
+const editModeDrafts: Partial<Record<EditMode, { startDate: string; slots: typeof editForm.slots }>> = {};
+interface UnlinkedHistoryOption {
+  occurrenceId: EntityId;
+  subjectName?: string;
+  teacherName?: string;
+  plannedStartAt?: string;
+}
+const unlinkedHistory = ref<UnlinkedHistoryOption[]>([]);
+const selectedUnlinkedBySlot = reactive<Record<string, string[]>>({});
+function availableUnlinkedHistory(slotId: string) {
+  const assignedElsewhere = new Set(Object.entries(selectedUnlinkedBySlot)
+    .filter(([key]) => key !== slotId).flatMap(([, ids]) => ids));
+  return unlinkedHistory.value.filter(item => !assignedElsewhere.has(String(item.occurrenceId)));
+}
 const editingRuleId = ref<EntityId | null>(null);
 const editFormRef = ref<FormInstance>();
 
@@ -1328,8 +1369,8 @@ const selectedPackageId = ref<EntityId | null>(null);
 const pausingPackageId = ref<EntityId | null>(null);
 const pauseConfirmationVisible = ref(false);
 const checkingEditDeduction = ref(false);
-const editDeductionPromptVisible = ref(false);
 const pendingStartedLessons = ref<OneOnOneLesson[]>([]);
+const scheduleAllocatedHours = ref<number | null>(null);
 const reclaimEndedUnconfirmedLessons = ref(false);
 const resumingPackageId = ref<EntityId | null>(null);
 const packageHoursDialogVisible = ref(false);
@@ -1816,6 +1857,35 @@ watch([
 }, { deep: true });
 const originalEditSlots = ref<Array<SlotDef & { slotId?: EntityId; allocatedHours?: number }>>([]);
 const originalAllocatedHours = ref(0);
+// 只读周历使用保存前的课位快照；调整老师或额度不改变固定时段。
+const currentScheduleCalendarSlots = computed<OccupiedSlotDef[]>(() => originalEditSlots.value.map(slot => ({
+  weekday: slot.weekday,
+  startTime: slot.startTime,
+  endTime: slot.endTime,
+  courseLabel: slot.subjectName || 'Lesson',
+  teacherName: teacherNameForSlot(slot.teacherId),
+  isCurrent: true,
+})));
+
+function teacherNameForSlot(teacherId?: EntityId): string {
+  return teachers.value.find(teacher => String(teacher.id) === String(teacherId))?.teacherName || 'Teacher';
+}
+
+// 两个编辑视图各自保存草稿，切换时不会把当前排课的字段带入重排请求。
+function resetEditModeDraft(value: string | number | boolean | undefined) {
+  const nextMode = value === 'REPLAN' ? 'REPLAN' : 'CURRENT';
+  editModeDrafts[activeEditMode] = {
+    startDate: editForm.startDate,
+    slots: editForm.slots.map(slot => ({ ...slot })),
+  };
+  const draft = editModeDrafts[nextMode];
+  if (draft) {
+    editForm.startDate = draft.startDate;
+    editForm.slots = draft.slots.map(slot => ({ ...slot }));
+  }
+  activeEditMode = nextMode;
+  allocationSaveError.value = null;
+}
 
 const editFormRules: FormRules = {
   startDate: [{ required: true, message: 'Start date is required', trigger: 'change' }],
@@ -2159,15 +2229,18 @@ function handleScheduleMoreAction(command: string | number | object) {
   }
 }
 
-// 点击 Edit Schedule 时先核对当前课包已开始的课次；只有未消课课次需要额外提示。
+// 打开编辑窗口后读取待处理课次，重排视图内由管理员明确决定是否撤销并回收。
 async function requestEditSchedule() {
   const packageToEdit = selectedPackage.value;
   const studentId = selectedStudentId.value;
   if (!packageToEdit || !studentId || !currentRule.value || checkingEditDeduction.value) return;
 
   reclaimEndedUnconfirmedLessons.value = false;
+  pendingStartedLessons.value = [];
+  scheduleAllocatedHours.value = null;
   checkingEditDeduction.value = true;
   try {
+    await openEditDialog();
     const response = await fetchOneOnOneDeductions({
       studentId,
       packageId: packageToEdit.id,
@@ -2182,10 +2255,7 @@ async function requestEditSchedule() {
       .flatMap(student => student.packages)
       .filter(item => String(item.packageId) === String(packageToEdit.id));
 
-    if (coursePackages.length === 0) {
-      ElMessage.error('Unable to find this course in the deduction records. Please refresh and try again.');
-      return;
-    }
+    scheduleAllocatedHours.value = coursePackages[0]?.allocatedUnits ?? null;
 
     const now = dayjs();
     const lessonsById = new Map<string, OneOnOneLesson>();
@@ -2201,23 +2271,11 @@ async function requestEditSchedule() {
     pendingStartedLessons.value = [...lessonsById.values()]
       .sort((first, second) => dayjs(first.plannedStartAt).valueOf() - dayjs(second.plannedStartAt).valueOf());
 
-    if (pendingStartedLessons.value.length > 0) {
-      editDeductionPromptVisible.value = true;
-      return;
-    }
-    await openEditDialog();
   } catch (error) {
-    ElMessage.error(`Unable to check lessons that need deduction. ${extractErrorMessage(error)}`);
+    ElMessage.error(`Unable to check unconfirmed lessons. ${extractErrorMessage(error)}`);
   } finally {
     checkingEditDeduction.value = false;
   }
-}
-
-// 弹窗的继续操作不重新查询，直接进入已有的周排课编辑流程。
-async function continueEditSchedule() {
-  editDeductionPromptVisible.value = false;
-  reclaimEndedUnconfirmedLessons.value = true;
-  await openEditDialog();
 }
 
 // 将当前学生和课包带到 1-on-1 消课页，便于管理员直接找到待核销课次。
@@ -2227,7 +2285,6 @@ function goToOneOnOneDeduction() {
   if (!packageToDeduct || !studentId) return;
 
   pauseConfirmationVisible.value = false;
-  editDeductionPromptVisible.value = false;
   void router.push({
     name: 'one-on-one-deduction',
     query: {
@@ -2544,8 +2601,19 @@ async function openEditDialog() {
       rolloverAllocatedHours: s.rolloverAllocatedUnits != null ? s.rolloverAllocatedUnits * 0.5 : undefined,
     })),
   });
+  unlinkedHistory.value = detail.unlinkedHistory || [];
+  Object.keys(selectedUnlinkedBySlot).forEach(key => delete selectedUnlinkedBySlot[key]);
+  editForm.slots.forEach(slot => { selectedUnlinkedBySlot[String(slot.slotId)] = []; });
   originalEditSlots.value = editForm.slots.map(slot => ({ ...slot }));
   originalAllocatedHours.value = editForm.slots.reduce((sum, slot) => sum + Number(slot.allocatedHours || 0), 0);
+  editMode.value = 'CURRENT';
+  activeEditMode = 'CURRENT';
+  editModeDrafts.CURRENT = { startDate: editForm.startDate, slots: editForm.slots.map(slot => ({ ...slot })) };
+  // 重排的历史继承必须由用户指定，不能把原课位 ID 自动带入新周期。
+  editModeDrafts.REPLAN = {
+    startDate: todayInAppTimezone(),
+    slots: editForm.slots.map(slot => ({ ...slot, slotId: undefined })),
+  };
   editDialogVisible.value = true;
 }
 
@@ -2661,15 +2729,30 @@ async function submitEditForm() {
       return;
     }
     if (!validateSlotAllocations()) return;
+    if (editMode.value === 'REPLAN') {
+      if (pendingStartedLessons.value.length && !reclaimEndedUnconfirmedLessons.value) {
+        ElMessage.warning('Review the unconfirmed lessons above, or choose to withdraw them before saving the new timetable.');
+        return;
+      }
+      const assigned = new Set(editForm.slots.map(slot => String(slot.slotId)).filter(id => id !== 'undefined'));
+      const missing = originalEditSlots.value.find(slot => !assigned.has(String(slot.slotId)));
+      if (missing) {
+        ElMessage.warning(`Assign the lesson history from ${scheduleSlotLabel(missing)} to one new time slot.`);
+        return;
+      }
+    }
     submitting.value = true;
     try {
       const result = await updateRecurringScheduleRule(editingRuleId.value!, {
+        editOperation: editMode.value,
         ruleStatus: editForm.ruleStatus,
         startDate: editForm.startDate,
         notes: editForm.notes || undefined,
-        reclaimEndedUnconfirmedLessons: reclaimEndedUnconfirmedLessons.value || undefined,
+        reclaimEndedUnconfirmedLessons: editMode.value === 'REPLAN'
+          ? reclaimEndedUnconfirmedLessons.value || undefined : undefined,
         slots: editForm.slots.map((s) => ({
           slotId: s.slotId,
+          inheritedOccurrenceIds: editMode.value === 'CURRENT' ? selectedUnlinkedBySlot[String(s.slotId)] : undefined,
           teacherId: s.teacherId,
           deliveryMode: s.classroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON',
           classroomId: s.classroomSelection?.startsWith('ROOM:') ? s.classroomSelection.slice(5) : undefined,
@@ -3219,17 +3302,15 @@ void init();
 
 // ─── Date helpers ──────────────────────────────────────────
 function disabledPastDate(date: Date) {
-  return dayjs(date).startOf('day').isBefore(dayjs().startOf('day'));
+  return dayjs(date).format('YYYY-MM-DD') < todayInAppTimezone();
 }
 </script>
 
 <style scoped>
-.edit-deduction-prompt__message {
-  margin: 12px 0 0;
-  color: #606266;
-  line-height: 1.6;
-}
-
+.edit-schedule__mode { margin: 16px 0 4px; }
+.edit-schedule__sources { margin: 12px 0; padding: 12px 16px; border: 1px solid #d9e4ef; border-radius: 8px; background: #f7faff; }
+.edit-schedule__sources > div { display: flex; justify-content: space-between; gap: 12px; padding-top: 8px; }
+.edit-schedule__sources span { color: #64748b; white-space: nowrap; }
 .edit-deduction-prompt__lessons {
   max-height: 180px;
   margin: 10px 0 0;

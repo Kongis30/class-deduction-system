@@ -40,6 +40,9 @@ public class RecurringScheduleRuleUpdateRequest {
     @Schema(description = "Admin explicitly chose to reclaim ended, unconfirmed private lessons while editing the schedule")
     private Boolean reclaimEndedUnconfirmedLessons;
 
+    @Schema(description = "Edit operation: CURRENT keeps existing slot times and period; REPLAN starts a new period with explicit slot inheritance")
+    private String editOperation;
+
     @Valid
     @NotEmpty(message = "At least one recurring slot is required")
     @Schema(description = "Recurring weekly slots")

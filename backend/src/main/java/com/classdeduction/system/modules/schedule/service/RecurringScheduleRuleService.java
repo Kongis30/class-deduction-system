@@ -28,6 +28,12 @@ public interface RecurringScheduleRuleService {
     /** 按当前课包余额重建未来未确认课次，保留已确认和人工调整过的课次。 */
     void refreshPackageSchedule(Long packageId);
 
+    /** 手动减少课包余额前，检查既有分配及历史待处理课是否仍有足额余额。 */
+    void validateBalanceReduction(Long packageId, int remainingUnits);
+
+    /** 在调用方事务内按固定顺序锁定私教组成员课包，串行化排课及余额修改。 */
+    void lockSchedulePackages(Long packageId);
+
     /** 按当前周期各课位已保存额度校准未来普通课次，保留历史及有记录的课次。 */
     void reconcilePackageSchedule(Long packageId);
 

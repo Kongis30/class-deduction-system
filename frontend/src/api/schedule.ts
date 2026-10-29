@@ -92,6 +92,7 @@ export function fetchSchedulePrintHistory(packageId: EntityId) {
 
 export interface RecurringScheduleSlotPayload {
   slotId?: EntityId;
+  inheritedOccurrenceIds?: EntityId[];
   teacherId?: EntityId;
   deliveryMode?: 'IN_PERSON' | 'ONLINE';
   classroomId?: EntityId;
@@ -124,6 +125,7 @@ export function createRecurringScheduleRule(data: RecurringScheduleRuleCreatePay
 }
 
 export interface RecurringScheduleRuleUpdatePayload {
+  editOperation?: 'CURRENT' | 'REPLAN';
   defaultClassroomId?: EntityId;
   ruleStatus?: string;
   startDate: string;

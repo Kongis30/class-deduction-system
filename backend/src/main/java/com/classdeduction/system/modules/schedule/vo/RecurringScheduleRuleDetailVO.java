@@ -33,6 +33,7 @@ public record RecurringScheduleRuleDetailVO(
         Double preservedReservedHours,
         Double startingHours,
         List<RecurringScheduleSlotVO> slots,
+        List<UnlinkedLessonHistoryVO> unlinkedHistory,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {

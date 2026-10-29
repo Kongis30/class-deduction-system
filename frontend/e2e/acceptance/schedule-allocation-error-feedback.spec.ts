@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import dayjs from 'dayjs';
 
 test('Edit Schedule shows the exact allocation shortfall and clears it after correction', async ({ page }) => {
   const admin = {
@@ -19,6 +20,7 @@ test('Edit Schedule shows the exact allocation shortfall and clears it after cor
     packageName: 'Math 40 hours', ruleStatus: 'ACTIVE', startDate: '2026-10-01',
     slotCount: 1, generatedOccurrenceCount: 10, deductedHours: 8, pendingHours: 2,
     otherReservedHours: 0, preservedReservedHours: 0, startingHours: 40,
+    unlinkedHistory: [{ occurrenceId: '2104217509483360257', subjectName: 'Vocabulary', teacherName: 'Ms. Lau', plannedStartAt: '2026-09-27T20:00:00' }],
     slots: [{
       id: '6001', teacherId: '9001', teacherName: 'Emma Wang', subjectName: 'Math',
       deliveryMode: 'ONLINE', weekday: 1, startTime: '18:00:00', endTime: '20:00:00',
@@ -38,6 +40,7 @@ test('Edit Schedule shows the exact allocation shortfall and clears it after cor
     currentRuleRetainedHours: 0,
   };
   let updateCount = 0;
+  const futureStart = dayjs().add(30, 'day').format('YYYY-MM-DD');
   await page.addInitScript(user => {
     localStorage.setItem('jbt_auth_token', 'test-token');
     localStorage.setItem('jbt_auth_user', JSON.stringify(user));
@@ -51,9 +54,18 @@ test('Edit Schedule shows the exact allocation shortfall and clears it after cor
     });
 
     if (route.request().method() === 'PUT' && path === '/v1/schedule/rules/5001') {
-      updateCount += 1;
       const payload = route.request().postDataJSON();
+      if (payload.editOperation === 'REPLAN') {
+        expect(payload.startDate).toBe(futureStart);
+        expect(payload.slots[0].slotId).toBe('6001');
+        expect(payload.slots[0].allocatedUnits).toBe(80);
+        await ok({ ruleId: '5002', newSlotCount: 1, preservedOccurrenceCount: 1,
+          deletedOccurrenceCount: 0, generatedOccurrenceCount: 1, confirmedOccurrenceCount: 1 });
+        return;
+      }
+      updateCount += 1;
       if (updateCount === 1) {
+        expect(payload.slots[0].inheritedOccurrenceIds).toEqual(['2104217509483360257']);
         expect(payload.slots[0].teacherId).toBe('9002');
         expect(payload.slots[0].allocatedUnits).toBe(60);
         await route.fulfill({
@@ -83,7 +95,7 @@ test('Edit Schedule shows the exact allocation shortfall and clears it after cor
     if (path === '/v1/schedule/occurrences/one-on-one-deductions') {
       return ok([{
         teacherId: '9001', teacherName: 'Emma Wang', students: [{
-          studentId: '2001', studentName: 'Alex Kim', packages: [{ packageId: '7001', lessons: [] }],
+          studentId: '2001', studentName: 'Alex Kim', packages: [{ packageId: '7001', allocatedUnits: 40, lessons: [] }],
         }],
       }]);
     }
@@ -100,17 +112,36 @@ test('Edit Schedule shows the exact allocation shortfall and clears it after cor
   await page.locator('.col-item').filter({ hasText: 'Alex Kim' }).first().click();
   await expect(page.getByRole('button', { name: 'Edit Schedule' })).toBeVisible();
   await page.getByRole('button', { name: 'Edit Schedule' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Edit Weekly Schedule' });
+  const dialog = page.getByRole('dialog', { name: 'Edit Schedule' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.locator('.edit-schedule__balance')).toContainText('Total 40.0h');
+  await expect(dialog.locator('.edit-schedule__balance')).toContainText('Starting Hours 40.0h');
+  await expect(dialog.locator('.edit-schedule__balance')).toContainText('Allocated Hours 40.0h');
   await expect(dialog.locator('.edit-schedule__balance')).toContainText('Remaining 24.0h');
+  await expect(dialog.locator('.weekly-time-selector')).toBeVisible();
+  await dialog.getByText('Adjust weekly timetable').click();
+  await expect(dialog).toContainText('Saving ends the current recurring schedule immediately');
+  await dialog.getByPlaceholder('Select start date').fill(futureStart);
+  await dialog.getByPlaceholder('Select start date').press('Tab');
+  await expect(dialog.locator('.edit-schedule__sources')).toContainText('choose a successor below');
+  await dialog.getByRole('button', { name: 'Save Changes' }).click();
+  await expect(page.getByText(/Assign the lesson history from/)).toBeVisible();
+  await dialog.locator('.slot-teacher-row__time .el-select').click();
+  await page.getByRole('option', { name: /Monday 18:00/ }).click();
+  await expect(dialog.locator('.edit-schedule__sources')).toContainText('assigned');
+  await dialog.getByRole('button', { name: 'Save Changes' }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole('button', { name: 'Edit Schedule' }).click();
+  await expect(dialog).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
 
-  await dialog.locator('.slot-teacher-row__field').nth(0).locator('.el-select').click();
+  await dialog.locator('.slot-teacher-row > label').filter({ hasText: 'Inherit previous lesson history' }).locator('.el-select').click();
+  await page.getByRole('option', { name: /2026-09-27 20:00 · Vocabulary · Ms. Lau/ }).click();
+  await page.keyboard.press('Escape');
+  await dialog.locator('.slot-teacher-row__fields .slot-teacher-row__field').nth(0).locator('.el-select').click();
   await page.getByRole('option', { name: 'Ms. Beatrice' }).click();
   const allocationInput = dialog.locator('.slot-teacher-row__field--hours input');
   await expect(allocationInput).toHaveValue('40.0');
-  await expect(dialog).toContainText('Changing allocated hours or the teacher keeps the current schedule period');
+  await expect(dialog).toContainText('The new teacher takes over this slot’s full lesson timeline');
   await allocationInput.fill('30');
   await allocationInput.press('Tab');
   await dialog.getByRole('button', { name: 'Save Changes' }).click();
@@ -140,7 +171,7 @@ test('Edit Schedule shows the exact allocation shortfall and clears it after cor
   await allocationInput.press('Tab');
   await expect(allocationError).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Save Changes' }).click();
-  await expect(page.getByText(/Schedule updated\./)).toBeVisible();
+  await expect(page.getByText(/Schedule updated\./).last()).toBeVisible();
   await expect(dialog).toHaveCount(0);
   expect(updateCount).toBe(2);
 });

@@ -89,6 +89,8 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
                 "int NOT NULL DEFAULT 0 COMMENT 'Previous-period leave hours added to the current slot' AFTER occurrence_type");
         addScheduleColumnIfMissing("lesson_occurrence", "allocation_owner_teacher_id",
                 "bigint DEFAULT NULL COMMENT 'Teacher whose recurring slot owns this occurrence allocation' AFTER schedule_slot_id");
+        addScheduleColumnIfMissing("lesson_occurrence", "history_owner_lineage_id",
+                "bigint DEFAULT NULL COMMENT 'Administrator-selected owner lineage for unlinked historical lessons'");
         addScheduleColumnIfMissing("lesson_occurrence", "allocation_anchor_date",
                 "date DEFAULT NULL COMMENT 'Original recurring date retained when this occurrence is adjusted' AFTER allocation_owner_teacher_id");
         backfillOccurrenceAllocationSnapshots();
