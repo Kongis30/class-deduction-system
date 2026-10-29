@@ -64,6 +64,22 @@ public final class PrivateLessonAllocation {
                         && Objects.equals(historicalSlot.getPlannedUnits(), currentSlot.getPlannedUnits()));
     }
 
+    /** 旧版重建的课位仅在同一规则、时段唯一匹配时接续，避免把不同周期或歧义课位合并。 */
+    public static RecurringScheduleSlotEntity findUniqueCurrentSlot(
+            RecurringScheduleSlotEntity historical, List<RecurringScheduleSlotEntity> currentSlots) {
+        if (historical == null || historical.getRuleId() == null || historical.getWeekday() == null
+                || historical.getStartTime() == null || historical.getEndTime() == null
+                || historical.getPlannedUnits() == null) return null;
+        List<RecurringScheduleSlotEntity> matches = currentSlots.stream()
+                .filter(slot -> Objects.equals(historical.getRuleId(), slot.getRuleId()))
+                .filter(slot -> Objects.equals(historical.getWeekday(), slot.getWeekday())
+                        && Objects.equals(historical.getStartTime(), slot.getStartTime())
+                        && Objects.equals(historical.getEndTime(), slot.getEndTime())
+                        && Objects.equals(historical.getPlannedUnits(), slot.getPlannedUnits()))
+                .toList();
+        return matches.size() == 1 ? matches.get(0) : null;
+    }
+
     /** 同一课次可能出现在多个老师或共享课成员视图中，按课次 ID 只统计一次。 */
     public static int reservedUnits(Collection<LessonOccurrenceEntity> occurrences,
                                     Map<Long, LessonRecordEntity> recordsByOccurrenceId) {

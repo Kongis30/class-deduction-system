@@ -46,6 +46,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
+import com.classdeduction.system.modules.schedule.util.PrivateLessonAllocation;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.service.RecurringScheduleRuleService;
@@ -1093,6 +1094,10 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                     .toList();
             if (!sameLineage.isEmpty()) {
                 return sameLineage.stream().anyMatch(slot -> Objects.equals(slot.getTeacherId(), teacherId));
+            }
+            RecurringScheduleSlotEntity legacyMatch = PrivateLessonAllocation.findUniqueCurrentSlot(sourceSlot, currentSlots);
+            if (legacyMatch != null) {
+                return Objects.equals(legacyMatch.getTeacherId(), teacherId);
             }
         }
         return Objects.equals(teacherId, occurrence.getPlannedTeacherId());

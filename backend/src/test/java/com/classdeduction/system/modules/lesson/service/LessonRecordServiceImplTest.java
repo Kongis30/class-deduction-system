@@ -51,6 +51,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -302,6 +303,29 @@ class LessonRecordServiceImplTest {
         verify(hourLedgerMapper, never()).insert(any(HourLedgerEntity.class));
         verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
         verify(lessonOccurrenceMapper, never()).updateById(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
+    void legacyRebuiltSlotGrantsHandlingToCurrentTeacherOnly() {
+        LessonOccurrenceEntity occurrence = buildRecentOccurrence();
+        occurrence.setScheduleSlotId(9001L); occurrence.setPlannedTeacherId(701L);
+        RecurringScheduleRuleEntity rule = new RecurringScheduleRuleEntity(); rule.setId(5002L);
+        RecurringScheduleSlotEntity old = new RecurringScheduleSlotEntity();
+        old.setId(9001L); old.setRuleId(5002L); old.setSlotLineageId(9001L); old.setTeacherId(701L);
+        old.setWeekday(4); old.setStartTime(java.time.LocalTime.of(18, 0)); old.setEndTime(java.time.LocalTime.of(20, 0)); old.setPlannedUnits(4);
+        RecurringScheduleSlotEntity current = new RecurringScheduleSlotEntity();
+        current.setId(9002L); current.setRuleId(5002L); current.setSlotLineageId(9002L); current.setTeacherId(702L);
+        current.setWeekday(4); current.setStartTime(old.getStartTime()); current.setEndTime(old.getEndTime()); current.setPlannedUnits(4);
+        when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(old));
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(rule));
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(current));
+
+        Boolean newTeacherAllowed = ReflectionTestUtils.invokeMethod(lessonRecordService,
+                "canTeacherHandleOccurrence", 702L, occurrence);
+        Boolean oldTeacherAllowed = ReflectionTestUtils.invokeMethod(lessonRecordService,
+                "canTeacherHandleOccurrence", 701L, occurrence);
+        assertThat(newTeacherAllowed).isTrue();
+        assertThat(oldTeacherAllowed).isFalse();
     }
 
     @Test

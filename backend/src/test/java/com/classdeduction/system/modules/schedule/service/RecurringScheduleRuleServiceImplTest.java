@@ -1385,6 +1385,54 @@ class RecurringScheduleRuleServiceImplTest {
     }
 
     @Test
+    void legacySameRuleSlotCountsConfirmedHoursAgainstCurrentAllocation() {
+        RecurringScheduleRuleEntity rule = buildExistingRule();
+        rule.setAllocationPeriodStartedAt(LocalDateTime.of(2026, 9, 1, 0, 0));
+        RecurringScheduleSlotEntity current = new RecurringScheduleSlotEntity();
+        current.setId(6001L); current.setRuleId(rule.getId()); current.setSlotStatus("ACTIVE");
+        current.setWeekday(4); current.setStartTime(LocalTime.of(18, 0)); current.setEndTime(LocalTime.of(20, 0));
+        current.setPlannedUnits(4); current.setAllocatedUnits(8);
+        RecurringScheduleSlotEntity old = new RecurringScheduleSlotEntity();
+        old.setId(6002L); old.setRuleId(rule.getId()); old.setWeekday(4);
+        old.setStartTime(current.getStartTime()); old.setEndTime(current.getEndTime()); old.setPlannedUnits(4);
+        LessonOccurrenceEntity historical = buildRuleOccurrence(9301L, LocalDate.of(2026, 9, 24), 4, "MERGED");
+        historical.setScheduleSlotId(old.getId()); historical.setScheduleRuleId(rule.getId());
+        LessonOccurrenceEntity future = buildRuleOccurrence(9302L, LocalDate.of(2026, 11, 5), 4, "SCHEDULED");
+        future.setScheduleSlotId(current.getId()); future.setScheduleRuleId(rule.getId());
+        LessonRecordEntity record = buildRecord(historical.getId(), 4);
+        record.setConfirmStage("CONFIRMED"); record.setShouldDeduct(1); record.setConfirmedAt(LocalDateTime.of(2026, 10, 1, 12, 0));
+        when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(old));
+
+        ReflectionTestUtils.invokeMethod(recurringScheduleRuleService, "ensureCurrentPeriodAllocationIsCovered",
+                List.of(current), List.of(historical, future), Map.of(historical.getId(), record), rule);
+
+        assertThat(historical.getScheduleSlotId()).isEqualTo(old.getId());
+        assertThat(record.getDeductedUnits()).isEqualTo(4);
+    }
+
+    @Test
+    void legacySlotWithAmbiguousCurrentMatchesIsNotAssigned() {
+        RecurringScheduleRuleEntity rule = buildExistingRule();
+        RecurringScheduleSlotEntity old = new RecurringScheduleSlotEntity();
+        old.setId(6002L); old.setRuleId(rule.getId()); old.setWeekday(4);
+        old.setStartTime(LocalTime.of(18, 0)); old.setEndTime(LocalTime.of(20, 0)); old.setPlannedUnits(4);
+        RecurringScheduleSlotEntity first = new RecurringScheduleSlotEntity();
+        first.setId(6001L); first.setRuleId(rule.getId()); first.setWeekday(4);
+        first.setStartTime(old.getStartTime()); first.setEndTime(old.getEndTime()); first.setPlannedUnits(4);
+        RecurringScheduleSlotEntity second = new RecurringScheduleSlotEntity();
+        second.setId(6003L); second.setRuleId(rule.getId()); second.setWeekday(4);
+        second.setStartTime(old.getStartTime()); second.setEndTime(old.getEndTime()); second.setPlannedUnits(4);
+        LessonOccurrenceEntity historical = buildRuleOccurrence(9301L, LocalDate.of(2026, 9, 24), 4, "MERGED");
+        historical.setScheduleSlotId(old.getId()); historical.setScheduleRuleId(rule.getId());
+        when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(old));
+
+        Map<Long, Long> mapping = ReflectionTestUtils.invokeMethod(recurringScheduleRuleService,
+                "resolveCurrentSlotIds", rule, List.of(first, second), List.of(historical));
+
+        assertThat(mapping).doesNotContainKey(old.getId());
+    }
+
+    @Test
     void ruleDetailsCountOnlyDeductionsInCurrentPeriod() {
         RecurringScheduleRuleEntity rule = buildExistingRule();
         LocalDateTime now = AppTime.nowLocalDateTime();

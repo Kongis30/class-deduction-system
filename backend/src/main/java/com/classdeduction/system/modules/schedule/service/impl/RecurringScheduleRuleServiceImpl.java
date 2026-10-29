@@ -521,11 +521,12 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                                                              LocalDateTime now) {
         List<AllocationCorrection> corrections = new ArrayList<>();
         LocalDateTime periodStart = PrivateSchedulePeriod.startAt(rule);
+        Map<Long, Long> currentSlotIds = resolveCurrentSlotIds(rule, slots, occurrences);
         Map<Long, List<LessonOccurrenceEntity>> bySlot = occurrences.stream()
-                .filter(occurrence -> occurrence.getScheduleSlotId() != null)
+                .filter(occurrence -> currentSlotIds.containsKey(occurrence.getScheduleSlotId()))
                 .filter(occurrence -> PrivateSchedulePeriod.contains(occurrence,
                         recordsByOccurrenceId.get(occurrence.getId()), rule, periodStart))
-                .collect(Collectors.groupingBy(LessonOccurrenceEntity::getScheduleSlotId));
+                .collect(Collectors.groupingBy(occurrence -> currentSlotIds.get(occurrence.getScheduleSlotId())));
         for (RecurringScheduleSlotEntity slot : slots) {
             List<LessonOccurrenceEntity> slotOccurrences = bySlot.getOrDefault(slot.getId(), List.of());
             int accounted = slotOccurrences.stream()
@@ -1068,12 +1069,13 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .collect(Collectors.toMap(RecurringScheduleSlotRequest::getSlotId, slot -> slot));
         LocalDateTime now = AppTime.nowLocalDateTime();
         LocalDateTime periodStart = PrivateSchedulePeriod.startAt(rule);
+        Map<Long, Long> currentSlotIds = resolveCurrentSlotIds(rule, currentSlots, occurrences);
 
         for (RecurringScheduleSlotEntity current : currentSlots) {
             int nextUnits = safeUnits(requestedById.get(current.getId()).getAllocatedUnits());
             if (nextUnits >= safeUnits(current.getAllocatedUnits())) continue;
             List<LessonOccurrenceEntity> slotOccurrences = occurrences.stream()
-                    .filter(occurrence -> Objects.equals(current.getId(), occurrence.getScheduleSlotId()))
+                    .filter(occurrence -> Objects.equals(current.getId(), currentSlotIds.get(occurrence.getScheduleSlotId())))
                     .filter(occurrence -> PrivateSchedulePeriod.contains(occurrence,
                             recordsByOccurrenceId.get(occurrence.getId()), rule, periodStart))
                     .filter(occurrence -> !"CANCELLED".equals(occurrence.getPlanningStatus()))
@@ -2429,6 +2431,25 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot, (left, right) -> left));
     }
 
+    /** 将旧版同一规则重建的课位映射回唯一对应的现有时段，历史课次自身的快照不变。 */
+    private Map<Long, Long> resolveCurrentSlotIds(RecurringScheduleRuleEntity rule,
+                                                   List<RecurringScheduleSlotEntity> currentSlots,
+                                                   List<LessonOccurrenceEntity> occurrences) {
+        Map<Long, Long> resolved = new HashMap<>();
+        currentSlots.forEach(slot -> resolved.put(slot.getId(), slot.getId()));
+        List<Long> historicalIds = occurrences.stream()
+                .filter(occurrence -> Objects.equals(rule.getId(), occurrence.getScheduleRuleId()))
+                .map(LessonOccurrenceEntity::getScheduleSlotId)
+                .filter(Objects::nonNull).filter(id -> !resolved.containsKey(id)).distinct().toList();
+        if (historicalIds.isEmpty()) return resolved;
+        for (RecurringScheduleSlotEntity historical : recurringScheduleSlotMapper.selectIncludingDeletedByIds(historicalIds)) {
+            if (!Objects.equals(rule.getId(), historical.getRuleId())) continue;
+            RecurringScheduleSlotEntity match = PrivateLessonAllocation.findUniqueCurrentSlot(historical, currentSlots);
+            if (match != null) resolved.put(historical.getId(), match.getId());
+        }
+        return resolved;
+    }
+
     /** 只更新尚无消课记录的未来课次；已有记录沿原 slot 保留，由现任老师按 lineage 接手操作入口。 */
     private List<LessonOccurrenceEntity> futureOccurrencesForTeacherHandoff(
             List<LessonOccurrenceEntity> candidates,
@@ -2866,6 +2887,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             return candidates;
         }
         LocalDateTime periodStart = PrivateSchedulePeriod.startAt(rule);
+        Map<Long, Long> currentSlotIds = resolveCurrentSlotIds(rule, slots, preservedOccurrences);
         Map<Long, Integer> remainingBySlot = new HashMap<>();
         for (RecurringScheduleSlotEntity slot : slots) {
             remainingBySlot.put(slot.getId(), Math.max(0, slot.getAllocatedUnits()));
@@ -2879,12 +2901,11 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 continue;
             }
             int units = reservedAllocationUnits(preserved, recordByOccurrenceId.get(preserved.getId()));
-            if (preserved.getScheduleSlotId() == null
-                    || !remainingBySlot.containsKey(preserved.getScheduleSlotId())) {
+            Long slotId = currentSlotIds.get(preserved.getScheduleSlotId());
+            if (slotId == null || !remainingBySlot.containsKey(slotId)) {
                 continue;
             }
             totalRemaining -= units;
-            Long slotId = preserved.getScheduleSlotId();
             remainingBySlot.merge(slotId, -units, Integer::sum);
         }
         List<LessonOccurrenceEntity> capped = new ArrayList<>();
@@ -2984,6 +3005,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             Map<Long, LessonRecordEntity> recordByOccurrenceId,
             RecurringScheduleRuleEntity rule) {
         LocalDateTime periodStart = PrivateSchedulePeriod.startAt(rule);
+        Map<Long, Long> currentSlotIds = resolveCurrentSlotIds(rule, slots, scheduledOccurrences);
         Map<Long, Integer> accountedUnitsBySlot = new HashMap<>();
         for (LessonOccurrenceEntity occurrence : scheduledOccurrences) {
             if (Objects.equals(occurrence.getIsDeleted(), 1)
@@ -2994,9 +3016,12 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                             recordByOccurrenceId.get(occurrence.getId()), rule, periodStart)) {
                 continue;
             }
-            accountedUnitsBySlot.merge(occurrence.getScheduleSlotId(),
-                    reservedAllocationUnits(occurrence, recordByOccurrenceId.get(occurrence.getId())),
-                    Integer::sum);
+            Long slotId = currentSlotIds.get(occurrence.getScheduleSlotId());
+            if (slotId != null) {
+                accountedUnitsBySlot.merge(slotId,
+                        reservedAllocationUnits(occurrence, recordByOccurrenceId.get(occurrence.getId())),
+                        Integer::sum);
+            }
         }
 
         for (RecurringScheduleSlotEntity slot : slots) {

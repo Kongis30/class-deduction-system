@@ -1286,15 +1286,21 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                         occurrence.getPrivateLessonGroupId()))))
                 .stream().map(RecurringScheduleRuleEntity::getId).filter(Objects::nonNull).toList();
         if (!activeRuleIds.isEmpty()) {
-            List<RecurringScheduleSlotEntity> sameLineage = recurringScheduleSlotMapper.selectList(
-                            new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
-                                    .in(RecurringScheduleSlotEntity::getRuleId, activeRuleIds)
-                                    .eq(RecurringScheduleSlotEntity::getSlotStatus, "ACTIVE"))
-                    .stream().filter(slot -> Objects.equals(lineageId,
+            List<RecurringScheduleSlotEntity> activeSlots = recurringScheduleSlotMapper.selectList(
+                    new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                            .in(RecurringScheduleSlotEntity::getRuleId, activeRuleIds)
+                            .eq(RecurringScheduleSlotEntity::getSlotStatus, "ACTIVE"));
+            List<RecurringScheduleSlotEntity> sameLineage = activeSlots.stream()
+                    .filter(slot -> Objects.equals(lineageId,
                             slot.getSlotLineageId() == null ? slot.getId() : slot.getSlotLineageId()))
                     .toList();
             if (!sameLineage.isEmpty()) {
                 return sameLineage.stream().anyMatch(slot -> Objects.equals(slot.getTeacherId(), teacherId));
+            }
+            // 旧版同一规则内重建的课位没有继承 lineage，只有唯一时段匹配才交接权限。
+            RecurringScheduleSlotEntity legacyMatch = PrivateLessonAllocation.findUniqueCurrentSlot(sourceSlot, activeSlots);
+            if (legacyMatch != null) {
+                return Objects.equals(legacyMatch.getTeacherId(), teacherId);
             }
         }
         return Objects.equals(occurrence.getPlannedTeacherId(), teacherId);
@@ -1791,6 +1797,20 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     : recurringScheduleSlotMapper.selectIncludingDeletedByIds(historicalSlotIds).stream()
                             .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot));
             recurringSlotsById.putAll(historicalSlotsById);
+            // 旧版同一规则曾重建课位，按唯一相同的时段接续历史 lineage；实际授课快照不变。
+            for (Map.Entry<Long, Long> entry : currentRuleByPackage.entrySet()) {
+                Long packageId = entry.getKey();
+                Long ruleId = entry.getValue();
+                Map<Long, Long> owners = currentSlotTeacherByLineageByPackage
+                        .computeIfAbsent(packageId, key -> new HashMap<>());
+                for (RecurringScheduleSlotEntity oldSlot : historicalSlotsById.values()) {
+                    if (!Objects.equals(ruleId, oldSlot.getRuleId())) continue;
+                    Long oldLineage = oldSlot.getSlotLineageId() == null ? oldSlot.getId() : oldSlot.getSlotLineageId();
+                    if (owners.containsKey(oldLineage)) continue;
+                    RecurringScheduleSlotEntity match = PrivateLessonAllocation.findUniqueCurrentSlot(oldSlot, currentSlots);
+                    if (match != null) owners.put(oldLineage, match.getTeacherId());
+                }
+            }
             for (Long packageId : currentRuleByPackage.keySet()) {
                 allocatedByPackage.putIfAbsent(packageId, 0);
             }

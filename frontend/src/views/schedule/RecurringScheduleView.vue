@@ -1060,7 +1060,7 @@
         <li v-for="lesson in pendingStartedLessons" :key="lesson.occurrenceId">
           {{ dayjs(lesson.plannedStartAt).format('MMM D, YYYY') }} ·
           {{ scheduleOccurrenceTimeRange(lesson.plannedStartAt, lesson.plannedEndAt) }} ·
-          {{ lesson.subjectName || 'Lesson' }} · {{ ((lesson.plannedUnits || 0) * 0.5).toFixed(1) }}h
+          {{ lesson.subjectName || 'Lesson' }} · {{ Number(lesson.plannedUnits || 0).toFixed(1) }}h
         </li>
       </ul>
 
@@ -2175,24 +2175,31 @@ async function requestEditSchedule() {
     if (String(selectedStudentId.value) !== String(studentId)
       || String(selectedPackageId.value) !== String(packageToEdit.id)) return;
 
-    const coursePackage = response.data.data
+    // 同一个课包可能由多位老师负责，必须汇总各老师入口才能列全待处理课次。
+    const coursePackages = response.data.data
       .flatMap(teacher => teacher.students)
-      .flatMap(student => student.packages.map(item => ({ student, item })))
-      .find(({ student, item }) =>
-        String(student.studentId) === String(studentId)
-        && String(item.packageId) === String(packageToEdit.id))?.item;
+      .filter(student => String(student.studentId) === String(studentId))
+      .flatMap(student => student.packages)
+      .filter(item => String(item.packageId) === String(packageToEdit.id));
 
-    if (!coursePackage) {
+    if (coursePackages.length === 0) {
       ElMessage.error('Unable to find this course in the deduction records. Please refresh and try again.');
       return;
     }
 
     const now = dayjs();
-    pendingStartedLessons.value = coursePackage.lessons.filter(lesson =>
-      lesson.planningStatus !== 'CANCELLED'
-      && dayjs(lesson.plannedEndAt).isValid()
-      && !dayjs(lesson.plannedEndAt).isAfter(now)
-      && lesson.confirmStage !== 'CONFIRMED');
+    const lessonsById = new Map<string, OneOnOneLesson>();
+    coursePackages.flatMap(item => item.lessons).forEach(lesson => {
+      if (String(lesson.scheduleRuleId) === String(currentRule.value?.id)
+        && lesson.planningStatus !== 'CANCELLED'
+        && dayjs(lesson.plannedEndAt).isValid()
+        && !dayjs(lesson.plannedEndAt).isAfter(now)
+        && lesson.confirmStage !== 'CONFIRMED') {
+        lessonsById.set(String(lesson.occurrenceId), lesson);
+      }
+    });
+    pendingStartedLessons.value = [...lessonsById.values()]
+      .sort((first, second) => dayjs(first.plannedStartAt).valueOf() - dayjs(second.plannedStartAt).valueOf());
 
     if (pendingStartedLessons.value.length > 0) {
       editDeductionPromptVisible.value = true;
