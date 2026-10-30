@@ -19,6 +19,15 @@
             <el-icon><Delete /></el-icon>
             Deleted
           </el-button>
+          <el-button
+            v-if="appStore.isMobileViewport"
+            type="primary"
+            size="small"
+            class="student-add-trigger"
+            @click="openStudentDialog()"
+          >
+            Add student
+          </el-button>
         </div>
       </div>
 
@@ -1830,6 +1839,10 @@ onBeforeUnmount(() => {
   width: 190px;
 }
 
+@media (min-width: 641px) {
+  .panel-header__actions .student-add-trigger { display: none; }
+}
+
 @media (max-width: 640px) {
   .course-product-panel { padding: 12px; }
 
@@ -1854,6 +1867,11 @@ onBeforeUnmount(() => {
     margin: 0;
     padding: 0 8px;
     font-size: 12px;
+  }
+
+  .panel-header__actions > .student-add-trigger {
+    padding: 0 12px;
+    font-weight: 600;
   }
 
   .student-search-bar {

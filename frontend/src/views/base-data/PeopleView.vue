@@ -1,6 +1,6 @@
 <template>
   <div class="page-stack people-page">
-    <section class="people-header">
+    <section class="people-header" :class="{ 'people-header--mobile-without-actions': activeTab === 'students' }">
       <div>
         <span class="people-header__title">People & accounts</span>
         <p class="people-header__hint">
@@ -166,6 +166,9 @@ async function syncTabAndRender(tab: PeopleTab) {
   }
 
   .people-header > div:first-child { display: none; }
+
+  /* Students keeps its primary action beside the in-panel search row. */
+  .people-header--mobile-without-actions { display: none; }
 
   .people-header__actions {
     display: flex;

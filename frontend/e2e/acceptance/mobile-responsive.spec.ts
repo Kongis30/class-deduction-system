@@ -480,6 +480,34 @@ test.describe('mobile responsive workspace', () => {
     }
   });
 
+  test('student add action shares the mobile search row', async ({ page }, testInfo) => {
+    await page.goto('/admin/config/people?tab=students');
+    const add = page.locator('.student-add-trigger');
+    await expect(add).toBeVisible();
+    await expect(page.locator('.people-header')).toBeHidden();
+
+    const actions = add.locator('xpath=..');
+    const search = actions.locator('.mobile-search-trigger');
+    const deleted = actions.getByRole('button', { name: 'View deleted students' });
+    const [addBox, searchBox, deletedBox] = await Promise.all([
+      add.boundingBox(),
+      search.boundingBox(),
+      deleted.boundingBox(),
+    ]);
+    expect(addBox).not.toBeNull();
+    expect(searchBox).not.toBeNull();
+    expect(deletedBox).not.toBeNull();
+    expect(Math.abs(addBox!.y - searchBox!.y), 'Add student and search should share one row').toBeLessThanOrEqual(1);
+    expect(Math.abs(addBox!.y - deletedBox!.y), 'Add student and Deleted should share one row').toBeLessThanOrEqual(1);
+    expect(addBox!.x).toBeGreaterThan(searchBox!.x);
+    expect(addBox!.x + addBox!.width).toBeLessThanOrEqual(page.viewportSize()!.width + 1);
+
+    await add.click();
+    await expect(page.locator('.student-dialog:visible')).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath('people-student-add-mobile.png') });
+    await page.keyboard.press('Escape');
+  });
+
   test('people tables keep the fixed action column reachable on a phone', async ({ page }, testInfo) => {
     for (const tab of ['students', 'teachers']) {
       await page.goto(`/admin/config/people?tab=${tab}`);
