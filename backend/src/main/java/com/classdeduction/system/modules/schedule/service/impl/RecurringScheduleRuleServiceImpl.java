@@ -63,6 +63,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
 
@@ -111,6 +114,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     private final ClassroomMapper classroomMapper;
     private final JsonHelper jsonHelper;
     private final CourseProductMapper courseProductMapper;
+    private final PlatformTransactionManager transactionManager;
 
     @Override
     public List<ScheduleStudentOptionVO> listOneOnOneScheduleStudents() {
@@ -362,15 +366,18 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public int renewActiveRuleOccurrences() {
         List<RecurringScheduleRuleEntity> activeRules = recurringScheduleRuleMapper.selectList(
                 new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
                         .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE"));
         int inserted = 0;
+        // 单条规则写入与异常隔离，失败时不能把部分调整随其他规则一起提交。
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+        transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         for (RecurringScheduleRuleEntity rule : activeRules) {
             try {
-                inserted += renewOneRule(rule);
+                Integer count = transaction.execute(status -> renewOneRule(rule));
+                inserted += count == null ? 0 : count;
             } catch (RuntimeException ex) {
                 // 单条规则续期失败不应阻断其它规则（如冲突），记录后继续。
                 log.warn("Failed to renew occurrences for schedule rule id={}: {}", rule.getId(), ex.getMessage());

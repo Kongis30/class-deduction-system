@@ -49,6 +49,8 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
@@ -74,6 +76,9 @@ import static org.mockito.Mockito.when;
  */
 @ExtendWith(MockitoExtension.class)
 class RecurringScheduleRuleServiceImplTest {
+
+    @Mock
+    private PlatformTransactionManager transactionManager;
 
     @Mock
     private RecurringScheduleRuleMapper recurringScheduleRuleMapper;
@@ -164,10 +169,32 @@ class RecurringScheduleRuleServiceImplTest {
                 teacherMapper,
                 classroomMapper,
                 jsonHelper,
-                courseProductMapper
+                courseProductMapper,
+                transactionManager
         );
         org.mockito.Mockito.lenient().when(coursePackageMapper.selectByIdForUpdate(any()))
                 .thenAnswer(invocation -> coursePackageMapper.selectById(invocation.getArgument(0)));
+    }
+
+    @Test
+    void renewalRollsBackFailedRuleAndContinuesWithNextRule() {
+        RecurringScheduleRuleEntity first = new RecurringScheduleRuleEntity();
+        first.setId(1L);
+        first.setPackageId(101L);
+        RecurringScheduleRuleEntity second = new RecurringScheduleRuleEntity();
+        second.setId(2L);
+        second.setPackageId(102L);
+        SimpleTransactionStatus failed = new SimpleTransactionStatus();
+        SimpleTransactionStatus succeeded = new SimpleTransactionStatus();
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(first, second));
+        when(transactionManager.getTransaction(any())).thenReturn(failed, succeeded);
+        when(coursePackageMapper.selectById(101L)).thenThrow(new IllegalStateException("simulated failure"));
+        when(coursePackageMapper.selectById(102L)).thenReturn(null);
+
+        assertThat(recurringScheduleRuleService.renewActiveRuleOccurrences()).isZero();
+        verify(transactionManager).rollback(failed);
+        verify(transactionManager).commit(succeeded);
+        verify(coursePackageMapper).selectById(102L);
     }
 
     @Test

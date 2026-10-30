@@ -55,6 +55,26 @@ class PrivateSchedulePeriodTest {
                 .isTrue();
     }
 
+    @Test
+    void legacySameDayLessonDependsOnTheVerifiedPeriodBoundary() {
+        RecurringScheduleRuleEntity rule = new RecurringScheduleRuleEntity();
+        rule.setId(1L);
+        rule.setCreatedAt(LocalDateTime.of(2026, 9, 30, 20, 11));
+        LessonOccurrenceEntity lesson = lesson(1L, LocalDateTime.of(2026, 9, 30, 18, 0));
+        lesson.setAllocationAnchorDate(LocalDate.of(2026, 9, 30));
+        LessonRecordEntity record = new LessonRecordEntity();
+        record.setConfirmedAt(LocalDateTime.of(2026, 10, 2, 9, 51));
+
+        // 旧规则没有明确起点时按创建日读取；不能仅凭上课早于创建时刻判为旧周期。
+        assertThat(PrivateSchedulePeriod.contains(lesson, record, rule, PrivateSchedulePeriod.startAt(rule)))
+                .isTrue();
+
+        // 只有经业务证据确认的新周期起点，才能将同一节课排除在新周期外。
+        rule.setAllocationPeriodStartedAt(LocalDateTime.of(2026, 10, 1, 0, 0));
+        assertThat(PrivateSchedulePeriod.contains(lesson, record, rule, PrivateSchedulePeriod.startAt(rule)))
+                .isFalse();
+    }
+
     private RecurringScheduleRuleEntity rule() {
         RecurringScheduleRuleEntity rule = new RecurringScheduleRuleEntity();
         rule.setId(1L);

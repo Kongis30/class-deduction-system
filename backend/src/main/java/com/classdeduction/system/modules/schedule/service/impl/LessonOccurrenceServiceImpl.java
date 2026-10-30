@@ -1872,9 +1872,11 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     Long accountingTeacherId = currentSlotTeacherByLineageByPackage
                             .getOrDefault(packageId, Collections.emptyMap())
                             .getOrDefault(historicalLineageId, allocationTeacherId);
-                    // 老师页只展示当前周期的消课；旧版本未来保留例外在本周期上完也应计入。
+                    // 跨周期保留的课次单独占用课包余额；同 lineage 的新课位分配不包含它，不能重复扣减。
+                    boolean separatelyReservedOldLesson = !Objects.equals(currentRuleId, occurrence.getScheduleRuleId())
+                            && representedByCurrentSchedule;
                     if ("CONFIRMED".equals(record.getConfirmStage()) && accountingTeacherId != null
-                            && currentPeriod) {
+                            && currentPeriod && !separatelyReservedOldLesson) {
                         deductedByTeacherByPackage
                                 .computeIfAbsent(packageId, key -> new HashMap<>())
                                 .merge(accountingTeacherId, units, Integer::sum);

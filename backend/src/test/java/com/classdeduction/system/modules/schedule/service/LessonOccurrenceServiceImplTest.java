@@ -1705,8 +1705,8 @@ class LessonOccurrenceServiceImplTest {
         assertThat(teacher.students().get(0).packages().get(0).teacherHours())
                 .singleElement().satisfies(hours -> {
                     assertThat(hours.allocatedUnits()).isEqualTo(2.0);
-                    assertThat(hours.deductedUnits()).isEqualTo(2.0);
-                    assertThat(hours.remainingUnits()).isZero();
+                    assertThat(hours.deductedUnits()).isZero();
+                    assertThat(hours.remainingUnits()).isEqualTo(2.0);
                 });
     }
 
