@@ -939,6 +939,40 @@ a {
   }
 }
 
+/* Between the desktop and phone layouts the header actions are wider than the
+   available content area. Wrapping them keeps the page from scrolling
+   horizontally and clipping the fixed sidebar. */
+@media (min-width: 921px) and (max-width: 1080px) {
+  .app-header {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .app-header__page {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .app-header__page span {
+    display: none;
+  }
+
+  .app-header__page strong {
+    white-space: normal;
+  }
+
+  .app-header__right {
+    flex: 0 1 auto;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  .app-header__right > .el-tag {
+    display: none;
+  }
+}
+
 @media (max-width: 920px) {
   .sidebar {
     position: fixed;

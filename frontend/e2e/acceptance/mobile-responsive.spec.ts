@@ -509,6 +509,32 @@ test.describe('mobile responsive workspace', () => {
     }
   });
 
+  test('compact desktop header does not scroll the page or clip the sidebar', async ({ page }) => {
+    await page.setViewportSize({ width: 972, height: 800 });
+    await page.goto('/calendar?tab=room');
+    await page.locator('.app-shell').waitFor();
+    await page.waitForTimeout(300);
+
+    const layout = await page.evaluate(() => {
+      const viewport = document.documentElement.clientWidth;
+      const sidebar = document.querySelector('.sidebar')?.getBoundingClientRect();
+      const header = document.querySelector<HTMLElement>('.app-header')?.getBoundingClientRect();
+      return {
+        viewport,
+        documentWidth: document.documentElement.scrollWidth,
+        scrollX: window.scrollX,
+        sidebarLeft: Math.round(sidebar?.left ?? -1),
+        headerRight: Math.round(header?.right ?? 0),
+        headerHeight: Math.round(header?.height ?? 0),
+      };
+    });
+    expect(layout.documentWidth, `Page should not overflow horizontally: ${JSON.stringify(layout)}`).toBeLessThanOrEqual(layout.viewport + 1);
+    expect(layout.scrollX).toBe(0);
+    expect(layout.sidebarLeft).toBe(0);
+    expect(layout.headerRight).toBeLessThanOrEqual(layout.viewport + 1);
+    expect(layout.headerHeight).toBeLessThanOrEqual(120);
+  });
+
   test('all admin routes fit the phone viewport without page-level horizontal overflow', async ({ page }) => {
     const overflowingRoutes: string[] = [];
     const visibleTableRoutes: string[] = [];
