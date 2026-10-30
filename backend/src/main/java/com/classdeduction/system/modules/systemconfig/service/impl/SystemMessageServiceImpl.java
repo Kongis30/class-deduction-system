@@ -123,7 +123,8 @@ public class SystemMessageServiceImpl implements SystemMessageService {
                     birthday));
         }
         birthdays.sort(Comparator.comparing(BirthdayStudentMessageVO::birthdayDate)
-                .thenComparing(BirthdayStudentMessageVO::studentName, String.CASE_INSENSITIVE_ORDER));
+                .thenComparing(BirthdayStudentMessageVO::studentName, String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(BirthdayStudentMessageVO::studentId));
         return List.copyOf(birthdays);
     }
 

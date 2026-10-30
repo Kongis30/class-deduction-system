@@ -1,6 +1,7 @@
 package com.classdeduction.system.modules.base.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
@@ -35,6 +36,8 @@ public class StudentEntity extends BaseEntity {
 
     private String gender;
 
+    /** 允许用户清除已填写的生日。更新前须加载完整学生资料。 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private LocalDate birthDate;
 
     private String grade;

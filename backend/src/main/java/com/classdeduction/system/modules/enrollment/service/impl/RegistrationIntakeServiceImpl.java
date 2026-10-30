@@ -18,6 +18,9 @@ import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.GroupCourseProjectEntity;
 import com.classdeduction.system.modules.base.entity.GroupRegistrationPlanEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
+import com.classdeduction.system.modules.systemconfig.service.StudentBirthdayChange;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
@@ -106,6 +109,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private static final BigDecimal ZERO_AMOUNT = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
 
     private final StudentMapper studentMapper;
+    @Autowired(required = false)
+    private ApplicationEventPublisher birthdayEvents;
     private final StudentNoGenerator studentNoGenerator;
     private final CampusMapper campusMapper;
     private final CoursePriceOptionMapper coursePriceOptionMapper;
@@ -627,8 +632,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         RegistrationIntakeRequest.StudentPayload payload = request.getStudent();
         StudentEntity renewalStudent = resolveRenewalStudent(request);
         if (renewalStudent != null) {
+            var birthdayBefore = StudentBirthdayChange.snapshot(renewalStudent);
             applyStudentPayload(renewalStudent, payload, request.getCampusId());
             studentMapper.updateById(renewalStudent);
+            StudentBirthdayChange.publishIfChanged(birthdayEvents, birthdayBefore, renewalStudent);
             return new StudentResolution(renewalStudent, true);
         }
         return createOrReuseStudent(payload, request.getCampusId());
@@ -637,8 +644,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private StudentResolution createOrReuseStudent(RegistrationIntakeRequest.StudentPayload payload, Long campusId) {
         if (payload.getStudentId() != null) {
             StudentEntity existing = requireStudent(payload.getStudentId());
+            var birthdayBefore = StudentBirthdayChange.snapshot(existing);
             updateExistingStudentFromRegistration(existing, payload, campusId);
             studentMapper.updateById(existing);
+            StudentBirthdayChange.publishIfChanged(birthdayEvents, birthdayBefore, existing);
             return new StudentResolution(existing, true);
         }
         StudentEntity student = null;
@@ -654,12 +663,14 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             student.setStudentNo(studentNoGenerator.generate());
         }
 
+        var birthdayBefore = reused ? StudentBirthdayChange.snapshot(student) : null;
         applyStudentPayload(student, payload, campusId);
         if (reused) {
             studentMapper.updateById(student);
         } else {
             studentMapper.insert(student);
         }
+        StudentBirthdayChange.publishIfChanged(birthdayEvents, birthdayBefore, student);
         return new StudentResolution(student, reused);
     }
 

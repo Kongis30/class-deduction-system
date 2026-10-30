@@ -18,6 +18,9 @@ import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.GroupCourseProjectEntity;
 import com.classdeduction.system.modules.base.entity.GroupRegistrationPlanEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
+import com.classdeduction.system.modules.systemconfig.service.StudentBirthdayChange;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
@@ -172,6 +175,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private final ClassBillingService classBillingService;
     private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final StudentMapper studentMapper;
+    @Autowired(required = false)
+    private ApplicationEventPublisher birthdayEvents;
     private final CourseProductMapper courseProductMapper;
     private final TeacherMapper teacherMapper;
     private final JsonHelper jsonHelper;
@@ -469,6 +474,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     public EnrollmentOrderDetailVO getOrder(Long id) {
         EnrollmentOrderEntity order = requireOrder(id);
         StudentEntity student = requireStudent(order.getStudentId());
+        var birthdayBefore = StudentBirthdayChange.snapshot(student);
         List<EnrollmentOrderItemEntity> orderItems = listOrderItemsByOrderId(id);
         Set<Long> itemClassIds = orderItems.stream()
                 .map(EnrollmentOrderItemEntity::getClassId)
@@ -1512,7 +1518,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
         // 课程、价格、课包和班级报名必须跟原订单行一起更正，不能重新创建报名单。
         boolean itemAmountsChanged = correctedItemAmountsChanged(lockedItems, request.getItems());
-        if (studentChanged) studentMapper.updateById(student);
+        if (studentChanged) {
+            studentMapper.updateById(student);
+            StudentBirthdayChange.publishIfChanged(birthdayEvents, birthdayBefore, student);
+        }
         if (request.getParticipants() != null && !request.getParticipants().isEmpty()) {
             applyCorrectedParticipants(order, request.getParticipants());
         }
@@ -1799,8 +1808,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             }
             if (payload.getCorrectionChangedFields() != null && payload.getCorrectionChangedFields().isEmpty()) continue;
             StudentEntity student = requireStudent(participant.getStudentId());
+            var birthdayBefore = StudentBirthdayChange.snapshot(student);
             applyCorrectedStudentProfile(student, payload);
             studentMapper.updateById(student);
+            StudentBirthdayChange.publishIfChanged(birthdayEvents, birthdayBefore, student);
             copyParticipantSnapshot(participant, student, payload);
             enrollmentOrderParticipantMapper.updateById(participant);
             if (index == 0) {

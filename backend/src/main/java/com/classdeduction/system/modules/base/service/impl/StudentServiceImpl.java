@@ -11,6 +11,9 @@ import com.classdeduction.system.modules.base.dto.StudentReuseQuery;
 import com.classdeduction.system.modules.base.dto.StudentSaveRequest;
 import com.classdeduction.system.modules.base.entity.CampusEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
+import com.classdeduction.system.modules.systemconfig.service.StudentBirthdayChange;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.service.StudentService;
@@ -63,6 +66,8 @@ public class StudentServiceImpl implements StudentService {
     private static final String DEFAULT_STATUS = "ACTIVE";
 
     private final StudentMapper studentMapper;
+    @Autowired(required = false)
+    private ApplicationEventPublisher birthdayEvents;
     private final StudentNoGenerator studentNoGenerator;
     private final CoursePackageMapper coursePackageMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
@@ -135,6 +140,7 @@ public class StudentServiceImpl implements StudentService {
         StudentEntity entity = new StudentEntity();
         applyStudent(entity, request);
         studentMapper.insert(entity);
+        StudentBirthdayChange.publishIfChanged(birthdayEvents, null, entity);
         return entity.getId();
     }
 
@@ -147,8 +153,10 @@ public class StudentServiceImpl implements StudentService {
         }
         ensureStudentNoUnique(id, request.getStudentNo());
 
+        var birthdayBefore = StudentBirthdayChange.snapshot(entity);
         applyStudent(entity, request);
         studentMapper.updateById(entity);
+        StudentBirthdayChange.publishIfChanged(birthdayEvents, birthdayBefore, entity);
     }
 
     @Override
@@ -162,6 +170,7 @@ public class StudentServiceImpl implements StudentService {
         }
         cascadeDeleteStudentOperationalData(id);
         studentMapper.deleteById(id);
+        StudentBirthdayChange.publishIfChanged(birthdayEvents, StudentBirthdayChange.snapshot(student), null);
     }
 
     private void cascadeDeleteStudentOperationalData(Long studentId) {
