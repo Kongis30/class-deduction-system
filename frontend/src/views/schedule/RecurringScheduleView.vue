@@ -453,6 +453,7 @@
           :occupied-slots="currentScheduleCalendarSlots"
           :readonly="true"
           :hide-hint="true"
+          :pinch-zoom-enabled="appStore.isMobileViewport"
         />
         <WeeklyTimeSelector
           v-if="!isEditing || editMode === 'REPLAN'"
@@ -460,6 +461,7 @@
           :week-start-date="editWeekMonday"
           :occupied-slots="otherPackageOccupiedSlots"
           :readonly="false"
+          :pinch-zoom-enabled="appStore.isMobileViewport"
         />
         <div v-if="editForm.slots.length > 0" class="slot-teacher-list">
           <div
