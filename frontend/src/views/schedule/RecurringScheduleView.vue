@@ -4799,6 +4799,15 @@ function disabledPastDate(date: Date) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 9px;
   }
+
+  /* 时段卡片内的字号与弹窗其他文字对齐 */
+  .slot-teacher-row__time strong { font-size: 13px; }
+  .slot-teacher-row__time small { font-size: 11px; }
+  .slot-teacher-row__field { font-size: 12px; }
+  .slot-teacher-row__field :deep(.el-input__inner),
+  .slot-teacher-row__field :deep(.el-select__placeholder),
+  .slot-teacher-row__field :deep(.el-select__selected-item) { font-size: 13px; }
+  .slot-teacher-row__hours-control em { font-size: 12px; }
 }
 
 /* Detail */
