@@ -2700,6 +2700,11 @@ function correctionImpactSummary(changes: EnrollmentOrderCorrectionPayload): str
       impact.push(`${label}: this course will be added to the existing order and receipt.`);
       continue;
     }
+    if (String(item.courseProductId ?? '') !== String(before.courseProductId ?? '')) {
+      impact.push(item.courseType === 'ONE_ON_ONE'
+        ? `${label}: changing the private course cancels its future schedule. Schedule the new course after saving.`
+        : `${label}: the student will move to the selected course and class.`);
+    }
     if (String(item.classId ?? '') !== String(before.classId ?? '')) impact.push(`${label}: class will change.`);
     if (item.startDate !== before.startDate) impact.push(`${label}: first lesson ${before.startDate ?? '—'} → ${item.startDate ?? '—'}.`);
     const oldQuantity = before.purchasedMonths ?? before.sessions ?? before.packageQuantity;

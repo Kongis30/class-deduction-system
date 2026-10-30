@@ -36,6 +36,7 @@ import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignm
 import com.classdeduction.system.modules.enrollment.mapper.PaymentMethodMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.impl.ClassBillingServiceImpl;
 import com.classdeduction.system.modules.enrollment.service.impl.EnrollmentOrderServiceImpl;
@@ -128,6 +129,8 @@ class EnrollmentOrderServiceImplTest {
 
     @Mock
     private PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
+    @Mock
+    private PrivateLessonGroupMapper privateLessonGroupMapper;
 
     @Mock
     private PaymentMethodMapper paymentMethodMapper;
@@ -287,6 +290,7 @@ class EnrollmentOrderServiceImplTest {
                 paymentAllocationMapper,
                 paymentAllocationService,
                 privateLessonGroupMemberMapper,
+                privateLessonGroupMapper,
                 receiptRecordMapper,
                 classBillingService,
                 packageTeacherAssignmentMapper,

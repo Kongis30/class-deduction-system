@@ -44,6 +44,8 @@ import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignm
 import com.classdeduction.system.modules.enrollment.entity.PaymentMethodEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
 import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupEntity;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
 import com.classdeduction.system.modules.enrollment.entity.ReceiptRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
@@ -167,6 +169,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private final PaymentAllocationMapper paymentAllocationMapper;
     private final PaymentAllocationService paymentAllocationService;
     private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
+    private final PrivateLessonGroupMapper privateLessonGroupMapper;
     private final ReceiptRecordMapper receiptRecordMapper;
     @Autowired
     private EnrollmentCorrectionLogMapper correctionLogMapper;
@@ -1518,6 +1521,21 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
         // 课程、价格、课包和班级报名必须跟原订单行一起更正，不能重新创建报名单。
         boolean itemAmountsChanged = correctedItemAmountsChanged(lockedItems, request.getItems());
+        boolean financialCorrection = itemAmountsChanged || request.getPayments() != null
+                || request.getDiscounts() != null || request.getDiscountAmount() != null
+                || request.getExtraFees() != null || request.getExtraFeeAmount() != null
+                || request.getPickupFeeAmount() != null || request.getDropoffFeeAmount() != null
+                || request.getPickupFeeCharged() != null || request.getDropoffFeeCharged() != null;
+        if (financialCorrection && defaultAmount(order.getReceivedAmount()).signum() > 0) {
+            Long participants = enrollmentOrderParticipantMapper.selectCount(
+                    new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
+                            .eq(EnrollmentOrderParticipantEntity::getEnrollmentOrderId, order.getId())
+                            .eq(EnrollmentOrderParticipantEntity::getIsDeleted, 0));
+            if (participants == null || participants <= 1) {
+                // 先按更正前订单补齐缺失的付款归属，再修改价格；同一事务失败时全部回滚。
+                paymentAllocationService.replayAllocations(order);
+            }
+        }
         if (studentChanged) {
             studentMapper.updateById(student);
             StudentBirthdayChange.publishIfChanged(birthdayEvents, birthdayBefore, student);
@@ -2079,6 +2097,15 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             copyCorrectionItem(item, payload);
             enrollmentOrderItemMapper.updateById(item);
             persistClearedCorrectionFields(item, payload);
+            boolean logicalCourseChanged = !Objects.equals(previous.courseProductId(), item.getCourseProductId())
+                    || !Objects.equals(previous.groupProjectId(), item.getGroupProjectId());
+            if (logicalCourseChanged && item.getLogicalCourseId() != null) {
+                // 修改产品或项目后不再属于原课程的续购链，旧权益仍保留原链用于历史追溯。
+                item.setLogicalCourseId(null);
+                enrollmentOrderItemMapper.update(null, new LambdaUpdateWrapper<EnrollmentOrderItemEntity>()
+                        .eq(EnrollmentOrderItemEntity::getId, item.getId())
+                        .set(EnrollmentOrderItemEntity::getLogicalCourseId, null));
+            }
             if (changedCourseField(payload, "pickupRequired") || changedCourseField(payload, "pickupAddress")
                     || changedCourseField(payload, "dropoffRequired") || changedCourseField(payload, "dropoffAddress")) {
                 persistCorrectedItemTransportSnapshot(item, payload);
@@ -2560,6 +2587,11 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             replacement.setClassId(targetClass.getId());
             replacement.setStudentId(current.getStudentId());
             replacement.setEnrollmentOrderItemId(item.getId());
+            if (Objects.equals(previous.courseProductId(), item.getCourseProductId())
+                    && Objects.equals(previous.groupProjectId(), item.getGroupProjectId())) {
+                replacement.setLogicalCourseId(current.getLogicalCourseId() != null
+                        ? current.getLogicalCourseId() : item.getLogicalCourseId());
+            }
             replacement.setEnrollmentDate(plan.billing().enrollmentDate());
             replacement.setExpiryDate(plan.billing().expiryDate());
             replacement.setBillingType(v2GroupItem ? v2GroupBillingType(item) : item.getPackageUnit());
@@ -2917,9 +2949,30 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (requested < consumed) {
             throw new BusinessException("CORRECTION_HOURS_BELOW_CONSUMED", "Package hours cannot be lower than hours already used.");
         }
+        boolean productChanged = !Objects.equals(coursePackage.getCourseProductId(), item.getCourseProductId());
+        PrivateLessonGroupMemberEntity groupMember = productChanged
+                ? privateLessonGroupMemberMapper.selectOne(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .eq(PrivateLessonGroupMemberEntity::getPackageId, coursePackage.getId())
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0).last("LIMIT 1"))
+                : null;
+        Long groupId = groupMember == null ? null : groupMember.getPrivateLessonGroupId();
+        if (groupId != null) {
+            Long memberCount = privateLessonGroupMemberMapper.selectCount(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                    .eq(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId, groupId)
+                    .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                    .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0));
+            if (memberCount != null && memberCount > 1) {
+                throw new BusinessException("CORRECTION_SHARED_SCHEDULE_REVIEW",
+                        "This lesson is shared by multiple students. Resolve the shared schedule before changing this course.");
+            }
+        }
         List<LessonOccurrenceEntity> futureLessons = Optional.ofNullable(lessonOccurrenceMapper.selectList(
                 new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                        .eq(LessonOccurrenceEntity::getPackageId, coursePackage.getId())
+                        .and(query -> {
+                            query.eq(LessonOccurrenceEntity::getPackageId, coursePackage.getId());
+                            if (groupId != null) query.or().eq(LessonOccurrenceEntity::getPrivateLessonGroupId, groupId);
+                        })
                         .eq(LessonOccurrenceEntity::getIsDeleted, 0)
                         .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                         .ge(LessonOccurrenceEntity::getPlannedStartAt, AppTime.nowLocalDateTime())
@@ -2927,16 +2980,40 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .orElse(List.of());
         int futureUnits = futureLessons.stream().map(LessonOccurrenceEntity::getPlannedUnits)
                 .filter(Objects::nonNull).mapToInt(Integer::intValue).sum();
-        if (requested < consumed + futureUnits) {
+        if (!productChanged && requested < consumed + futureUnits) {
             throw new BusinessException("CORRECTION_HOURS_BELOW_SCHEDULED",
                     "The corrected package must cover used hours and future scheduled lessons.");
         }
-        if (!futureLessons.isEmpty()
-                && (!Objects.equals(coursePackage.getCourseProductId(), item.getCourseProductId())
-                || item.getStartDate() != null && !Objects.equals(coursePackage.getStartDate(), item.getStartDate()))) {
+        if (!productChanged && !futureLessons.isEmpty()
+                && item.getStartDate() != null && !Objects.equals(coursePackage.getStartDate(), item.getStartDate())) {
             throw new BusinessException("CORRECTION_FUTURE_SCHEDULE_REVIEW",
                     "This package has a future lesson on " + futureLessons.get(0).getPlannedStartAt()
                             + ". Adjust the schedule before changing its course or start date.");
+        }
+        if (productChanged) {
+            // 已提交或确认的课次必须保留处理入口，不能随换课静默作废。
+            List<Long> occurrenceIds = futureLessons.stream().map(LessonOccurrenceEntity::getId).toList();
+            if (!occurrenceIds.isEmpty()) {
+                Long recordCount = lessonRecordMapper.selectCount(new LambdaQueryWrapper<LessonRecordEntity>()
+                        .in(LessonRecordEntity::getOccurrenceId, occurrenceIds)
+                        .eq(LessonRecordEntity::getIsDeleted, 0));
+                if (recordCount != null && recordCount > 0) {
+                    throw new BusinessException("CORRECTION_FUTURE_SCHEDULE_REVIEW",
+                            "A future lesson has an existing attendance decision. Review it before changing the course.");
+                }
+            }
+            cancelFutureOccurrences(List.of(coursePackage.getId()));
+            deactivateRecurringSchedules(List.of(coursePackage.getId()));
+            if (groupId != null) {
+                cancelFutureOccurrencesForPrivateGroup(groupId);
+                deactivateRecurringSchedulesForPrivateGroup(groupId);
+                PrivateLessonGroupEntity group = privateLessonGroupMapper.selectById(groupId);
+                if (group != null) {
+                    group.setCourseProductId(item.getCourseProductId());
+                    group.setGradeBand(item.getGradeBand());
+                    privateLessonGroupMapper.updateById(group);
+                }
+            }
         }
         coursePackage.setCourseProductId(item.getCourseProductId());
         coursePackage.setPackageName(StringUtils.hasText(item.getDetail()) ? item.getDetail() : coursePackage.getPackageName());
