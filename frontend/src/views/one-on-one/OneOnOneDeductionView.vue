@@ -3143,6 +3143,10 @@ onMounted(async () => {
   --el-table-tr-bg-color: #fff3cd;
 }
 
+.oo-table :deep(.el-table__body tr.oo-row--overdue-unprocessed > td.el-table__cell) {
+  background-color: #fff3cd !important;
+}
+
 :deep(.oo-row--overdue-unprocessed > td:first-child) {
   box-shadow: inset 4px 0 0 #f59e0b;
 }
