@@ -2012,24 +2012,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 ? configuredEnd
                 : resolveClassScheduleHorizon(classGroup.getId(), startDate);
         List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getGroupProjectId());
-        if (configuredStart != null) {
-            LocalDate baseEnd = ClassScheduleDates.resolveBaseEndDate(classGroup.getScheduleBaseEndDate(), endDate);
-            LocalDate requiredEnd = ClassScheduleDates.endDateAfterHolidays(configuredStart, baseEnd,
-                    classGroup.getBillingType(), classGroup.getTotalSessions(), slots,
-                    date -> classHolidayService.isHoliday(date, holidays));
-            boolean needsUpdate = requiredEnd != null && !requiredEnd.equals(endDate);
-            if (classGroup.getScheduleBaseEndDate() == null) {
-                classGroup.setScheduleBaseEndDate(baseEnd);
-                needsUpdate = true;
-            }
-            if (needsUpdate) {
-                if (requiredEnd != null) {
-                    endDate = requiredEnd;
-                    classGroup.setEndDate(requiredEnd);
-                }
-                classGroupMapper.updateById(classGroup);
-            }
-        }
         if (endDate.isBefore(startDate)) {
             return 0;
         }
@@ -2085,8 +2067,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 ClassSlotRotation.Assignment assignment = ClassSlotRotation.resolve(slot, date,
                         classGroup.getStartDate(),
                         ClassScheduleDates.resolveBaseEndDate(classGroup.getScheduleBaseEndDate(), endDate),
-                        slots,
-                        holidayDate -> classHolidayService.isHoliday(holidayDate, holidays));
+                        slots);
                 occurrence.setPlannedTeacherId(assignment.teacherId() != null ? assignment.teacherId()
                         : hasSlotTeacher ? slot.getTeacherId() : classGroup.getTeacherId());
                 occurrence.setSubjectName(assignment.subjectName());

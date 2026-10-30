@@ -59,7 +59,7 @@ public class ClassGroupEntity extends BaseEntity {
 
     private LocalDate endDate;
 
-    /** 用户配置的周期终点；endDate 会因假期顺延，不能作为下次计算基准。 */
+    /** 旧版假期顺延前保存的用户配置周期终点；当前假期不再修改 endDate。 */
     private LocalDate scheduleBaseEndDate;
 
     private Integer totalSessions;

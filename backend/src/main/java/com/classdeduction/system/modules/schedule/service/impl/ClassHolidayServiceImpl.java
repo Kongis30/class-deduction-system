@@ -1,15 +1,13 @@
 package com.classdeduction.system.modules.schedule.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.entity.GroupCourseProjectEntity;
 import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
-import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
-import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
-import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.schedule.dto.ClassHolidaySaveRequest;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
@@ -22,10 +20,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotM
 import com.classdeduction.system.modules.schedule.mapper.ClassHolidayMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
-import com.classdeduction.system.modules.schedule.service.ClassAdjustedSlotReservations;
 import com.classdeduction.system.modules.schedule.util.ClassScheduleDates;
-import com.classdeduction.system.modules.schedule.util.ClassSlotRotation;
-import com.classdeduction.system.modules.schedule.util.ScheduleSlotTime;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayPreviewVO;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import lombok.RequiredArgsConstructor;
@@ -38,13 +33,13 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 维护教学项目级班课假期，并协调项目下未来课次和 SESSION 报名周期。
+ * 维护教学项目级班课假期。假期只取消/恢复假期范围内的课次，
+ * 不改变班级结束日、报名有效期，也不重排假期外课次或补造课次。
  * Prices 页面调用此服务；课次生成、计费和调课也复用其日期查询。
  */
 @Service
@@ -55,10 +50,8 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
     private final GroupCourseProjectMapper projectMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
-    private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
     private final ClassGroupMapper classGroupMapper;
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
-    private final ClassAdjustedSlotReservations adjustedSlotReservations;
     private final LessonRecordMapper lessonRecordMapper;
 
     @Override
@@ -155,8 +148,6 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
         entity.setIsDeleted(0);
         classHolidayMapper.insert(entity);
         reconcileAffectedDates(groupProjectId, request.getStartDate(), request.getEndDate());
-        synchronizeProjectClassSchedules(groupProjectId);
-        recalculateSessionEnrollments(groupProjectId, request.getStartDate(), request.getEndDate());
         return toVO(entity);
     }
 
@@ -175,8 +166,6 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
         existing.setEndDate(request.getEndDate());
         classHolidayMapper.updateById(existing);
         reconcileAffectedDates(groupProjectId, from, through);
-        synchronizeProjectClassSchedules(groupProjectId);
-        recalculateSessionEnrollments(groupProjectId, from, through);
         return toVO(existing);
     }
 
@@ -187,12 +176,10 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
         ClassHolidayEntity existing = requireHoliday(groupProjectId, id);
         classHolidayMapper.deleteById(id);
         reconcileAffectedDates(groupProjectId, existing.getStartDate(), existing.getEndDate());
-        synchronizeProjectClassSchedules(groupProjectId);
-        recalculateSessionEnrollments(groupProjectId, existing.getStartDate(), existing.getEndDate());
     }
 
     /**
-     * 假期修改会重算项目内全部班级；先用锁定读取锁住项目，再按班级 ID 锁其实际班级。
+     * 假期修改只作用于假期范围内的课次；先用锁定读取锁住项目，再按班级 ID 锁其实际班级。
      * 报名、更正和新建班级也先锁项目，避免普通查询建立旧 RR 快照或形成反向锁顺序。
      */
     private void lockProjectClasses(Long groupProjectId) {
@@ -269,10 +256,12 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
                 String previousStatus = StringUtils.hasText(occurrence.getHolidayPreviousStatus())
                         ? occurrence.getHolidayPreviousStatus() : "SCHEDULED";
                 ensureNoResourceConflict(occurrence);
-                occurrence.setPlanningStatus(previousStatus);
-                occurrence.setCourseHolidayId(null);
-                occurrence.setHolidayPreviousStatus(null);
-                lessonOccurrenceMapper.updateById(occurrence);
+                // updateById 默认忽略 null 字段，恢复假期时必须显式清空假期引用。
+                lessonOccurrenceMapper.update(null, new LambdaUpdateWrapper<LessonOccurrenceEntity>()
+                        .eq(LessonOccurrenceEntity::getId, occurrence.getId())
+                        .set(LessonOccurrenceEntity::getPlanningStatus, previousStatus)
+                        .set(LessonOccurrenceEntity::getCourseHolidayId, null)
+                        .set(LessonOccurrenceEntity::getHolidayPreviousStatus, null));
             }
         }
     }
@@ -360,247 +349,6 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
                         .le(ClassEnrollmentEntity::getEnrollmentDate, through)
                         .ge(ClassEnrollmentEntity::getExpiryDate, from))
                 .size();
-    }
-
-    /**
-     * 假期会减少 Grade 下各班级原周期内可排的上课日，因此按该 Grade 假期重新计算课次终点，
-     * 并只补齐未来缺少的周课次。Prices 的假期新增、编辑、删除都在落库后调用本方法。
-     */
-    private void synchronizeProjectClassSchedules(Long groupProjectId) {
-        List<ClassHolidayEntity> holidays = classHolidayMapper.selectList(new LambdaQueryWrapper<ClassHolidayEntity>()
-                .eq(ClassHolidayEntity::getGroupProjectId, groupProjectId)
-                .eq(ClassHolidayEntity::getIsDeleted, 0));
-        List<ClassGroupEntity> groups = classGroupMapper.selectList(new LambdaQueryWrapper<ClassGroupEntity>()
-                .eq(ClassGroupEntity::getGroupProjectId, groupProjectId)
-                .eq(ClassGroupEntity::getIsDeleted, 0));
-        LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
-        LocalDateTime now = AppTime.nowLocalDateTime();
-
-        for (ClassGroupEntity group : groups) {
-            if (group.getStartDate() == null) {
-                continue;
-            }
-            List<ClassGroupScheduleSlotEntity> slots = loadSlots(group.getId());
-            LocalDate effectiveEnd = resolveScheduleEnd(group);
-            LocalDate baseEnd = ClassScheduleDates.resolveBaseEndDate(group.getScheduleBaseEndDate(), effectiveEnd);
-            LocalDate targetEnd = ClassScheduleDates.endDateAfterHolidays(group.getStartDate(), baseEnd,
-                    group.getBillingType(), group.getTotalSessions(), slots,
-                    date -> holidayForDate(holidays, date) != null);
-            if (targetEnd == null) continue;
-            boolean needsUpdate = !targetEnd.equals(group.getEndDate()) || group.getScheduleBaseEndDate() == null;
-            group.setScheduleBaseEndDate(baseEnd);
-            if (needsUpdate) {
-                group.setEndDate(targetEnd);
-                classGroupMapper.updateById(group);
-            }
-
-            removeFutureRegularOccurrencesAfter(group.getId(), targetEnd, now);
-
-            LocalDate generationStart = group.getStartDate().isBefore(today) ? today : group.getStartDate();
-            if (targetEnd.isBefore(generationStart)) continue;
-            List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                    .eq(LessonOccurrenceEntity::getClassGroupId, group.getId())
-                    .eq(LessonOccurrenceEntity::getIsDeleted, 0)
-                    .ge(LessonOccurrenceEntity::getPlannedStartAt, generationStart.atStartOfDay())
-                    .lt(LessonOccurrenceEntity::getPlannedStartAt, targetEnd.plusDays(1).atStartOfDay()));
-            Map<Long, ClassGroupScheduleSlotEntity> slotsById = slots.stream()
-                    .collect(Collectors.toMap(ClassGroupScheduleSlotEntity::getId, item -> item));
-            Set<Long> occurrenceIds = occurrences.stream().map(LessonOccurrenceEntity::getId).collect(Collectors.toSet());
-            Set<Long> recordedOccurrenceIds = occurrenceIds.isEmpty() ? Set.of()
-                    : lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
-                                    .select(LessonRecordEntity::getOccurrenceId)
-                                    .in(LessonRecordEntity::getOccurrenceId, occurrenceIds)
-                                    .eq(LessonRecordEntity::getIsDeleted, 0))
-                            .stream().map(LessonRecordEntity::getOccurrenceId).collect(Collectors.toSet());
-
-            // 假期會改變後續輪換次序；只更新未開始、未消課、仍由模板控制的未來課次。
-            for (LessonOccurrenceEntity occurrence : occurrences) {
-                ClassGroupScheduleSlotEntity slot = slotsById.get(occurrence.getScheduleSlotId());
-                if (slot == null || !"SCHEDULED".equals(occurrence.getPlanningStatus())
-                        || occurrence.getCourseHolidayId() != null
-                        || occurrence.getPlannedStartAt().isBefore(now)
-                        || recordedOccurrenceIds.contains(occurrence.getId())) {
-                    continue;
-                }
-                ClassSlotRotation.Assignment assignment = ClassSlotRotation.resolve(slot,
-                        occurrence.getPlannedStartAt().toLocalDate(), group.getStartDate(), baseEnd, slots,
-                        date -> holidayForDate(holidays, date) != null);
-                Long resolvedTeacherId = assignment.teacherId() == null ? group.getTeacherId() : assignment.teacherId();
-                Long resolvedClassroomId = assignment.alternate()
-                        ? ("ONLINE".equals(assignment.deliveryMode()) ? null : assignment.classroomId())
-                        : "ONLINE".equals(assignment.deliveryMode()) ? null
-                                : assignment.classroomId() != null ? assignment.classroomId() : group.getClassroomId();
-                String resolvedDeliveryMode = assignment.deliveryMode() == null && resolvedClassroomId != null
-                        ? "IN_PERSON" : assignment.deliveryMode();
-                if (!Objects.equals(resolvedTeacherId, occurrence.getPlannedTeacherId())
-                        || !Objects.equals(assignment.subjectName(), occurrence.getSubjectName())
-                        || !Objects.equals(resolvedClassroomId, occurrence.getPlannedClassroomId())
-                        || !Objects.equals(resolvedDeliveryMode, occurrence.getDeliveryMode())) {
-                    occurrence.setPlannedTeacherId(resolvedTeacherId);
-                    occurrence.setSubjectName(assignment.subjectName());
-                    occurrence.setPlannedClassroomId(resolvedClassroomId);
-                    occurrence.setDeliveryMode(resolvedDeliveryMode);
-                    ensureNoResourceConflict(occurrence);
-                    lessonOccurrenceMapper.updateById(occurrence);
-                }
-            }
-            Set<String> existingKeys = occurrences.stream()
-                    .map(item -> occurrenceKey(item.getPlannedStartAt(), item.getPlannedEndAt()))
-                    .collect(java.util.stream.Collectors.toSet());
-            Set<ClassAdjustedSlotReservations.Reservation> adjustedReservations = adjustedSlotReservations.load(group.getId());
-
-            for (LocalDate date = generationStart; !date.isAfter(targetEnd); date = date.plusDays(1)) {
-                if (holidayForDate(holidays, date) != null) continue;
-                int weekday = date.getDayOfWeek().getValue();
-                for (ClassGroupScheduleSlotEntity slot : slots) {
-                    if (!ClassScheduleDates.slotAppliesOn(slot, date, baseEnd, slots)) continue;
-                    Long lineageId = slot.getSlotLineageId() == null ? slot.getId() : slot.getSlotLineageId();
-                    if (adjustedReservations.contains(new ClassAdjustedSlotReservations.Reservation(date, lineageId))) continue;
-                    LocalDateTime startAt = LocalDateTime.of(date, slot.getStartTime());
-                    if (startAt.isBefore(now)) continue;
-                    LocalDateTime endAt = ScheduleSlotTime.endAt(date, slot.getStartTime(), slot.getEndTime());
-                    String key = occurrenceKey(startAt, endAt);
-                    if (existingKeys.contains(key)) continue;
-
-                    LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
-                    occurrence.setLessonNo(BusinessNoGenerator.generateClassLessonOccurrenceNo());
-                    occurrence.setClassGroupId(group.getId());
-                    occurrence.setScheduleSlotId(slot.getId());
-                    occurrence.setOccurrenceType("REGULAR");
-                    ClassSlotRotation.Assignment assignment = ClassSlotRotation.resolve(slot, date,
-                            group.getStartDate(), baseEnd, slots,
-                            holidayDate -> holidayForDate(holidays, holidayDate) != null);
-                    occurrence.setPlannedTeacherId(assignment.teacherId() == null
-                            ? group.getTeacherId() : assignment.teacherId());
-                    occurrence.setSubjectName(assignment.subjectName());
-                    Long classroomId = assignment.alternate()
-                            ? ("ONLINE".equals(assignment.deliveryMode()) ? null : assignment.classroomId())
-                            : "ONLINE".equals(assignment.deliveryMode()) ? null
-                                    : assignment.classroomId() != null ? assignment.classroomId() : group.getClassroomId();
-                    occurrence.setDeliveryMode(assignment.deliveryMode() == null && classroomId != null
-                            ? "IN_PERSON" : assignment.deliveryMode());
-                    occurrence.setPlannedClassroomId(classroomId);
-                    occurrence.setPlannedStartAt(startAt);
-                    occurrence.setPlannedEndAt(endAt);
-                    occurrence.setPlannedUnits(ScheduleSlotTime.durationMinutes(slot.getStartTime(), slot.getEndTime()) / 30);
-                    occurrence.setPlanningStatus("SCHEDULED");
-                    occurrence.setConflictChecked(1);
-                    occurrence.setIsDeleted(0);
-                    ensureNoResourceConflict(occurrence);
-                    ensureNoStudentConflict(occurrence);
-                    lessonOccurrenceMapper.insert(occurrence);
-                    existingKeys.add(key);
-                }
-            }
-        }
-    }
-
-    /** 假期缩短后，清理旧周期尾部被顺延出来且尚未上课的自动周课次。 */
-    private void removeFutureRegularOccurrencesAfter(Long classGroupId, LocalDate targetEnd, LocalDateTime now) {
-        List<LessonOccurrenceEntity> excessOccurrences = lessonOccurrenceMapper.selectList(
-                new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                        .eq(LessonOccurrenceEntity::getClassGroupId, classGroupId)
-                        .eq(LessonOccurrenceEntity::getOccurrenceType, "REGULAR")
-                        .eq(LessonOccurrenceEntity::getPlanningStatus, "SCHEDULED")
-                        .isNotNull(LessonOccurrenceEntity::getScheduleSlotId)
-                        .eq(LessonOccurrenceEntity::getIsDeleted, 0)
-                        .gt(LessonOccurrenceEntity::getPlannedStartAt, now)
-                        .ge(LessonOccurrenceEntity::getPlannedStartAt, targetEnd.plusDays(1).atStartOfDay()));
-        for (LessonOccurrenceEntity occurrence : excessOccurrences) {
-            ensureNoLessonRecord(occurrence);
-            lessonOccurrenceMapper.deleteById(occurrence.getId());
-        }
-    }
-
-    private boolean isSessionBilling(String billingType) {
-        return "SESSION".equalsIgnoreCase(billingType) || "PER_SESSION".equalsIgnoreCase(billingType);
-    }
-
-    private LocalDate resolveScheduleEnd(ClassGroupEntity group) {
-        if (group.getEndDate() != null) return group.getEndDate();
-        return classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
-                        .select(ClassEnrollmentEntity::getExpiryDate)
-                        .eq(ClassEnrollmentEntity::getClassId, group.getId())
-                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
-                        .eq(ClassEnrollmentEntity::getIsDeleted, 0))
-                .stream().map(ClassEnrollmentEntity::getExpiryDate).filter(Objects::nonNull)
-                .max(LocalDate::compareTo).orElse(group.getStartDate().plusDays(60));
-    }
-
-    private String occurrenceKey(LocalDateTime startAt, LocalDateTime endAt) {
-        return startAt + "|" + endAt;
-    }
-
-    private void ensureNoStudentConflict(LessonOccurrenceEntity occurrence) {
-        LocalDate lessonDate = occurrence.getPlannedStartAt().toLocalDate();
-        List<Long> studentIds = classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
-                        .eq(ClassEnrollmentEntity::getClassId, occurrence.getClassGroupId())
-                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
-                        .eq(ClassEnrollmentEntity::getIsDeleted, 0))
-                .stream().map(ClassEnrollmentEntity::getStudentId).filter(Objects::nonNull).distinct().toList();
-        for (Long studentId : studentIds) {
-            List<Long> otherClassIds = classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
-                            .eq(ClassEnrollmentEntity::getStudentId, studentId)
-                            .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
-                            .eq(ClassEnrollmentEntity::getIsDeleted, 0)
-                            .ne(ClassEnrollmentEntity::getClassId, occurrence.getClassGroupId())
-                            .and(wrapper -> wrapper.isNull(ClassEnrollmentEntity::getEnrollmentDate)
-                                    .or().le(ClassEnrollmentEntity::getEnrollmentDate, lessonDate))
-                            .and(wrapper -> wrapper.isNull(ClassEnrollmentEntity::getExpiryDate)
-                                    .or().ge(ClassEnrollmentEntity::getExpiryDate, lessonDate)))
-                    .stream().map(ClassEnrollmentEntity::getClassId).filter(Objects::nonNull).distinct().toList();
-            List<Long> privateGroupIds = privateLessonGroupMemberMapper.selectList(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
-                            .eq(PrivateLessonGroupMemberEntity::getStudentId, studentId)
-                            .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
-                            .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0))
-                    .stream().map(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId)
-                    .filter(Objects::nonNull).distinct().toList();
-            LambdaQueryWrapper<LessonOccurrenceEntity> conflictQuery = new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                    .eq(LessonOccurrenceEntity::getIsDeleted, 0)
-                    .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
-                    .lt(LessonOccurrenceEntity::getPlannedStartAt, occurrence.getPlannedEndAt())
-                    .gt(LessonOccurrenceEntity::getPlannedEndAt, occurrence.getPlannedStartAt())
-                    .and(other -> other.isNull(LessonOccurrenceEntity::getClassGroupId)
-                            .or().ne(LessonOccurrenceEntity::getClassGroupId, occurrence.getClassGroupId()))
-                    .and(studentMatches -> studentMatches.eq(LessonOccurrenceEntity::getStudentId, studentId)
-                            .or(!privateGroupIds.isEmpty(), group -> group.in(
-                                    LessonOccurrenceEntity::getPrivateLessonGroupId, privateGroupIds))
-                            .or(!otherClassIds.isEmpty(), classes -> classes.in(
-                                    LessonOccurrenceEntity::getClassGroupId, otherClassIds)));
-            if (lessonOccurrenceMapper.selectCount(conflictQuery) > 0) {
-                throw new BusinessException("CLASS_HOLIDAY_SCHEDULE_CONFLICT",
-                        "Extending this course schedule would overlap another lesson for an enrolled student on "
-                                + lessonDate + ". Resolve the student schedule conflict first.");
-            }
-        }
-    }
-
-    private void recalculateSessionEnrollments(Long groupProjectId, LocalDate from, LocalDate through) {
-        List<ClassHolidayEntity> holidays = classHolidayMapper.selectList(new LambdaQueryWrapper<ClassHolidayEntity>()
-                .eq(ClassHolidayEntity::getGroupProjectId, groupProjectId)
-                .eq(ClassHolidayEntity::getIsDeleted, 0));
-        Set<Long> groupIds = projectClassIds(groupProjectId);
-        if (groupIds.isEmpty()) return;
-        List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
-                .in(ClassEnrollmentEntity::getClassId, groupIds)
-                .eq(ClassEnrollmentEntity::getIsDeleted, 0)
-                .in(ClassEnrollmentEntity::getBillingType, "PER_SESSION", "SESSION")
-                .in(ClassEnrollmentEntity::getStatus, "ACTIVE", "EXPIRED")
-                .le(ClassEnrollmentEntity::getEnrollmentDate, through)
-                .ge(ClassEnrollmentEntity::getExpiryDate, from));
-        LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
-        for (ClassEnrollmentEntity enrollment : enrollments) {
-            ClassGroupEntity group = classGroupMapper.selectById(enrollment.getClassId());
-            if (group == null || enrollment.getPurchasedQuantity() == null || enrollment.getPurchasedQuantity() < 1) continue;
-            LocalDate projected = projectedExpiry(enrollment, group, loadSlots(group.getId()), holidays);
-            if (projected == null) continue;
-            if (group.getEndDate() != null && projected.isAfter(group.getEndDate())) {
-                projected = group.getEndDate();
-            }
-            enrollment.setExpiryDate(projected);
-            enrollment.setStatus(projected.isBefore(today) ? "EXPIRED" : "ACTIVE");
-            classEnrollmentMapper.updateById(enrollment);
-        }
     }
 
     @Override

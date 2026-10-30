@@ -17,17 +17,6 @@ public final class ClassScheduleDates {
         return configuredBaseEndDate == null ? effectiveEndDate : configuredBaseEndDate;
     }
 
-    /** 统计原周期内按周课表应出现的上课日，计算时暂不扣除假期。 */
-    public static int countScheduledDays(LocalDate startDate, LocalDate endDate,
-                                         List<ClassGroupScheduleSlotEntity> slots) {
-        if (startDate == null || endDate == null || endDate.isBefore(startDate)) return 0;
-        int count = 0;
-        for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
-            if (hasClassOn(date, slots, endDate)) count++;
-        }
-        return count;
-    }
-
     /** 返回各生效日期段内真实可上的日期，同一天多个时段只返回一次。 */
     public static List<LocalDate> scheduledDays(LocalDate startDate, LocalDate endDate,
                                                 List<ClassGroupScheduleSlotEntity> slots,
@@ -49,20 +38,7 @@ public final class ClassScheduleDates {
         return List.copyOf(dates);
     }
 
-    /** 从用户配置的原始结束日重算假期后的终点，避免反复顺延时把上次结果当成新基准。 */
-    public static LocalDate endDateAfterHolidays(LocalDate startDate, LocalDate baseEndDate,
-                                                  String billingType, Integer totalSessions,
-                                                  List<ClassGroupScheduleSlotEntity> slots,
-                                                  Predicate<LocalDate> isHoliday) {
-        boolean sessionBilling = "SESSION".equalsIgnoreCase(billingType)
-                || "PER_SESSION".equalsIgnoreCase(billingType);
-        int requiredDays = sessionBilling
-                ? (totalSessions == null ? 0 : totalSessions)
-                : countScheduledDays(startDate, baseEndDate, slots);
-        return nthScheduledDay(startDate, requiredDays, baseEndDate, slots, isHoliday);
-    }
-
-    /** 找到跳过假期后的第 N 个周课表上课日，用于顺延班级结束日期。 */
+    /** 找到跳过假期后的第 N 个周课表上课日，用于 SESSION 课包覆盖校验。 */
     public static LocalDate nthScheduledDay(LocalDate startDate, int quantity,
                                             List<ClassGroupScheduleSlotEntity> slots,
                                             Predicate<LocalDate> isHoliday) {

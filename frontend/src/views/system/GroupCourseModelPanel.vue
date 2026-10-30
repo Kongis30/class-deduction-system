@@ -272,7 +272,7 @@
 
     <el-dialog v-model="holidayDialogVisible" :title="`${holidayProject?.projectName ?? 'Project'} holidays`" width="min(760px, calc(100vw - 32px))" :close-on-click-modal="false">
       <el-alert
-        title="A project holiday applies to every actual class and campus in this project. Classes skip these dates and continue on their normal weekly schedule afterward."
+        title="A project holiday applies to every actual class and campus in this project. Lessons inside these dates are cancelled; lessons outside them and the class end date do not change. No make-up lessons are added."
         type="info"
         :closable="false"
         show-icon
@@ -722,7 +722,7 @@ async function saveHoliday() {
     }
     const lessonWord = preview.affectedOccurrenceCount === 1 ? 'lesson' : 'lessons';
     const enrollmentWord = preview.affectedSessionEnrollmentCount === 1 ? 'enrollment' : 'enrollments';
-    const summary = `${project.projectName}: ${preview.affectedOccurrenceCount} ${lessonWord} will be skipped. ${preview.affectedSessionEnrollmentCount} session-based ${enrollmentWord} will have their end dates recalculated.`;
+    const summary = `${project.projectName}: ${preview.affectedOccurrenceCount} group ${lessonWord} will be cancelled. ${preview.affectedSessionEnrollmentCount} session-based ${enrollmentWord} may have unused sessions; class end dates and enrollment dates will not change.`;
     await ElMessageBox.confirm(summary, 'Confirm project holiday', {
       type: 'warning',
       confirmButtonText: editingHoliday.value ? 'Save changes' : 'Add holiday',
@@ -731,7 +731,7 @@ async function saveHoliday() {
     if (editingHoliday.value) await updateGroupProjectHoliday(project.id, editingHoliday.value.id, payload);
     else await createGroupProjectHoliday(project.id, payload);
     resetHolidayForm();
-    ElMessage.success('Project holiday saved. Schedules and eligible enrollment dates were updated.');
+    ElMessage.success('Project holiday saved. Group lessons inside the holiday dates were cancelled; class end dates did not change.');
     await loadHolidays();
     await loadSetup();
   } catch (error) {

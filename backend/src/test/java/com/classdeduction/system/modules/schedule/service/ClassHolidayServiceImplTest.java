@@ -5,7 +5,6 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
 import com.classdeduction.system.modules.base.entity.GroupCourseProjectEntity;
-import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
@@ -16,7 +15,6 @@ import com.classdeduction.system.modules.schedule.dto.ClassHolidaySaveRequest;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
-import com.classdeduction.system.modules.schedule.service.ClassAdjustedSlotReservations;
 import com.classdeduction.system.modules.schedule.mapper.ClassHolidayMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.impl.ClassHolidayServiceImpl;
@@ -31,14 +29,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
 import java.util.List;
-import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.inOrder;
-import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -50,10 +47,8 @@ class ClassHolidayServiceImplTest {
     @Mock private GroupCourseProjectMapper projectMapper;
     @Mock private LessonOccurrenceMapper lessonOccurrenceMapper;
     @Mock private ClassEnrollmentMapper classEnrollmentMapper;
-    @Mock private PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
     @Mock private ClassGroupMapper classGroupMapper;
     @Mock private ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
-    @Mock private ClassAdjustedSlotReservations adjustedSlotReservations;
     @Mock private LessonRecordMapper lessonRecordMapper;
 
     private ClassHolidayServiceImpl service;
@@ -71,10 +66,8 @@ class ClassHolidayServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        lenient().when(adjustedSlotReservations.load(any())).thenReturn(Set.of());
         service = new ClassHolidayServiceImpl(classHolidayMapper, projectMapper, lessonOccurrenceMapper,
-                classEnrollmentMapper, privateLessonGroupMemberMapper, classGroupMapper,
-                classGroupScheduleSlotMapper, adjustedSlotReservations, lessonRecordMapper);
+                classEnrollmentMapper, classGroupMapper, classGroupScheduleSlotMapper, lessonRecordMapper);
     }
 
     @Test
@@ -137,11 +130,59 @@ class ClassHolidayServiceImplTest {
     }
 
     @Test
+    void holidayCancelsOnlyOccurrencesInsideItsRangeWithoutExtendingTheClass() {
+        GroupCourseProjectEntity project = new GroupCourseProjectEntity();
+        project.setId(PROJECT_ID);
+        project.setIsDeleted(0);
+        project.setStatus("ACTIVE");
+        when(projectMapper.selectByIdForUpdate(PROJECT_ID)).thenReturn(project);
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project);
+        when(classGroupMapper.selectByProjectIdForUpdate(PROJECT_ID)).thenReturn(List.of());
+
+        ClassGroupEntity group = new ClassGroupEntity();
+        group.setId(501L);
+        group.setGroupProjectId(PROJECT_ID);
+        group.setStartDate(LocalDate.of(2026, 9, 10));
+        group.setEndDate(LocalDate.of(2026, 11, 30));
+        when(classGroupMapper.selectList(any())).thenReturn(List.of(group));
+
+        ClassHolidayEntity holiday = new ClassHolidayEntity();
+        holiday.setId(900L);
+        holiday.setGroupProjectId(PROJECT_ID);
+        holiday.setHolidayName("Election Day");
+        holiday.setStartDate(LocalDate.of(2026, 11, 3));
+        holiday.setEndDate(LocalDate.of(2026, 11, 3));
+        when(classHolidayMapper.selectCount(any())).thenReturn(0L);
+        when(classHolidayMapper.selectList(any())).thenReturn(List.of(holiday));
+
+        LessonOccurrenceEntity inside = occurrence(1L, LocalDate.of(2026, 11, 3));
+        LessonOccurrenceEntity outside = occurrence(2L, LocalDate.of(2026, 11, 4));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(inside, outside));
+        when(lessonRecordMapper.selectCount(any())).thenReturn(0L);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of());
+
+        ClassHolidaySaveRequest request = new ClassHolidaySaveRequest();
+        request.setHolidayName("Election Day");
+        request.setStartDate(LocalDate.of(2026, 11, 3));
+        request.setEndDate(LocalDate.of(2026, 11, 3));
+
+        service.createHoliday(PROJECT_ID, request);
+
+        assertThat(inside.getPlanningStatus()).isEqualTo("CANCELLED");
+        assertThat(inside.getCourseHolidayId()).isEqualTo(900L);
+        assertThat(inside.getHolidayPreviousStatus()).isEqualTo("SCHEDULED");
+        assertThat(outside.getPlanningStatus()).isEqualTo("SCHEDULED");
+        assertThat(outside.getCourseHolidayId()).isNull();
+        verify(classGroupMapper, never()).updateById(any(ClassGroupEntity.class));
+        verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
     void recalculatesPurchasedSessionCoverageAcrossMultiplePeriods() {
-        ClassGroupEntity group = sessionClass(LocalDate.of(2026, 10, 5), LocalDate.of(2026, 10, 28));
+        ClassGroupEntity group = sessionClass(LocalDate.of(2037, 10, 5), LocalDate.of(2037, 10, 28));
         ClassEnrollmentEntity enrollment = sessionEnrollment(4);
-        ClassGroupScheduleSlotEntity firstPeriod = mondaySlot(LocalDate.of(2026, 10, 5), LocalDate.of(2026, 10, 12));
-        ClassGroupScheduleSlotEntity secondPeriod = weekdaySlot(3, LocalDate.of(2026, 10, 19), LocalDate.of(2026, 10, 28));
+        ClassGroupScheduleSlotEntity firstPeriod = mondaySlot(LocalDate.of(2037, 10, 5), LocalDate.of(2037, 10, 12));
+        ClassGroupScheduleSlotEntity secondPeriod = weekdaySlot(3, LocalDate.of(2037, 10, 19), LocalDate.of(2037, 10, 28));
         when(classGroupMapper.selectById(501L)).thenReturn(group);
         when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(firstPeriod, secondPeriod));
         when(classHolidayMapper.selectList(any())).thenReturn(List.of());
@@ -149,7 +190,7 @@ class ClassHolidayServiceImplTest {
 
         service.recalculateClassSessionEnrollments(501L);
 
-        assertThat(enrollment.getExpiryDate()).isEqualTo(LocalDate.of(2026, 10, 28));
+        assertThat(enrollment.getExpiryDate()).isEqualTo(LocalDate.of(2037, 10, 28));
         assertThat(enrollment.getStatus()).isEqualTo("ACTIVE");
         verify(classEnrollmentMapper).updateById(enrollment);
     }
@@ -171,6 +212,17 @@ class ClassHolidayServiceImplTest {
                                         + "purchased sessions. Add weekly class times or extend the class end date, then preview again."));
     }
 
+    private LessonOccurrenceEntity occurrence(Long id, LocalDate date) {
+        LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
+        occurrence.setId(id);
+        occurrence.setClassGroupId(501L);
+        occurrence.setIsDeleted(0);
+        occurrence.setPlannedStartAt(date.atTime(15, 0));
+        occurrence.setPlannedEndAt(date.atTime(18, 0));
+        occurrence.setPlanningStatus("SCHEDULED");
+        return occurrence;
+    }
+
     private ClassGroupEntity sessionClass(LocalDate startDate, LocalDate endDate) {
         ClassGroupEntity group = new ClassGroupEntity();
         group.setId(501L);
@@ -188,8 +240,8 @@ class ClassHolidayServiceImplTest {
         enrollment.setIsDeleted(0);
         enrollment.setBillingType("PER_SESSION");
         enrollment.setStatus("ACTIVE");
-        enrollment.setEnrollmentDate(LocalDate.of(2026, 10, 5));
-        enrollment.setExpiryDate(LocalDate.of(2026, 10, 26));
+        enrollment.setEnrollmentDate(LocalDate.of(2037, 10, 5));
+        enrollment.setExpiryDate(LocalDate.of(2037, 10, 26));
         enrollment.setPurchasedQuantity(purchasedQuantity);
         return enrollment;
     }

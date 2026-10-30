@@ -14,6 +14,7 @@
 - `group_registration_plan` 表示学生购买范围与价格：固定日期/季节、月数、课次数。季节或全年只是报名权益，不创建额外的 class 或 schedule。
 - `enrollment_order_item` 是财务事实；每个班课订单项目为每个学生创建独立 `class_enrollment` 权益。续费新增权益，不覆盖旧权益。`lesson_record.class_enrollment_id` 指向消耗的那份权益，同一学生同一 occurrence 只能确认一次。
 - 已配置的 occurrences 是报名和收费的日期来源。项目假期在生成课次时跳过；报名校验所选方案覆盖范围及可用上课日。可用课次不足时阻止报名/保存，不静默少排或改价。
+- 新增、修改或删除项目假期只取消/恢复假期范围内的课次，不修改 `class_group.end_date`、不延长 `class_enrollment.expiry_date`、不在原结束日之后补造课次，也不重算假期外课次的老师轮换。最新方案见 [`class-holiday-adjustment-implementation-plan.md`](./class-holiday-adjustment-implementation-plan.md)。
 - 同一项目中，新的权益不得与学生已有权益在上课日期和出勤时段上重叠；历史冲突在迁移审查报告中标出，不自动挑选或删除。
 - 全年权益可显示在秋季和春季名单中；支付、退款和 Data Summary 金额仍按原订单项目计一次。
 - 1-on-1/2/3 继续使用现有 private-package 与 private-lesson 流程。

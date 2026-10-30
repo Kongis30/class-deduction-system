@@ -32,7 +32,7 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
                 "date DEFAULT NULL COMMENT 'Last date for a fixed-date grade class' AFTER start_date");
         // 兼容旧库：排课服务会读取这个字段，缺列会直接导致注册页的班级查询返回 500。
         boolean baseEndDateAdded = addClassGroupColumnIfMissing("schedule_base_end_date",
-                "date DEFAULT NULL COMMENT 'User-configured schedule end before holiday extensions' AFTER end_date");
+                "date DEFAULT NULL COMMENT 'Legacy original schedule end; holidays no longer extend end_date' AFTER end_date");
         if (baseEndDateAdded) {
             jdbcTemplate.update("UPDATE class_group SET schedule_base_end_date = end_date WHERE schedule_base_end_date IS NULL");
         }
