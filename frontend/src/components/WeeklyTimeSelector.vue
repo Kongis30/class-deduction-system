@@ -1,5 +1,30 @@
 <template>
   <div class="weekly-time-selector">
+    <div v-if="pinchZoomEnabled" class="wts-mobile-zoom-bar">
+      <span class="wts-mobile-zoom-bar__label">Zoom</span>
+      <div class="wts-mobile-zoom-controls" role="group" aria-label="Calendar zoom">
+        <button
+          type="button"
+          class="wts-zoom-btn"
+          :disabled="mobileZoom <= MIN_MOBILE_ZOOM"
+          aria-label="Zoom out"
+          @click="zoomStep(-0.25)"
+        >−</button>
+        <button
+          type="button"
+          class="wts-zoom-btn wts-zoom-btn--value"
+          :aria-label="`Reset zoom to fit the week (currently ${Math.round(mobileZoom * 100)}%)`"
+          @click="resetZoom"
+        >{{ Math.round(mobileZoom * 100) }}%</button>
+        <button
+          type="button"
+          class="wts-zoom-btn"
+          :disabled="mobileZoom >= MAX_MOBILE_ZOOM"
+          aria-label="Zoom in"
+          @click="zoomStep(0.25)"
+        >+</button>
+      </div>
+    </div>
     <div
       ref="gridScroll"
       class="wts-grid-scroll"
@@ -134,7 +159,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
   SCHEDULE_DAY_END_MINUTES,
   SCHEDULE_DAY_END_TIME,
@@ -188,14 +213,41 @@ const emit = defineEmits<{
   (e: 'cell-click', weekday: number, hour: number, minute: number): void;
 }>();
 
-const MIN_MOBILE_ZOOM = 0.8;
+const MIN_MOBILE_ZOOM = 0.6;
 const MAX_MOBILE_ZOOM = 2.5;
+const MOBILE_BASE_GRID_WIDTH = 42 + 7 * 58; // 448px at 100% zoom (time column + 7 days)
 const mobileZoom = ref(1);
+const hasManualZoom = ref(false);
 const gridScroll = ref<HTMLElement | null>(null);
 let pinchStartDistance = 0;
 let pinchStartZoom = 1;
 let pinchAnchorX = 0;
 let pinchAnchorY = 0;
+let resizeObserver: ResizeObserver | null = null;
+
+function applyZoom(value: number) {
+  mobileZoom.value = clampMobileZoom(value);
+}
+
+function zoomStep(delta: number) {
+  hasManualZoom.value = true;
+  applyZoom(mobileZoom.value + delta);
+}
+
+// 初始按可视宽度缩放，让一整周都能看到；用户手动缩放/双指缩放后不再自动重排。
+function fitToWidth() {
+  if (hasManualZoom.value) return;
+  const scroller = gridScroll.value;
+  if (!scroller) return;
+  const available = scroller.clientWidth;
+  if (!available) return;
+  applyZoom(available / MOBILE_BASE_GRID_WIDTH);
+}
+
+function resetZoom() {
+  hasManualZoom.value = false;
+  fitToWidth();
+}
 
 const mobileZoomStyle = computed(() => ({
   '--wts-mobile-grid-width': `${(42 + 7 * 58) * mobileZoom.value}px`,
@@ -219,6 +271,7 @@ function touchDistance(first: Touch, second: Touch) {
 // 双指缩放只改变手机日历网格密度，并围绕手势中心保留当前查看位置。
 function onTouchStart(event: TouchEvent) {
   if (!props.pinchZoomEnabled || event.touches.length !== 2) return;
+  hasManualZoom.value = true;
   const scroller = gridScroll.value;
   if (!scroller) return;
 
@@ -523,6 +576,26 @@ onUnmounted(() => {
   document.removeEventListener('mouseup', onMouseUp);
 });
 
+// 手机端：初始自动缩放让整周可见，宽度变化时（旋转/切 tab）在未手动缩放前保持适配。
+watch(() => props.pinchZoomEnabled, (enabled) => {
+  if (!enabled) return;
+  hasManualZoom.value = false;
+  void nextTick(fitToWidth);
+});
+
+onMounted(() => {
+  if (props.pinchZoomEnabled) void nextTick(fitToWidth);
+  if (gridScroll.value && typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(() => fitToWidth());
+    resizeObserver.observe(gridScroll.value);
+  }
+});
+
+onUnmounted(() => {
+  resizeObserver?.disconnect();
+  resizeObserver = null;
+});
+
 function removeSlot(idx: number) {
   const copy = [...props.modelValue];
   copy.splice(idx, 1);
@@ -603,6 +676,57 @@ function weekdayName(d: number) {
   user-select: none;
   font-size: 12px;
   width: 100%;
+}
+
+.wts-mobile-zoom-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.wts-mobile-zoom-bar__label {
+  color: #7b8797;
+  font-size: 11px;
+}
+
+.wts-mobile-zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 8%);
+}
+
+.wts-zoom-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #2563eb;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.wts-zoom-btn:active { background: #eef4ff; }
+.wts-zoom-btn:disabled { color: #c3ccd9; cursor: default; }
+
+.wts-zoom-btn--value {
+  min-width: 46px;
+  color: #52647c;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .wts-grid-scroll {

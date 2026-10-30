@@ -340,8 +340,9 @@ test.describe('mobile responsive workspace', () => {
       scrollWidth: element.scrollWidth,
       dayWidth: element.querySelector('.wts-header__cell')?.getBoundingClientRect().width ?? 0,
     }));
-    expect(mobileGrid.scrollWidth).toBeGreaterThan(mobileGrid.clientWidth);
-    expect(mobileGrid.dayWidth).toBeGreaterThanOrEqual(58);
+    // 自动缩放后整周应完整可见，不再依赖横向滚动。
+    expect(mobileGrid.scrollWidth, 'The full week should fit without horizontal scrolling').toBeLessThanOrEqual(mobileGrid.clientWidth + 2);
+    expect(mobileGrid.dayWidth, 'Each day should stay readable after auto-fit').toBeGreaterThanOrEqual(40);
 
     const datePicker = page.locator('.calendar-date-picker');
     const datePickerSize = await datePicker.evaluate(element => {
@@ -353,8 +354,18 @@ test.describe('mobile responsive workspace', () => {
     await datePicker.click();
     await expect(page.locator('.el-picker-panel:visible')).toBeVisible();
     await page.keyboard.press('Escape');
-    await page.locator('.calendar-controls__count').click();
-    await expect(page.locator('.wts-mobile-zoom-controls')).toHaveCount(0);
+
+    // 手动缩放：放大后出现横向滚动，点击百分比可一键恢复整周适配。
+    await expect(page.locator('.wts-mobile-zoom-controls')).toBeVisible();
+    await expect(page.locator('.wts-zoom-btn')).toHaveCount(3);
+    await page.getByRole('button', { name: 'Zoom in' }).click();
+    await expect
+      .poll(() => page.locator('.wts-grid-scroll').evaluate(el => el.scrollWidth > el.clientWidth))
+      .toBe(true);
+    await page.getByRole('button', { name: /Reset zoom/ }).click();
+    await expect
+      .poll(() => page.locator('.wts-grid-scroll').evaluate(el => el.scrollWidth <= el.clientWidth + 2))
+      .toBe(true);
 
     const calendarPageScroll = page.locator('.app-shell__content--calendar');
     await expect(calendarPageScroll).toHaveCSS('overflow-y', 'auto');
