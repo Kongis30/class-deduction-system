@@ -77,9 +77,17 @@
 
       <p v-if="appStore.isMobileViewport" class="mobile-table-hint">Swipe to view more fields. Tap a student for details; use More for actions.</p>
       <div ref="peopleTableScrollRef" class="people-table-zoom-scroll mobile-pinch-scroll">
+        <div v-if="!studentProducts.length && !loading" class="student-groups-empty">No students found.</div>
+        <details v-for="product in studentProducts" :key="product.key" class="student-product" :open="openProducts.has(product.key)" @toggle="setOpen(openProducts, product.key, $event)">
+          <summary>{{ product.label }} <span>{{ product.studentCount }} students</span></summary>
+          <details v-for="project in product.projects" :key="project.key" class="student-project" :open="openProjects.has(project.key)" @toggle="setOpen(openProjects, project.key, $event)">
+            <summary>{{ project.label }}</summary>
+            <details v-for="group in project.classes" :key="group.key" class="student-group" :open="openGroups.has(group.key)" @toggle="setOpen(openGroups, group.key, $event)">
+              <summary>{{ group.label }} <span>{{ group.students.length }} students</span></summary>
         <el-table
+          v-if="openGroups.has(group.key)"
           v-loading="loading"
-          :data="tableData"
+          :data="group.students"
           row-key="id"
           class="product-table people-main-table"
           :style="{ zoom: appStore.isMobileViewport ? mobileTableScale : undefined }"
@@ -177,21 +185,12 @@
           </template>
         </el-table-column>
         </el-table>
+            </details>
+          </details>
+        </details>
       </div>
 
-      <div class="table-footer">
-        <span>Showing {{ pagination.start }}–{{ pagination.end }} of {{ pagination.total }}</span>
-        <el-pagination
-          v-model:current-page="pagination.page"
-          v-model:page-size="pagination.size"
-          background
-          :layout="appStore.isMobileViewport ? 'prev, pager, next' : 'prev, pager, next, sizes'"
-          :page-sizes="[10, 20, 50]"
-          :total="pagination.total"
-          @current-change="loadData"
-          @size-change="loadData"
-        />
-      </div>
+      <div class="table-footer">{{ tableData.length }} students{{ loading ? ' · Loading…' : '' }}</div>
     </section>
 
     <!-- Student Form Dialog -->
@@ -841,10 +840,12 @@ import {
   fetchDeletedStudents,
   fetchStudent,
   fetchStudents,
+  fetchStudentCourseMemberships,
   deleteStudent,
   updateStudent,
   type StudentQuery,
   type StudentSavePayload,
+  type StudentCourseMembership,
 } from '@/api/base-data';
 import {
   createPaymentRecord,
@@ -914,19 +915,68 @@ const activeAdvancedFilterCount = computed(() =>
   Number(Boolean(filters.campusId)) + Number(Boolean(filters.paymentStatus))
 );
 
-const pagination = reactive({
-  page: 1,
-  size: 10,
-  total: 0,
-  get start() {
-    return this.total === 0 ? 0 : (this.page - 1) * this.size + 1;
-  },
-  get end() {
-    return Math.min(this.page * this.size, this.total);
-  },
+const tableData = ref<StudentItem[]>([]);
+const courseMemberships = ref<StudentCourseMembership[]>([]);
+const openProducts = ref(new Set<string>());
+const openProjects = ref(new Set<string>());
+const openGroups = ref(new Set<string>());
+let lastSearchKeyword = '';
+
+// 同一学生可以属于多个实际班级；使用实体 ID 避免同名班级混合。
+const studentProducts = computed(() => {
+  type ClassGroup = { key: string; label: string; students: StudentItem[] };
+  type Project = { key: string; label: string; classes: ClassGroup[] };
+  type Product = { key: string; label: string; projects: Project[]; studentCount: number };
+  const products = new Map<string, Product>();
+  const students = new Map(tableData.value.map((student) => [String(student.id), student]));
+  const assigned = new Set<string>();
+  const add = (student: StudentItem, productKey: string, productLabel: string, projectKey: string, projectLabel: string, classKey: string, classLabel: string) => {
+    let product = products.get(productKey);
+    if (!product) { product = { key: productKey, label: productLabel, projects: [], studentCount: 0 }; products.set(productKey, product); }
+    let project = product.projects.find((item) => item.key === projectKey);
+    if (!project) { project = { key: projectKey, label: projectLabel, classes: [] }; product.projects.push(project); }
+    let group = project.classes.find((item) => item.key === classKey);
+    if (!group) { group = { key: classKey, label: classLabel, students: [] }; project.classes.push(group); }
+    if (!group.students.some((item) => item.id === student.id)) group.students.push(student);
+  };
+  for (const membership of courseMemberships.value) {
+    const student = students.get(String(membership.studentId));
+    if (!student) continue;
+    assigned.add(String(student.id));
+    const productKey = `product:${membership.productId}`;
+    const projectKey = `${productKey}:project:${membership.projectId || membership.projectName}`;
+    const classKey = `${projectKey}:class:${membership.classId || 'private'}`;
+    add(student, productKey, membership.productName, projectKey, membership.projectName, classKey,
+      [membership.className, membership.campusName].filter(Boolean).join(' · '));
+  }
+  for (const student of students.values()) {
+    if (!assigned.has(String(student.id))) add(student, 'unassigned', 'No course', 'unassigned-project', 'No project', 'unassigned-class', 'No class');
+  }
+  for (const product of products.values()) {
+    product.projects.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+    for (const project of product.projects) project.classes.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+    product.studentCount = new Set(product.projects.flatMap((project) => project.classes.flatMap((group) => group.students.map((student) => student.id)))).size;
+  }
+  return [...products.values()].sort((a, b) => a.key === 'unassigned' ? 1 : b.key === 'unassigned' ? -1 : a.label.localeCompare(b.label, undefined, { numeric: true }));
 });
 
-const tableData = ref<StudentItem[]>([]);
+function setOpen(openKeys: Set<string>, key: string, event: Event) {
+  if ((event.target as HTMLDetailsElement).open) openKeys.add(key); else openKeys.delete(key);
+}
+
+// 搜索完成后展开所有匹配路径；清空搜索时恢复折叠，避免显示整页学生表格。
+function expandSearchResults(keyword: string) {
+  if (keyword) {
+    openProducts.value = new Set(studentProducts.value.map((product) => product.key));
+    openProjects.value = new Set(studentProducts.value.flatMap((product) => product.projects.map((project) => project.key)));
+    openGroups.value = new Set(studentProducts.value.flatMap((product) => product.projects.flatMap((project) => project.classes.map((group) => group.key))));
+  } else if (lastSearchKeyword) {
+    openProducts.value = new Set();
+    openProjects.value = new Set();
+    openGroups.value = new Set();
+  }
+  lastSearchKeyword = keyword;
+}
 const selectedStudent = ref<StudentItem | null>(null);
 const studentDetail = ref<StudentItem | null>(null);
 const detailDrawerVisible = ref(false);
@@ -986,7 +1036,6 @@ const paymentBalance = computed(() => roundMoney(paymentOrder.value?.balanceAmou
 const paymentDraftTotal = computed(() => roundMoney(paymentRows.value.reduce((sum, row) => sum + numeric(row.amount), 0)));
 const paymentDraftRemaining = computed(() => roundMoney(paymentBalance.value - paymentDraftTotal.value));
 function handleFilterChange() {
-  pagination.page = 1;
   loadData();
 }
 
@@ -1098,7 +1147,9 @@ async function submitStudentAccount() {
 }
 
 // ─── Load Data ────────────────────────────────────
+let loadVersion = 0;
 async function loadData() {
+  const version = ++loadVersion;
   loading.value = true;
   try {
     const params: StudentQuery = {
@@ -1106,25 +1157,39 @@ async function loadData() {
       campusId: filters.campusId || undefined,
       paymentStatus: filters.paymentStatus || undefined,
       sortByName: true,
-      pageNum: pagination.page,
-      pageSize: pagination.size,
+      pageNum: 1,
+      pageSize: 200,
     };
-    const res = await fetchStudents(params);
-    const data = res.data.data;
-    tableData.value = data.records;
-    pagination.total = data.total;
-    await loadStudentAccounts();
+    const [memberships, firstPage] = await Promise.all([fetchStudentCourseMemberships(), fetchStudents(params), loadStudentAccounts()]);
+    if (version !== loadVersion) return;
+    courseMemberships.value = memberships.data.data ?? [];
+    tableData.value = firstPage.data.data.records;
+    const total = firstPage.data.data.total;
+    for (let page = 2; tableData.value.length < total; page += 1) {
+      const response = await fetchStudents({ ...params, pageNum: page });
+      if (version !== loadVersion) return;
+      const records = response.data.data.records;
+      if (!records.length) break;
+      tableData.value = [...tableData.value, ...records];
+    }
+    expandSearchResults(params.keyword?.trim() ?? '');
   } catch {
-    ElMessage.error('Failed to load students.');
+    if (version === loadVersion) ElMessage.error('Failed to load students. Please try again.');
   } finally {
-    loading.value = false;
+    if (version === loadVersion) loading.value = false;
   }
 }
 
 async function loadStudentAccounts() {
   try {
-    const res = await fetchStudentAccounts({ pageSize: 500 });
-    studentAccounts.value = res.data.data.records ?? [];
+    const accounts: StudentAccountItem[] = [];
+    for (let page = 1; ; page += 1) {
+      const res = await fetchStudentAccounts({ pageNum: page, pageSize: 200 });
+      const data = res.data.data;
+      accounts.push(...(data.records ?? []));
+      if (!data.records?.length || accounts.length >= data.total) break;
+    }
+    studentAccounts.value = accounts;
   } catch {
     studentAccounts.value = [];
   }
@@ -1854,6 +1919,13 @@ onBeforeUnmount(() => {
   border: 1px solid #ebeef5;
 }
 
+.student-product { margin-bottom: 10px; border: 1px solid #d9e4ee; border-radius: 6px; overflow: hidden; }
+.student-product summary { cursor: pointer; padding: 10px 14px; color: #29425e; font-size: 13px; font-weight: 600; background: #f2f6fa; }
+.student-product summary span { float: right; color: #73849a; font-size: 12px; font-weight: 400; }
+.student-project > summary { padding-left: 28px; background: #f8fafc; border-top: 1px solid #e5edf4; }
+.student-group > summary { padding-left: 42px; background: #fff; border-top: 1px solid #e5edf4; }
+.student-groups-empty { padding: 30px; text-align: center; color: #909399; }
+
 .cell-stack {
   display: flex;
   flex-direction: column;
@@ -1884,19 +1956,6 @@ onBeforeUnmount(() => {
   margin-top: 10px;
   font-size: 12px;
   color: #909399;
-}
-
-@media (max-width: 640px) {
-  .table-footer {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .table-footer :deep(.el-pagination) {
-    width: 100%;
-    min-width: 0;
-  }
 }
 
 .dialog-footer {

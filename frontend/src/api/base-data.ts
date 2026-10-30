@@ -20,6 +20,21 @@ export function fetchStudents(params: StudentQuery = {}) {
   return http.get<ApiResponse<PageResult<StudentItem>>>('/v1/base/students', { params });
 }
 
+export interface StudentCourseMembership {
+  studentId: EntityId;
+  productId: EntityId;
+  productName: string;
+  projectId?: EntityId;
+  projectName: string;
+  classId?: EntityId;
+  className: string;
+  campusName?: string;
+}
+
+export function fetchStudentCourseMemberships() {
+  return http.get<ApiResponse<StudentCourseMembership[]>>('/v1/base/students/course-memberships');
+}
+
 export function fetchAllStudents() {
   return http.get<ApiResponse<StudentItem[]>>('/v1/base/students/all');
 }

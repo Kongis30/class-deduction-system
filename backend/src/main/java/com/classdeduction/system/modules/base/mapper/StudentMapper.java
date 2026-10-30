@@ -145,6 +145,33 @@ public interface StudentMapper extends BaseMapper<StudentEntity> {
     IPage<Map<String, Object>> selectStudentOperationPage(Page<Map<String, Object>> page,
                                                           @Param("query") StudentPageQuery query);
 
+    /** 按真实班课报名和私教课包返回学生归属，续费记录在同一班级去重。 */
+    @Select("""
+            SELECT DISTINCT CAST(e.student_id AS CHAR) AS studentId,
+                   CAST(p.id AS CHAR) AS productId, p.product_name AS productName,
+                   CAST(pr.id AS CHAR) AS projectId,
+                   COALESCE(NULLIF(TRIM(pr.project_name), ''), NULLIF(TRIM(c.grade_band), ''), 'Other projects') AS projectName,
+                   CAST(c.id AS CHAR) AS classId,
+                   COALESCE(NULLIF(TRIM(c.actual_class), ''), c.class_name) AS className,
+                   campus.campus_name AS campusName
+            FROM class_enrollment e
+            JOIN class_group c ON c.id = e.class_id AND c.is_deleted = 0
+            JOIN course_product p ON p.id = c.product_id AND p.is_deleted = 0
+            LEFT JOIN group_course_project pr ON pr.id = c.group_project_id AND pr.is_deleted = 0
+            LEFT JOIN campus ON campus.id = c.campus_id AND campus.is_deleted = 0
+            WHERE e.is_deleted = 0 AND e.status IN ('ACTIVE', 'EXPIRED')
+            UNION
+            SELECT DISTINCT CAST(pkg.student_id AS CHAR), CAST(p.id AS CHAR), p.product_name,
+                   NULL, COALESCE(NULLIF(TRIM(oi.grade_band), ''), 'Other projects'),
+                   NULL, '1-on-1', NULL
+            FROM course_package pkg
+            JOIN course_product p ON p.id = pkg.course_product_id AND p.is_deleted = 0
+            LEFT JOIN enrollment_order_item oi ON oi.id = pkg.enrollment_order_item_id AND oi.is_deleted = 0
+            WHERE pkg.is_deleted = 0 AND pkg.teaching_mode = 'ONE_ON_ONE'
+              AND pkg.package_status IN ('ACTIVE', 'PAUSED', 'COMPLETED')
+            """)
+    List<Map<String, Object>> selectStudentCourseMemberships();
+
     /**
      * 按校区统计学生数（批量GROUP BY，避免N+1）
      */

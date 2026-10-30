@@ -106,6 +106,11 @@ public class StudentServiceImpl implements StudentService {
     }
 
     @Override
+    public List<Map<String, Object>> listCourseMemberships() {
+        return studentMapper.selectStudentCourseMemberships();
+    }
+
+    @Override
     public StudentDetailVO getStudent(Long id) {
         StudentEntity student = requireStudent(id);
         return toDetail(student);

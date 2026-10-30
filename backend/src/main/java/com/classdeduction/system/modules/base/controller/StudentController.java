@@ -44,6 +44,12 @@ public class StudentController {
         return ApiResponse.success(studentService.listDeleted());
     }
 
+    @GetMapping("/course-memberships")
+    @Operation(summary = "List student course and class memberships")
+    public ApiResponse<java.util.List<java.util.Map<String, Object>>> listCourseMemberships() {
+        return ApiResponse.success(studentService.listCourseMemberships());
+    }
+
     @GetMapping
     @Operation(summary = "List student profiles")
     public ApiResponse<PageResponse<StudentListItemVO>> pageStudents(@ParameterObject @Valid StudentPageQuery query) {

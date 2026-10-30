@@ -8,12 +8,15 @@ import com.classdeduction.system.modules.base.vo.StudentDetailVO;
 import com.classdeduction.system.modules.base.vo.StudentListItemVO;
 
 import java.util.List;
+import java.util.Map;
 
 public interface StudentService {
 
     List<StudentListItemVO> listAllActive();
 
     PageResponse<StudentListItemVO> pageStudents(StudentPageQuery query);
+
+    List<Map<String, Object>> listCourseMemberships();
 
     StudentDetailVO getStudent(Long id);
 
