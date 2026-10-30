@@ -509,6 +509,46 @@ test.describe('mobile responsive workspace', () => {
     await expect(drawer.locator('.student-order-card')).toHaveCount(0);
   });
 
+  test('saved receipt keeps payment labels inline and stacks course details on mobile', async ({ page }, testInfo) => {
+    await page.goto('/admin/config/people?tab=students');
+    await page.locator('details.student-product > summary').first().click();
+    await page.locator('details.student-project > summary').first().click();
+    await page.locator('details.student-group > summary').first().click();
+    await page.locator('.el-table__body-wrapper tbody tr').first().click();
+    await page.locator('.student-order-card').first().getByRole('button', { name: 'View receipt' }).click();
+    await page.waitForURL(/\/registration\?orderId=/);
+    await expect(page.locator('.payment-line')).toBeVisible();
+
+    const payment = page.locator('.payment-line');
+    const [payLabel, payValue, amountLabel, amountValue] = await Promise.all([
+      payment.locator('> span').first().boundingBox(),
+      payment.locator('.payment-method-block').boundingBox(),
+      payment.locator('.amount-label').boundingBox(),
+      payment.locator('.paper-payment-summary--amount').boundingBox(),
+    ]);
+    expect(payLabel).not.toBeNull();
+    expect(payValue).not.toBeNull();
+    expect(amountLabel).not.toBeNull();
+    expect(amountValue).not.toBeNull();
+    expect(Math.abs((payLabel!.y + payLabel!.height / 2) - (payValue!.y + payValue!.height / 2)), 'Pay method label and value should share a row').toBeLessThanOrEqual(2);
+    expect(Math.abs((amountLabel!.y + amountLabel!.height / 2) - (amountValue!.y + amountValue!.height / 2)), 'Amount label and value should share a row').toBeLessThanOrEqual(2);
+
+    const courseTable = page.locator('.course-table');
+    await expect(courseTable).toHaveCSS('display', 'block');
+    await expect(courseTable.locator('thead')).toHaveCSS('display', 'none');
+    const layout = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      document: document.documentElement.scrollWidth,
+    }));
+    expect(layout.document, 'Mobile receipt should fit the phone width').toBeLessThanOrEqual(layout.viewport + 1);
+    await page.screenshot({ path: testInfo.outputPath('saved-receipt-mobile-layout.png') });
+
+    // Desktop keeps the original three-column receipt table.
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.waitForTimeout(300);
+    await expect(courseTable).toHaveCSS('display', 'table');
+  });
+
   test('student add action shares the mobile search row', async ({ page }, testInfo) => {
     await page.goto('/admin/config/people?tab=students');
     const add = page.locator('.student-add-trigger');

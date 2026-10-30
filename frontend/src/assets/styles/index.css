@@ -1700,3 +1700,141 @@ body.app-desktop-override {
     min-height: 40px;
   }
 }
+
+/* Mobile saved receipt: keep payment labels beside their underlined values and
+   turn the wide three-column course table into readable stacked cards. */
+@media screen and (max-width: 920px) {
+  .registration-page[data-mobile-step="readonly"] .payment-line {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px 10px;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .payment-line > span:first-child,
+  .registration-page[data-mobile-step="readonly"] .payment-line .amount-label {
+    white-space: nowrap;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .payment-line .payment-method-block {
+    width: 100%;
+    min-width: 0;
+    flex: none;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .payment-line .paper-payment-summary--amount {
+    width: 100%;
+    min-width: 0;
+    flex: none;
+    justify-content: flex-start;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .payment-history {
+    font-size: 11px;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .payment-history > div {
+    grid-template-columns: minmax(72px, .9fr) minmax(0, 1.4fr) minmax(70px, .8fr);
+    gap: 3px 8px;
+    padding: 5px 0;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .payment-history > div > * {
+    min-width: 0;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .payment-history > div small {
+    grid-column: 1 / -1;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .course-table-wrap {
+    margin-top: 10px;
+    overflow: visible;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .course-table {
+    display: block;
+    border: 0;
+    font-size: 14px;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .course-table thead {
+    display: none;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .course-table tbody,
+  .registration-page[data-mobile-step="readonly"] .course-table .course-entry-row {
+    display: block;
+    width: 100%;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .course-table .course-entry-row {
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    border: 1px solid #cfdae6;
+    border-radius: 10px;
+    background: #fff;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .course-table .course-entry-row:last-child {
+    margin-bottom: 0;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .course-table .course-entry-row td {
+    display: grid;
+    grid-template-columns: 96px minmax(0, 1fr);
+    align-items: start;
+    gap: 8px;
+    width: 100% !important;
+    height: auto;
+    min-height: 0;
+    padding: 7px 0;
+    border: 0;
+    border-bottom: 1px solid #eef2f7;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .course-table .course-entry-row td:last-child {
+    border-bottom: 0;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .course-table .course-entry-row td::before {
+    color: #53657c;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.5;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .course-table .course-entry-row td:nth-child(1)::before { content: 'Course'; }
+  .registration-page[data-mobile-step="readonly"] .course-table .course-entry-row td:nth-child(2)::before { content: 'Program & details'; }
+  .registration-page[data-mobile-step="readonly"] .course-table .course-entry-row td:nth-child(3)::before { content: 'Price'; }
+
+  .registration-page[data-mobile-step="readonly"] .receipt-course-display strong,
+  .registration-page[data-mobile-step="readonly"] .receipt-course-detail strong,
+  .registration-page[data-mobile-step="readonly"] .receipt-course-price {
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .receipt-course-detail {
+    gap: 6px;
+    font-size: 12px;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .receipt-course-detail > div {
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .receipt-course-detail span {
+    font-size: 10px;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .receipt-course-detail p {
+    font-size: 10px;
+  }
+
+  .registration-page[data-mobile-step="readonly"] .receipt-course-price {
+    font-size: 14px;
+    text-align: left;
+  }
+}
