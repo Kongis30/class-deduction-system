@@ -335,6 +335,9 @@ test.describe('mobile responsive workspace', () => {
     await expect(page.locator('.wts-header__cell')).toHaveCount(7);
     await expect(page.locator('.wts-grid-scroll')).toHaveCSS('max-height', 'none');
     await expect(page.locator('.wts-grid-scroll')).toHaveCSS('overflow-y', 'hidden');
+    // 日历横向滚动只保留在网格内，纵向拖动应继续上抛给页面滚动（合并拖动，避免“卡住”）。
+    await expect(page.locator('.wts-grid-scroll')).toHaveCSS('touch-action', 'pan-x pan-y');
+    await expect(page.locator('.wts-grid-scroll')).toHaveCSS('overscroll-behavior-x', 'contain');
     const mobileGrid = await page.locator('.wts-grid-scroll').evaluate(element => ({
       clientWidth: element.clientWidth,
       scrollWidth: element.scrollWidth,

@@ -740,7 +740,7 @@ function weekdayName(d: number) {
   max-height: none;
   overflow-x: auto;
   overflow-y: hidden;
-  overscroll-behavior: contain;
+  overscroll-behavior-x: contain;
   touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
 }
