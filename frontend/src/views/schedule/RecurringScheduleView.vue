@@ -624,7 +624,7 @@
       </div>
 
       <template #footer>
-        <div class="dialog-footer">
+        <div class="dialog-footer edit-schedule__footer">
           <el-button @click="editDialogVisible = false">Cancel</el-button>
           <el-button type="primary" :loading="submitting || editBusyLoading || checkingEditDeduction" :disabled="Boolean(editBusyError) || submitting || checkingEditDeduction" @click="submitForm">
             {{ isEditing ? 'Save Changes' : 'Create Schedule' }}
@@ -4752,6 +4752,48 @@ function disabledPastDate(date: Date) {
   .schedule-dialog :deep(.el-dialog__body) {
     padding: 12px;
   }
+
+  /* Edit Schedule dialog — 移动端按钮/字号统一 */
+  .edit-schedule__info { margin-bottom: 12px; padding: 10px 12px; }
+  .edit-info-grid { gap: 16px; }
+  .edit-schedule__balance { gap: 6px 14px; margin: 8px 0 12px; font-size: 12px; }
+  .edit-schedule__hint { margin-bottom: 8px; font-size: 12px; line-height: 1.45; }
+
+  .edit-schedule__mode {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+    margin: 14px 0 8px;
+  }
+  .edit-schedule__mode :deep(.el-radio-button) { width: 100%; }
+  .edit-schedule__mode :deep(.el-radio-button + .el-radio-button) { margin-left: 0; }
+  .edit-schedule__mode :deep(.el-radio-button__inner) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 44px;
+    padding: 6px 8px;
+    border: 1px solid #dbe4ef !important;
+    border-radius: 10px !important;
+    background: #fff;
+    color: #4b5b70;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.3;
+    white-space: normal;
+    text-align: center;
+    box-shadow: none !important;
+  }
+  .edit-schedule__mode :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+    background: #409eff;
+    border-color: #409eff !important;
+    color: #fff;
+  }
+
+  .edit-schedule__footer { width: 100%; gap: 10px; }
+  .edit-schedule__footer .el-button { flex: 1 1 0; min-height: 44px; font-size: 14px; }
 
   .slot-teacher-row__fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
