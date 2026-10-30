@@ -106,7 +106,7 @@
             <span>{{ filters.keyword || filters.campus || filters.status ? 'Clear filters or add a classroom for future schedule backfill.' : 'Registration can continue without rooms. Add rooms when schedules are ready to backfill.' }}</span>
           </div>
         </template>
-        <el-table-column label="Room name" min-width="150" fixed="left">
+        <el-table-column label="Room name" min-width="150" :fixed="appStore.isMobileViewport ? false : 'left'">
           <template #default="{ row }">
             <div class="cell-stack">
               <strong>{{ row.roomName }}</strong>
@@ -124,7 +124,7 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="Actions" :width="appStore.isMobileViewport ? 62 : 250" fixed="right" align="center">
+        <el-table-column label="Actions" :width="appStore.isMobileViewport ? 62 : 250" :fixed="appStore.isMobileViewport ? false : 'right'" align="center">
           <template #default="{ row }">
             <div v-if="!appStore.isMobileViewport" class="table-actions">
               <el-button text type="primary" @click="openRoomCalendar(row)">Calendar</el-button>
@@ -506,7 +506,7 @@ loadData();
   color: #909399;
 }
 
-.classroom-table-scroll { width: 100%; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+.classroom-table-scroll { width: 100%; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; touch-action: pan-x pan-y; }
 .mobile-table-scroll-hint { display: none; }
 .workflow-note__mobile { display: none; }
 .mobile-row-actions-trigger { width: 32px; height: 32px; margin: 0; }
@@ -556,7 +556,10 @@ loadData();
   .filters__item :deep(.el-select) { width: 100% !important; min-width: 0; }
   .filters__item :deep(.el-input__wrapper), .filters__item :deep(.el-select__wrapper) { min-height: 34px; }
   .mobile-table-scroll-hint { display: block; margin: 0 0 4px; color: #7b8797; font-size: 10px; }
-  .mobile-classroom-table { width: 100%; min-width: 480px; font-size: 11px; }
+  .mobile-classroom-table { width: 100%; min-width: 512px; font-size: 11px; }
+  .mobile-classroom-table :deep(.el-table__header-wrapper),
+  .mobile-classroom-table :deep(.el-table__body-wrapper),
+  .mobile-classroom-table :deep(.el-scrollbar__wrap) { overflow-x: hidden; }
   .mobile-classroom-table :deep(.el-table__header-wrapper th),
   .mobile-classroom-table :deep(.el-table__body-wrapper td) { padding: 5px 6px; }
   .mobile-classroom-table :deep(.cell) { padding: 0 4px; line-height: 1.25; }

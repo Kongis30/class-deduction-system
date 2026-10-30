@@ -281,6 +281,27 @@ test.describe('mobile responsive workspace', () => {
     }
   });
 
+  test('classroom management page scrolls above the fixed bottom navigation on mobile', async ({ page }) => {
+    await page.goto('/classrooms');
+    const content = page.locator('.app-shell__content');
+    await expect(content).toHaveCSS('overflow-y', 'auto');
+    const scrollTop = await content.evaluate(element => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    });
+    expect(scrollTop, 'The classroom list should be reachable by scrolling the page').toBeGreaterThan(0);
+
+    const tableScroll = page.locator('.classroom-table-scroll');
+    await expect(tableScroll).toHaveCSS('touch-action', 'pan-x pan-y');
+    const horizontal = await tableScroll.evaluate(element => ({
+      scrollWidth: element.scrollWidth,
+      clientWidth: element.clientWidth,
+      scrollLeft: (element.scrollLeft = 999, element.scrollLeft),
+    }));
+    expect(horizontal.scrollWidth, 'The classroom table should overflow its viewport').toBeGreaterThan(horizontal.clientWidth);
+    expect(horizontal.scrollLeft, 'The classroom table should scroll horizontally').toBeGreaterThan(0);
+  });
+
   test('mobile configuration and room calendar screens do not render desktop tables', async ({ page }, testInfo) => {
     const mobileRoutes = [
       '/admin/config/course-prices',
