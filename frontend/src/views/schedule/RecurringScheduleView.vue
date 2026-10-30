@@ -486,15 +486,6 @@
                 </el-select>
               </label>
             </div>
-            <label v-if="isEditing && editMode === 'CURRENT'" class="slot-teacher-row__field">
-              <span>Inherit previous lesson history</span>
-              <el-select v-model="selectedUnlinkedBySlot[String(slot.slotId)]" multiple filterable clearable
-                placeholder="Choose unassigned historical lessons" no-data-text="No unassigned historical lessons">
-                <el-option v-for="item in availableUnlinkedHistory(String(slot.slotId))"
-                  :key="String(item.occurrenceId)" :value="String(item.occurrenceId)"
-                  :label="`${item.plannedStartAt?.replace('T', ' ').slice(0, 16) || 'Unknown date'} · ${item.subjectName || 'Lesson'} · ${item.teacherName || 'Unknown teacher'}`" />
-              </el-select>
-            </label>
             <div class="slot-teacher-row__fields">
               <label class="slot-teacher-row__field">
                 <span>Teacher</span>
@@ -1211,19 +1202,6 @@ type EditMode = 'CURRENT' | 'REPLAN';
 const editMode = ref<EditMode>('CURRENT');
 let activeEditMode: EditMode = 'CURRENT';
 const editModeDrafts: Partial<Record<EditMode, { startDate: string; slots: typeof editForm.slots }>> = {};
-interface UnlinkedHistoryOption {
-  occurrenceId: EntityId;
-  subjectName?: string;
-  teacherName?: string;
-  plannedStartAt?: string;
-}
-const unlinkedHistory = ref<UnlinkedHistoryOption[]>([]);
-const selectedUnlinkedBySlot = reactive<Record<string, string[]>>({});
-function availableUnlinkedHistory(slotId: string) {
-  const assignedElsewhere = new Set(Object.entries(selectedUnlinkedBySlot)
-    .filter(([key]) => key !== slotId).flatMap(([, ids]) => ids));
-  return unlinkedHistory.value.filter(item => !assignedElsewhere.has(String(item.occurrenceId)));
-}
 const editingRuleId = ref<EntityId | null>(null);
 const editFormRef = ref<FormInstance>();
 
@@ -2592,12 +2570,9 @@ async function openEditDialog() {
       rolloverAllocatedHours: s.rolloverAllocatedUnits != null ? s.rolloverAllocatedUnits * 0.5 : undefined,
     })),
   });
-  unlinkedHistory.value = detail.unlinkedHistory || [];
   pendingStartedLessons.value = (detail.pendingReclaimLessons || [])
     .slice().sort((first: SchedulePendingLesson, second: SchedulePendingLesson) =>
       dayjs(first.plannedStartAt).valueOf() - dayjs(second.plannedStartAt).valueOf());
-  Object.keys(selectedUnlinkedBySlot).forEach(key => delete selectedUnlinkedBySlot[key]);
-  editForm.slots.forEach(slot => { selectedUnlinkedBySlot[String(slot.slotId)] = []; });
   originalEditSlots.value = editForm.slots.map(slot => ({ ...slot }));
   originalAllocatedHours.value = editForm.slots.reduce((sum, slot) => sum + Number(slot.allocatedHours || 0), 0);
   editMode.value = 'CURRENT';
@@ -2752,7 +2727,6 @@ async function submitEditForm() {
           ? pendingStartedLessons.value.map(lesson => lesson.snapshot) : undefined,
         slots: editForm.slots.map((s) => ({
           slotId: s.slotId,
-          inheritedOccurrenceIds: editMode.value === 'CURRENT' ? selectedUnlinkedBySlot[String(s.slotId)] : undefined,
           teacherId: s.teacherId,
           deliveryMode: s.classroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON',
           classroomId: s.classroomSelection?.startsWith('ROOM:') ? s.classroomSelection.slice(5) : undefined,
