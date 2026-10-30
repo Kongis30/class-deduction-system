@@ -508,7 +508,7 @@ test.describe('mobile responsive workspace', () => {
     await page.keyboard.press('Escape');
   });
 
-  test('people tables keep the fixed action column reachable on a phone', async ({ page }, testInfo) => {
+  test('people tables keep the student column sticky while the action column scrolls', async ({ page }, testInfo) => {
     for (const tab of ['students', 'teachers']) {
       await page.goto(`/admin/config/people?tab=${tab}`);
       await page.locator('.app-shell__content').waitFor();
@@ -524,14 +524,9 @@ test.describe('mobile responsive workspace', () => {
       await expect(table).toBeVisible();
       const actionHeader = table.locator('.el-table__header-wrapper th').last();
       await expect(actionHeader).toHaveText('More');
-      const [headerBox, regionBox] = await Promise.all([actionHeader.boundingBox(), region.boundingBox()]);
-      expect(headerBox).not.toBeNull();
-      expect(regionBox).not.toBeNull();
-      expect(headerBox!.x, `${tab} action column should stay inside the phone viewport`).toBeGreaterThanOrEqual(regionBox!.x);
-      expect(headerBox!.x + headerBox!.width, `${tab} action column should stay pinned to the right edge`).toBeLessThanOrEqual(regionBox!.x + regionBox!.width + 1);
 
       // Only the table body should scroll sideways. The accordion headings stay
-      // put, and the sticky Student/More columns stay aligned with their headers.
+      // put, the Student column stays pinned, and More remains a normal column.
       expect(await region.evaluate(element => element.scrollWidth <= element.clientWidth + 1), `${tab} headings should not scroll horizontally`).toBe(true);
       const bodyScroller = table.locator('.el-table__body-wrapper .el-scrollbar__wrap');
       expect(await bodyScroller.evaluate(element => element.scrollWidth > element.clientWidth + 1), `${tab} table body should be horizontally scrollable`).toBe(true);
@@ -542,6 +537,7 @@ test.describe('mobile responsive workspace', () => {
         firstHeader.boundingBox(),
         firstBodyCell.boundingBox(),
         summary?.boundingBox() ?? Promise.resolve(null),
+        actionHeader.boundingBox(),
       ]);
       await bodyScroller.evaluate(element => { element.scrollLeft = 100; });
       await page.waitForTimeout(200);
@@ -550,11 +546,13 @@ test.describe('mobile responsive workspace', () => {
         firstBodyCell.boundingBox(),
         summary?.boundingBox() ?? Promise.resolve(null),
         actionHeader.boundingBox(),
+        table.locator('.el-table__body-wrapper tbody tr').first().locator('td').last().boundingBox(),
       ]);
       expect(Math.abs(after[0]!.x - before[0]!.x), `${tab} sticky header should not move`).toBeLessThanOrEqual(1);
       expect(Math.abs(after[1]!.x - before[1]!.x), `${tab} sticky body column should not move`).toBeLessThanOrEqual(1);
       expect(Math.abs(after[0]!.x - after[1]!.x), `${tab} sticky body column should align with its header`).toBeLessThanOrEqual(1);
-      expect(after[3]!.x + after[3]!.width, `${tab} action column should remain pinned after scrolling`).toBeLessThanOrEqual(regionBox!.x + regionBox!.width + 1);
+      expect(after[3]!.x, `${tab} action column should scroll with the table`).toBeLessThan(before[3]!.x - 20);
+      expect(Math.abs(after[3]!.x - after[4]!.x), `${tab} action body cell should align with its header`).toBeLessThanOrEqual(1);
       if (summary) {
         expect(Math.abs(after[2]!.x - before[2]!.x), 'student group heading should not move sideways').toBeLessThanOrEqual(1);
       }

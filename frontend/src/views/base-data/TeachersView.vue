@@ -122,7 +122,7 @@
         <el-table-column
           :label="appStore.isMobileViewport ? 'More' : 'Actions'"
           :width="appStore.isMobileViewport ? 56 : 220"
-          fixed="right"
+          :fixed="appStore.isMobileViewport ? false : 'right'"
           align="center"
         >
           <template #default="{ row }">
