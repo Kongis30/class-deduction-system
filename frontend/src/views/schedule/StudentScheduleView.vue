@@ -146,33 +146,47 @@
             <template v-if="isStudent">
               <div class="calendar-controls">
                 <div class="calendar-controls__nav">
-                  <el-button class="calendar-week-step" :icon="ArrowLeft" aria-label="Previous week" @click="prevWeek" />
-                  <div class="calendar-week-current">
-                    <span class="calendar-controls__label" aria-live="polite">
-                      {{ appStore.isMobileViewport ? compactWeekLabel : weekLabel }}
-                    </span>
-                    <span
-                      v-if="appStore.isMobileViewport"
-                      class="calendar-controls__count"
-                      :aria-label="`${occurrences.length} lessons this week`"
-                    >
-                      {{ occurrences.length }} lesson{{ occurrences.length === 1 ? '' : 's' }}
-                    </span>
+                  <template v-if="!appStore.isMobileViewport">
+                    <el-button-group>
+                      <el-button :icon="ArrowLeft" @click="prevWeek" />
+                      <el-button :icon="ArrowRight" @click="nextWeek" />
+                    </el-button-group>
                     <el-date-picker
                       v-model="pickerDate"
                       type="date"
-                      aria-label="Choose a date"
                       placeholder="Jump to week"
                       value-format="YYYY-MM-DD"
-                      format="MMM D, YYYY"
-                      :clearable="false"
-                      :editable="false"
-                      class="calendar-date-picker"
+                      style="width: 150px;"
                       @change="jumpToDate"
                     />
-                  </div>
-                  <el-button class="calendar-week-step" :icon="ArrowRight" aria-label="Next week" @click="nextWeek" />
-                  <el-tag v-if="!appStore.isMobileViewport" size="small" type="info">{{ occurrences.length }} lessons this week</el-tag>
+                    <span class="calendar-controls__label">{{ weekLabel }}</span>
+                    <el-tag size="small" type="info">{{ occurrences.length }} lessons this week</el-tag>
+                  </template>
+                  <template v-else>
+                    <el-button class="calendar-week-step" :icon="ArrowLeft" aria-label="Previous week" @click="prevWeek" />
+                    <div class="calendar-week-current">
+                      <span class="calendar-controls__label" aria-live="polite">{{ compactWeekLabel }}</span>
+                      <span
+                        class="calendar-controls__count"
+                        :aria-label="`${occurrences.length} lessons this week`"
+                      >
+                        {{ occurrences.length }} lesson{{ occurrences.length === 1 ? '' : 's' }}
+                      </span>
+                      <el-date-picker
+                        v-model="pickerDate"
+                        type="date"
+                        aria-label="Choose a date"
+                        placeholder="Jump to week"
+                        value-format="YYYY-MM-DD"
+                        format="MMM D, YYYY"
+                        :clearable="false"
+                        :editable="false"
+                        class="calendar-date-picker"
+                        @change="jumpToDate"
+                      />
+                    </div>
+                    <el-button class="calendar-week-step" :icon="ArrowRight" aria-label="Next week" @click="nextWeek" />
+                  </template>
                 </div>
               </div>
 
@@ -211,33 +225,47 @@
             <template v-else>
               <div class="calendar-controls">
                 <div class="calendar-controls__nav">
-                  <el-button class="calendar-week-step" :icon="ArrowLeft" aria-label="Previous week" @click="prevWeek" />
-                  <div class="calendar-week-current">
-                    <span class="calendar-controls__label" aria-live="polite">
-                      {{ appStore.isMobileViewport ? compactWeekLabel : weekLabel }}
-                    </span>
-                    <span
-                      v-if="appStore.isMobileViewport"
-                      class="calendar-controls__count"
-                      :aria-label="`${occurrences.length} lessons this week`"
-                    >
-                      {{ occurrences.length }} lesson{{ occurrences.length === 1 ? '' : 's' }}
-                    </span>
+                  <template v-if="!appStore.isMobileViewport">
+                    <el-button-group>
+                      <el-button :icon="ArrowLeft" @click="prevWeek" />
+                      <el-button :icon="ArrowRight" @click="nextWeek" />
+                    </el-button-group>
                     <el-date-picker
                       v-model="pickerDate"
                       type="date"
-                      aria-label="Choose a date"
                       placeholder="Jump to week"
                       value-format="YYYY-MM-DD"
-                      format="MMM D, YYYY"
-                      :clearable="false"
-                      :editable="false"
-                      class="calendar-date-picker"
+                      style="width: 150px;"
                       @change="jumpToDate"
                     />
-                  </div>
-                  <el-button class="calendar-week-step" :icon="ArrowRight" aria-label="Next week" @click="nextWeek" />
-                  <el-tag v-if="!appStore.isMobileViewport" size="small" type="info">{{ occurrences.length }} lessons this week</el-tag>
+                    <span class="calendar-controls__label">{{ weekLabel }}</span>
+                    <el-tag size="small" type="info">{{ occurrences.length }} lessons this week</el-tag>
+                  </template>
+                  <template v-else>
+                    <el-button class="calendar-week-step" :icon="ArrowLeft" aria-label="Previous week" @click="prevWeek" />
+                    <div class="calendar-week-current">
+                      <span class="calendar-controls__label" aria-live="polite">{{ compactWeekLabel }}</span>
+                      <span
+                        class="calendar-controls__count"
+                        :aria-label="`${occurrences.length} lessons this week`"
+                      >
+                        {{ occurrences.length }} lesson{{ occurrences.length === 1 ? '' : 's' }}
+                      </span>
+                      <el-date-picker
+                        v-model="pickerDate"
+                        type="date"
+                        aria-label="Choose a date"
+                        placeholder="Jump to week"
+                        value-format="YYYY-MM-DD"
+                        format="MMM D, YYYY"
+                        :clearable="false"
+                        :editable="false"
+                        class="calendar-date-picker"
+                        @change="jumpToDate"
+                      />
+                    </div>
+                    <el-button class="calendar-week-step" :icon="ArrowRight" aria-label="Next week" @click="nextWeek" />
+                  </template>
                 </div>
                 <span class="calendar-controls__student">
                   {{ selectedStudentName }}
