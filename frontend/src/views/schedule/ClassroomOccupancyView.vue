@@ -1365,7 +1365,7 @@ function resolveQueryId(value: unknown): EntityId | null {
   gap: 16px;
   flex: 1;
   min-height: 0;
-  min-width: 980px;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -1544,9 +1544,9 @@ function resolveQueryId(value: unknown): EntityId | null {
   padding-right: 4px;
 }
 
-.room-occupancy-scroll :deep(.weekly-time-selector),
+/* 日历网格按可用宽度自适应，避免桌面端窄屏时右侧被裁切；占位表格保留最小宽度并可横向滚动。 */
 .occupancy-table {
-  min-width: 760px;
+  min-width: 700px;
 }
 
 .calendar-help {
