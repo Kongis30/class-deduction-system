@@ -436,6 +436,35 @@ test.describe('mobile responsive workspace', () => {
     }
   });
 
+  test('people tables keep the fixed action column reachable on a phone', async ({ page }, testInfo) => {
+    for (const tab of ['students', 'teachers']) {
+      await page.goto(`/admin/config/people?tab=${tab}`);
+      await page.locator('.app-shell__content').waitFor();
+
+      if (tab === 'students') {
+        await page.locator('details.student-product > summary').first().click();
+        await page.locator('details.student-project > summary').first().click();
+        await page.locator('details.student-group > summary').first().click();
+      }
+
+      const region = page.locator('.people-table-zoom-scroll:visible').first();
+      const table = page.locator('.product-table:visible').first();
+      await expect(table).toBeVisible();
+      const actionHeader = table.locator('.el-table__header-wrapper th').last();
+      await expect(actionHeader).toHaveText('More');
+      const [headerBox, regionBox] = await Promise.all([actionHeader.boundingBox(), region.boundingBox()]);
+      expect(headerBox).not.toBeNull();
+      expect(regionBox).not.toBeNull();
+      expect(headerBox!.x, `${tab} action column should stay inside the phone viewport`).toBeGreaterThanOrEqual(regionBox!.x);
+      expect(headerBox!.x + headerBox!.width, `${tab} action column should stay pinned to the right edge`).toBeLessThanOrEqual(regionBox!.x + regionBox!.width + 1);
+
+      await table.locator('.mobile-table-actions button').first().click();
+      await expect(page.locator('.el-dropdown-menu:visible .el-dropdown-menu__item').first()).toBeVisible();
+      await page.keyboard.press('Escape');
+      await page.screenshot({ path: testInfo.outputPath(`people-${tab}-mobile-actions.png`) });
+    }
+  });
+
   test('all admin routes fit the phone viewport without page-level horizontal overflow', async ({ page }) => {
     const overflowingRoutes: string[] = [];
     const visibleTableRoutes: string[] = [];

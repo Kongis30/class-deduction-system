@@ -1975,9 +1975,22 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 920px) {
-  .people-table-zoom-scroll { max-height: max(260px, calc(100dvh - 340px)); overflow: auto; touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
-  .people-main-table { width: max-content; min-width: 100%; }
-  .people-main-table { max-width: none; }
+  .people-table-zoom-scroll {
+    max-height: max(260px, calc(100dvh - 340px));
+    overflow: auto;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* The outer panel is the horizontal scroller. Letting the native <details>
+     groups and the table overflow keep their default clipping would hide the
+     fixed-right action column and make it unreachable on a phone. */
+  .student-product { overflow: visible; }
+  .people-main-table,
+  .people-main-table :deep(.el-table__inner-wrapper),
+  .people-main-table :deep(.el-table__header-wrapper),
+  .people-main-table :deep(.el-table__body-wrapper) { overflow: visible; }
+  .people-main-table { width: max-content; min-width: 100%; max-width: none; }
   .people-main-table :deep(.el-table__header-wrapper),
   .people-main-table :deep(.el-table__fixed-header-wrapper) { position: sticky; top: 0; z-index: 4; }
   .people-main-table :deep(.el-table__header th) { height: 36px; padding: 4px 6px; white-space: nowrap; }
@@ -1987,7 +2000,7 @@ onBeforeUnmount(() => {
   .people-main-table :deep(.cell-stack strong) { font-size: 11px; }
   .people-main-table :deep(.cell-stack span) { font-size: 10px; }
   .people-main-table :deep(.el-table__row) { height: 42px; cursor: pointer; }
-  .people-main-table :deep(.el-table__fixed-right) { box-shadow: -4px 0 8px rgb(31 63 54 / 8%); }
+  .people-main-table :deep(.el-table-fixed-column--right) { box-shadow: -4px 0 8px rgb(31 63 54 / 8%); }
   .people-main-table :deep(.mobile-table-actions .el-button) { width: 36px; height: 36px; }
 }
 
