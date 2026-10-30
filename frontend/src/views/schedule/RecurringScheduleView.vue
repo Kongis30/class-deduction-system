@@ -392,15 +392,18 @@
         <el-alert v-if="isEditing && editMode === 'REPLAN' && pendingStartedLessons.length"
           type="warning" :closable="false" show-icon
           :title="`${pendingStartedLessons.length} previous lessons are still unconfirmed`">
-          <p>Review them in 1-on-1 Lessons, or choose to withdraw those pending records and reuse their hours in the new timetable.</p>
+          <p>Review lessons from all previous schedule periods in 1-on-1 Lessons, or withdraw all ended, unconfirmed lessons and reuse their hours.</p>
           <ul class="edit-deduction-prompt__lessons">
             <li v-for="lesson in pendingStartedLessons" :key="lesson.occurrenceId">
-              {{ dayjs(lesson.plannedStartAt).format('MMM D, YYYY') }} ·
-              {{ scheduleOccurrenceTimeRange(lesson.plannedStartAt, lesson.plannedEndAt) }} ·
-              {{ lesson.subjectName || 'Lesson' }} · {{ Number(lesson.plannedUnits || 0).toFixed(1) }}h
+              {{ lesson.plannedStartAt ? dayjs(lesson.plannedStartAt).format('MMM D, YYYY') : 'Date unavailable' }} ·
+              {{ lesson.plannedStartAt && lesson.plannedEndAt ? scheduleOccurrenceTimeRange(lesson.plannedStartAt, lesson.plannedEndAt) : 'Time unavailable' }} ·
+              {{ lesson.subjectName || 'Lesson' }} · {{ lesson.teacherName || 'Unassigned' }} ·
+              {{ lesson.inProgress ? 'In progress' : lesson.status === 'PENDING_ADMIN' ? 'Awaiting admin' : lesson.status === 'PARTIALLY_CONFIRMED' ? 'Needs review' : lesson.status === 'REJECTED' ? 'Returned for revision' : 'Awaiting teacher' }} ·
+              {{ Number(lesson.plannedHours || 0).toFixed(1) }}h
             </li>
           </ul>
-          <el-checkbox v-model="reclaimEndedUnconfirmedLessons">Withdraw these pending records and continue</el-checkbox>
+          <p>Total: {{ pendingStartedLessons.reduce((sum, lesson) => sum + lesson.plannedHours, 0).toFixed(1) }}h</p>
+          <el-checkbox v-model="reclaimEndedUnconfirmedLessons" :disabled="pendingStartedLessons.some(lesson => lesson.inProgress || lesson.status === 'PARTIALLY_CONFIRMED')">Withdraw these pending records and continue</el-checkbox>
           <el-button link type="primary" @click="goToOneOnOneDeduction">Open 1-on-1 Lessons</el-button>
         </el-alert>
 
@@ -1125,7 +1128,7 @@ import { fetchAllClassrooms, fetchAllTeachers, fetchClassroom, fetchTeacher } fr
 import { useAppStore } from '@/stores/app';
 import { fetchCoursePackage, fetchCoursePackages, pauseCoursePackage, resumeCoursePackage, updateCoursePackageStartingHours } from '@/api/enrollment';
 import PauseConfirmationDialog from '@/components/shared/PauseConfirmationDialog.vue';
-import { fetchOneOnOneDeductions, fetchPrivateSignatureHistory, type OneOnOneLesson } from '@/api/one-on-one';
+import { fetchOneOnOneDeductions, fetchPrivateSignatureHistory } from '@/api/one-on-one';
 import {
   createRecurringScheduleRule,
   updateRecurringScheduleRule,
@@ -1137,7 +1140,7 @@ import {
   adjustWeeklySchedule,
 } from '@/api/schedule';
 import type { LessonOccurrenceQuery, ScheduleStudentOption, WeeklyScheduleAdjustmentItemPayload } from '@/api/schedule';
-import type { ClassroomItem, CoursePackageItem, EntityId, LessonOccurrenceItem, RecurringScheduleRuleItem } from '@/types/domain';
+import type { ClassroomItem, CoursePackageItem, EntityId, LessonOccurrenceItem, RecurringScheduleRuleItem, SchedulePendingLesson } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
 import { APP_TIMEZONE } from '@/config/app-config';
@@ -1371,7 +1374,7 @@ const selectedPackageId = ref<EntityId | null>(null);
 const pausingPackageId = ref<EntityId | null>(null);
 const pauseConfirmationVisible = ref(false);
 const checkingEditDeduction = ref(false);
-const pendingStartedLessons = ref<OneOnOneLesson[]>([]);
+const pendingStartedLessons = ref<SchedulePendingLesson[]>([]);
 const scheduleAllocatedHours = ref<number | null>(null);
 const reclaimEndedUnconfirmedLessons = ref(false);
 const resumingPackageId = ref<EntityId | null>(null);
@@ -2259,20 +2262,6 @@ async function requestEditSchedule() {
 
     scheduleAllocatedHours.value = coursePackages[0]?.allocatedUnits ?? null;
 
-    const now = dayjs();
-    const lessonsById = new Map<string, OneOnOneLesson>();
-    coursePackages.flatMap(item => item.lessons).forEach(lesson => {
-      if (String(lesson.scheduleRuleId) === String(currentRule.value?.id)
-        && lesson.planningStatus !== 'CANCELLED'
-        && dayjs(lesson.plannedEndAt).isValid()
-        && !dayjs(lesson.plannedEndAt).isAfter(now)
-        && lesson.confirmStage !== 'CONFIRMED') {
-        lessonsById.set(String(lesson.occurrenceId), lesson);
-      }
-    });
-    pendingStartedLessons.value = [...lessonsById.values()]
-      .sort((first, second) => dayjs(first.plannedStartAt).valueOf() - dayjs(second.plannedStartAt).valueOf());
-
   } catch (error) {
     ElMessage.error(`Unable to check unconfirmed lessons. ${extractErrorMessage(error)}`);
   } finally {
@@ -2604,6 +2593,9 @@ async function openEditDialog() {
     })),
   });
   unlinkedHistory.value = detail.unlinkedHistory || [];
+  pendingStartedLessons.value = (detail.pendingReclaimLessons || [])
+    .slice().sort((first: SchedulePendingLesson, second: SchedulePendingLesson) =>
+      dayjs(first.plannedStartAt).valueOf() - dayjs(second.plannedStartAt).valueOf());
   Object.keys(selectedUnlinkedBySlot).forEach(key => delete selectedUnlinkedBySlot[key]);
   editForm.slots.forEach(slot => { selectedUnlinkedBySlot[String(slot.slotId)] = []; });
   originalEditSlots.value = editForm.slots.map(slot => ({ ...slot }));
@@ -2732,6 +2724,10 @@ async function submitEditForm() {
     }
     if (!validateSlotAllocations()) return;
     if (editMode.value === 'REPLAN') {
+      if (pendingStartedLessons.value.some(lesson => lesson.inProgress || lesson.status === 'PARTIALLY_CONFIRMED')) {
+        ElMessage.warning('Finish or review the lessons marked in progress or needing review before rescheduling.');
+        return;
+      }
       if (pendingStartedLessons.value.length && !reclaimEndedUnconfirmedLessons.value) {
         ElMessage.warning('Review the unconfirmed lessons above, or choose to withdraw them before saving the new timetable.');
         return;
@@ -2752,6 +2748,8 @@ async function submitEditForm() {
         notes: editForm.notes || undefined,
         reclaimEndedUnconfirmedLessons: editMode.value === 'REPLAN'
           ? reclaimEndedUnconfirmedLessons.value || undefined : undefined,
+        expectedPendingLessonSnapshots: editMode.value === 'REPLAN'
+          ? pendingStartedLessons.value.map(lesson => lesson.snapshot) : undefined,
         slots: editForm.slots.map((s) => ({
           slotId: s.slotId,
           inheritedOccurrenceIds: editMode.value === 'CURRENT' ? selectedUnlinkedBySlot[String(s.slotId)] : undefined,

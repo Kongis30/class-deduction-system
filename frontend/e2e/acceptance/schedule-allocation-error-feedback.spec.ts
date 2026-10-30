@@ -21,6 +21,10 @@ test('Edit Schedule shows the exact allocation shortfall and clears it after cor
     slotCount: 1, generatedOccurrenceCount: 10, deductedHours: 8, pendingHours: 2,
     otherReservedHours: 0, preservedReservedHours: 0, startingHours: 40,
     unlinkedHistory: [{ occurrenceId: '2104217509483360257', subjectName: 'Vocabulary', teacherName: 'Ms. Lau', plannedStartAt: '2026-09-27T20:00:00' }],
+    pendingReclaimLessons: [
+      { occurrenceId: '8101', snapshot: 'old-period-snapshot', subjectName: 'ELA', teacherName: 'Ms. Lau', plannedStartAt: '2026-09-27T18:00:00', plannedEndAt: '2026-09-27T20:00:00', plannedHours: 2, status: 'AWAITING_TEACHER', inProgress: false },
+      { occurrenceId: '8102', snapshot: 'current-period-snapshot', subjectName: 'Math', teacherName: 'Emma Wang', plannedStartAt: '2026-10-02T18:00:00', plannedEndAt: '2026-10-02T20:00:00', plannedHours: 2, status: 'PENDING_ADMIN', inProgress: false },
+    ],
     slots: [{
       id: '6001', teacherId: '9001', teacherName: 'Emma Wang', subjectName: 'Math',
       deliveryMode: 'ONLINE', weekday: 1, startTime: '18:00:00', endTime: '20:00:00',
@@ -56,6 +60,8 @@ test('Edit Schedule shows the exact allocation shortfall and clears it after cor
     if (route.request().method() === 'PUT' && path === '/v1/schedule/rules/5001') {
       const payload = route.request().postDataJSON();
       if (payload.editOperation === 'REPLAN') {
+        expect(payload.expectedPendingLessonSnapshots).toEqual(['old-period-snapshot', 'current-period-snapshot']);
+        expect(payload.reclaimEndedUnconfirmedLessons).toBe(true);
         expect(payload.startDate).toBe(futureStart);
         expect(payload.slots[0].slotId).toBe('6001');
         expect(payload.slots[0].allocatedUnits).toBe(80);
@@ -119,6 +125,11 @@ test('Edit Schedule shows the exact allocation shortfall and clears it after cor
   await expect(dialog.locator('.edit-schedule__balance')).toContainText('Remaining 24.0h');
   await expect(dialog.locator('.weekly-time-selector')).toBeVisible();
   await dialog.getByText('Reschedule Lesson').click();
+  await expect(dialog).toContainText('2 previous lessons are still unconfirmed');
+  await expect(dialog).toContainText('Ms. Lau');
+  await expect(dialog).toContainText('Awaiting admin');
+  await expect(dialog).toContainText('Total: 4.0h');
+  await dialog.getByText('Withdraw these pending records and continue').click();
   await expect(dialog).toContainText('Saving ends the current recurring schedule immediately');
   await dialog.getByPlaceholder('Select start date').fill(futureStart);
   await dialog.getByPlaceholder('Select start date').press('Tab');

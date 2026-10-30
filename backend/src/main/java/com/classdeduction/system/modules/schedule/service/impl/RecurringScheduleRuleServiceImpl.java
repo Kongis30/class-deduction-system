@@ -49,6 +49,7 @@ import com.classdeduction.system.modules.schedule.util.ScheduleSlotTime;
 import com.classdeduction.system.modules.schedule.util.PrivateLessonAllocation;
 import com.classdeduction.system.modules.schedule.util.PrivateSchedulePeriod;
 import com.classdeduction.system.modules.schedule.vo.UnlinkedLessonHistoryVO;
+import com.classdeduction.system.modules.schedule.vo.SchedulePendingLessonVO;
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleRuleDetailVO;
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleRuleListItemVO;
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleSlotVO;
@@ -69,6 +70,9 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -272,6 +276,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                         rolloverAllocatedUnits(slot, occurrences, recordByOccurrenceId,
                                 AppTime.nowLocalDateTime()))).toList())
                 .unlinkedHistory(listUnlinkedConfirmedHistory(rule))
+                .pendingReclaimLessons(listPendingReclaimLessons(rule, AppTime.nowLocalDateTime()).stream()
+                        .map(PendingReclaimLesson::view).toList())
                 .createdAt(rule.getCreatedAt())
                 .updatedAt(rule.getUpdatedAt())
                 .build();
@@ -566,6 +572,10 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 }
                 corrections.add(new AllocationCorrection(before, occurrence));
             }
+            if (surplus > 0) {
+                throw new BusinessException("SLOT_ALLOCATION_BELOW_FIXED_LESSONS",
+                        "This slot's confirmed or protected lessons exceed its allocated hours. Adjust the slot allocation before confirming the lesson.");
+            }
         }
         return corrections;
     }
@@ -700,6 +710,10 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             preserveUnambiguousEditedSlotLineages(request.getSlots(), existingSlots, allOccurrences);
         }
         boolean reclaimEndedUnconfirmed = Boolean.TRUE.equals(request.getReclaimEndedUnconfirmedLessons());
+        if (reclaimEndedUnconfirmed && !"REPLAN".equals(request.getEditOperation())) {
+            throw new BusinessException("INVALID_RECLAIM_OPERATION",
+                    "Unconfirmed lessons can only be reclaimed while rescheduling the weekly timetable.");
+        }
         // 余额刷新必须继续重算未来课次，不能被普通编辑的“仅更新课程信息”快捷路径截断。
         boolean detailsOnly = allowNewPeriod && !"REPLAN".equals(request.getEditOperation())
                 && isCourseDetailsOnlyChange(existingRule, existingSlots, request, privateLessonGroupId, newStatus);
@@ -707,7 +721,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 && isSamePeriodAllocationChange(existingRule, existingSlots, request, privateLessonGroupId, newStatus);
         if (detailsOnly || allocationOnly) {
             int reclaimed = reclaimEndedUnconfirmed
-                    ? reclaimEndedUnconfirmedOccurrences(id, allOccurrences, true, AppTime.nowLocalDateTime()) : 0;
+                    ? reclaimEndedUnconfirmedOccurrences(id, allOccurrences, true, AppTime.nowLocalDateTime(), null, null) : 0;
             Set<Long> existingOccurrenceIds = allOccurrences.stream()
                     .map(LessonOccurrenceEntity::getId).collect(Collectors.toSet());
             Map<Long, LessonRecordEntity> existingRecords = latestRecordsForPackage(
@@ -733,9 +747,33 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             preserveLegacyHistoryOwners(existingRule, existingSlots, allOccurrences);
         }
         // 新周期在保存时接替旧规则；Start Date 只决定新课从哪一天开始生成。
-        int reclaimedOccurrenceCount = allowNewPeriod
-                ? reclaimEndedUnconfirmedOccurrences(id, allOccurrences, reclaimEndedUnconfirmed, effectiveAt)
-                : 0;
+        int reclaimedOccurrenceCount = 0;
+        if (startsNewPeriod && "REPLAN".equals(request.getEditOperation())) {
+            List<PendingReclaimLesson> pending = listPendingReclaimLessons(existingRule, effectiveAt);
+            if (pending.stream().anyMatch(item -> item.view().inProgress())) {
+                throw new BusinessException("LESSON_IN_PROGRESS", "A lesson is in progress. Finish and review it before rescheduling.");
+            }
+            if (pending.stream().anyMatch(item -> "PARTIALLY_CONFIRMED".equals(item.view().status()))) {
+                throw new BusinessException("SHARED_LESSON_REVIEW_REQUIRED", "A shared lesson has confirmed records. Review it before rescheduling.");
+            }
+            Set<String> actual = pending.stream().map(item -> item.view().snapshot()).collect(Collectors.toSet());
+            Set<String> expected = request.getExpectedPendingLessonSnapshots() == null ? Set.of()
+                    : new HashSet<>(request.getExpectedPendingLessonSnapshots());
+            if (!actual.equals(expected)) {
+                throw new BusinessException("PENDING_LESSONS_CHANGED", "Unconfirmed lessons changed. Refresh the schedule and review them again.");
+            }
+            Map<Long, String> snapshots = pending.stream().collect(Collectors.toMap(
+                    item -> item.occurrence().getId(), item -> item.view().snapshot()));
+            List<LessonOccurrenceEntity> allPending = pending.stream().map(PendingReclaimLesson::occurrence)
+                    .collect(Collectors.toCollection(ArrayList::new));
+            reclaimedOccurrenceCount = reclaimEndedUnconfirmedOccurrences(id, allPending,
+                    reclaimEndedUnconfirmed, effectiveAt, snapshots, existingRule.getPrivateLessonGroupId());
+            Set<Long> removed = snapshots.keySet();
+            if (reclaimedOccurrenceCount > 0) allOccurrences.removeIf(item -> removed.contains(item.getId()));
+        } else if (allowNewPeriod) {
+            reclaimedOccurrenceCount = reclaimEndedUnconfirmedOccurrences(id, allOccurrences,
+                    reclaimEndedUnconfirmed, effectiveAt, null, null);
+        }
         // 暂停、恢复等状态变更不改变排课分配，必须沿用原课位及周期边界。
         // 内部余额刷新只提交有效课位；历史停用课位仍保留在原规则中供旧课次关联。
         List<RecurringScheduleSlotEntity> comparableSlots = allowNewPeriod ? existingSlots : existingSlots.stream()
@@ -2317,11 +2355,87 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         return new RuleDeductionUnits(confirmed, pending);
     }
 
+    private record PendingReclaimLesson(LessonOccurrenceEntity occurrence, List<LessonRecordEntity> records,
+                                        SchedulePendingLessonVO view) {}
+
+    /** 查询课包及共享组各周期的历史待处理课；不依据老师或时间猜测课包归属。 */
+    private List<PendingReclaimLesson> listPendingReclaimLessons(RecurringScheduleRuleEntity rule, LocalDateTime now) {
+        Long groupId = rule.getPrivateLessonGroupId();
+        List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .and(scope -> scope.eq(LessonOccurrenceEntity::getPackageId, rule.getPackageId())
+                                .or(groupId != null, group -> group.eq(LessonOccurrenceEntity::getPrivateLessonGroupId, groupId)))
+                        .isNull(LessonOccurrenceEntity::getClassGroupId));
+        List<LessonOccurrenceEntity> started = occurrences.stream()
+                .filter(item -> item.getClassGroupId() == null
+                        && (Objects.equals(item.getPackageId(), rule.getPackageId())
+                        || groupId != null && Objects.equals(item.getPrivateLessonGroupId(), groupId)))
+                .filter(item -> !"CANCELLED".equals(item.getPlanningStatus())
+                        && (item.getPlannedStartAt() == null || !item.getPlannedStartAt().isAfter(now)))
+                .sorted(Comparator.comparing(LessonOccurrenceEntity::getId)).toList();
+        if (started.isEmpty()) return List.of();
+        Map<Long, List<LessonRecordEntity>> records = lessonRecordMapper.selectList(
+                        new LambdaQueryWrapper<LessonRecordEntity>()
+                                .in(LessonRecordEntity::getOccurrenceId, started.stream().map(LessonOccurrenceEntity::getId).toList())
+                                .eq(LessonRecordEntity::getIsDeleted, 0).orderByAsc(LessonRecordEntity::getId))
+                .stream().collect(Collectors.groupingBy(LessonRecordEntity::getOccurrenceId));
+        List<Long> members = groupId == null ? List.of() : activeGroupMembers(groupId).stream()
+                .map(PrivateLessonGroupMemberEntity::getPackageId).filter(Objects::nonNull).sorted().toList();
+        List<PendingReclaimLesson> result = new ArrayList<>();
+        for (LessonOccurrenceEntity occurrence : started) {
+            List<LessonRecordEntity> lessonRecords = records.getOrDefault(occurrence.getId(), List.of());
+            long confirmed = lessonRecords.stream().filter(record -> "CONFIRMED".equals(record.getConfirmStage())).count();
+            Set<Long> confirmedPackages = lessonRecords.stream()
+                    .filter(record -> "CONFIRMED".equals(record.getConfirmStage()))
+                    .map(LessonRecordEntity::getPackageId).filter(Objects::nonNull).collect(Collectors.toSet());
+            boolean shared = occurrence.getPrivateLessonGroupId() != null;
+            boolean partial = shared && (!Objects.equals(occurrence.getPrivateLessonGroupId(), groupId)
+                    || members.isEmpty() || confirmed > 0 && (!confirmedPackages.containsAll(members)
+                    || lessonRecords.stream().anyMatch(record -> !"CONFIRMED".equals(record.getConfirmStage()))));
+            if (confirmed > 0 && !partial) continue;
+            boolean inProgress = occurrence.getPlannedEndAt() != null && occurrence.getPlannedEndAt().isAfter(now);
+            String status = partial || occurrence.getPlannedStartAt() == null || occurrence.getPlannedEndAt() == null
+                    || "MERGED".equals(occurrence.getPlanningStatus()) ? "PARTIALLY_CONFIRMED"
+                    : lessonRecords.stream().anyMatch(record -> "PENDING_ADMIN".equals(record.getConfirmStage()))
+                    ? "PENDING_ADMIN" : lessonRecords.stream().anyMatch(record -> "REJECTED".equals(record.getConfirmStage()))
+                    ? "REJECTED" : "AWAITING_TEACHER";
+            TeacherEntity teacher = occurrence.getPlannedTeacherId() == null ? null
+                    : teacherMapper.selectById(occurrence.getPlannedTeacherId());
+            String snapshot = pendingLessonSnapshot(occurrence, lessonRecords, members);
+            result.add(new PendingReclaimLesson(occurrence, lessonRecords,
+                    new SchedulePendingLessonVO(occurrence.getId(), snapshot, occurrence.getSubjectName(),
+                            teacher == null ? null : teacher.getTeacherName(), occurrence.getPlannedStartAt(),
+                            occurrence.getPlannedEndAt(), safeUnits(occurrence.getPlannedUnits()) * 0.5, status, inProgress)));
+        }
+        return result;
+    }
+
+    /** 快照只供并发比较，包含课次、所有提交及共享成员；不改变业务数据。 */
+    private String pendingLessonSnapshot(LessonOccurrenceEntity occurrence, List<LessonRecordEntity> records,
+                                         List<Long> members) {
+        StringJoiner value = new StringJoiner("|");
+        value.add(String.valueOf(occurrence.getId())).add(String.valueOf(occurrence.getVersion()))
+                .add(String.valueOf(occurrence.getUpdatedAt())).add(String.valueOf(occurrence.getScheduleRuleId()))
+                .add(String.valueOf(occurrence.getPlannedStartAt())).add(String.valueOf(occurrence.getPlannedEndAt()))
+                .add(String.valueOf(occurrence.getPlannedUnits())).add(String.valueOf(occurrence.getPlannedTeacherId()))
+                .add(String.valueOf(occurrence.getSubjectName())).add(String.valueOf(occurrence.getPlanningStatus()))
+                .add(members.toString());
+        records.stream().sorted(Comparator.comparing(LessonRecordEntity::getId)).forEach(record ->
+                value.add(record.getId() + ":" + record.getVersion() + ":" + record.getUpdatedAt() + ":" + record.getConfirmStage()));
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.toString().getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is unavailable", ex);
+        }
+    }
+
     /** 按管理员明确选择，撤销已结束且未最终确认的私教课次；课包余额从未扣减，因此只释放排课占用。 */
     private int reclaimEndedUnconfirmedOccurrences(Long ruleId,
                                                     List<LessonOccurrenceEntity> occurrences,
                                                     boolean reclaimRequested,
-                                                    LocalDateTime effectiveAt) {
+                                                    LocalDateTime effectiveAt,
+                                                    Map<Long, String> expectedSnapshots, Long groupId) {
         if (occurrences.isEmpty()) return 0;
         List<LessonOccurrenceEntity> endedOccurrences = occurrences.stream()
                 .filter(occurrence -> isEndedPrivateOccurrence(occurrence, effectiveAt))
@@ -2350,9 +2464,22 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         for (LessonOccurrenceEntity candidate : candidates.stream()
                 .sorted(Comparator.comparing(LessonOccurrenceEntity::getId)).toList()) {
             LessonOccurrenceEntity locked = lessonOccurrenceMapper.selectByIdForUpdate(candidate.getId());
-            if (!isEndedPrivateOccurrence(locked, effectiveAt)) continue;
+            if (!isEndedPrivateOccurrence(locked, effectiveAt)) {
+                if (expectedSnapshots != null) throw new BusinessException("PENDING_LESSONS_CHANGED", "Unconfirmed lessons changed. Refresh and try again.");
+                continue;
+            }
             List<LessonRecordEntity> records = lessonRecordMapper.selectByOccurrenceIdForUpdate(locked.getId());
-            if (records.stream().anyMatch(record -> "CONFIRMED".equals(record.getConfirmStage()))) continue;
+            if (expectedSnapshots != null) {
+                List<Long> members = groupId == null ? List.of() : activeGroupMembers(groupId).stream()
+                        .map(PrivateLessonGroupMemberEntity::getPackageId).filter(Objects::nonNull).sorted().toList();
+                if (!Objects.equals(expectedSnapshots.get(locked.getId()), pendingLessonSnapshot(locked, records, members))) {
+                    throw new BusinessException("PENDING_LESSONS_CHANGED", "Unconfirmed lessons changed. Refresh and try again.");
+                }
+            }
+            if (records.stream().anyMatch(record -> "CONFIRMED".equals(record.getConfirmStage()))) {
+                if (expectedSnapshots != null) throw new BusinessException("PENDING_LESSONS_CHANGED", "A lesson was confirmed. Refresh and try again.");
+                continue;
+            }
             reclaimed.add(locked);
             recordsByOccurrence.put(locked.getId(), records);
         }

@@ -1446,7 +1446,6 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             GroupClassEntitlementRules.lockStudents(studentMapper, studentIds);
         }
         StudentEntity student = requireStudent(order.getStudentId());
-        ItemFeeTotals previousItemFees = itemFeeTotals(listOrderItemsByOrderId(order.getId()));
         boolean studentChanged = StringUtils.hasText(request.getStudentName())
                 || request.getGrade() != null || request.getStudentClass() != null
                 || request.getSchool() != null || request.getGuardianPhone() != null
@@ -1520,6 +1519,11 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (request.getItems() != null && !request.getItems().isEmpty()) {
             Long targetCampusId = request.getCampusId() != null ? request.getCampusId() : order.getCampusId();
             applyCorrectedItems(order, student, request.getItems(), targetCampusId, campusChanged, lockedGroupClasses);
+            if (request.getItems().stream().filter(Objects::nonNull).anyMatch(item ->
+                    changedCourseField(item, "pickupRequired") || changedCourseField(item, "pickupAddress")
+                            || changedCourseField(item, "dropoffRequired") || changedCourseField(item, "dropoffAddress"))) {
+                syncOrderTransportFromCourses(order);
+            }
         }
         if (request.getParticipantBillings() != null && !request.getParticipantBillings().isEmpty()) {
             reconcileCorrectedParticipantPayments(order, request.getParticipantBillings());
@@ -1534,7 +1538,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 || request.getPickupFeeAmount() != null || request.getDropoffFeeAmount() != null
                 || request.getPickupFeeCharged() != null || request.getDropoffFeeCharged() != null;
         if (moneyChanged) {
-            applyCorrectedMoney(order, request, previousItemFees);
+            applyCorrectedMoney(order, request);
         }
         enrollmentOrderMapper.updateById(order);
         // 更正金额相关内容后重放课程级分摊：价格/附加费/折扣变化需重算课程项应收，
@@ -3108,31 +3112,42 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private record ItemFeeTotals(BigDecimal pickup, BigDecimal dropoff, BigDecimal extra) {
     }
 
+    /** 课程接送变更后同步本订单的汇总快照；学生主档及其他订单不受影响。 */
+    private void syncOrderTransportFromCourses(EnrollmentOrderEntity order) {
+        List<EnrollmentOrderItemEntity> items = listOrderItemsByOrderId(order.getId());
+        order.setPickupRequiredSnapshot(items.stream().anyMatch(item -> Boolean.TRUE.equals(item.getPickupRequiredSnapshot())));
+        order.setDropoffRequiredSnapshot(items.stream().anyMatch(item -> Boolean.TRUE.equals(item.getDropoffRequiredSnapshot())));
+        String pickup = items.stream().filter(item -> Boolean.TRUE.equals(item.getPickupRequiredSnapshot()))
+                .map(EnrollmentOrderItemEntity::getPickupAddressSnapshot).filter(StringUtils::hasText).findFirst().orElse(null);
+        String dropoff = items.stream().filter(item -> Boolean.TRUE.equals(item.getDropoffRequiredSnapshot()))
+                .map(EnrollmentOrderItemEntity::getDropoffAddressSnapshot).filter(StringUtils::hasText).findFirst().orElse(null);
+        order.setPickupAddressSnapshot(pickup);
+        order.setDropoffAddressSnapshot(dropoff);
+        // updateById 忽略 null，显式清空取消服务后的地址。
+        enrollmentOrderMapper.update(null, new LambdaUpdateWrapper<EnrollmentOrderEntity>()
+                .eq(EnrollmentOrderEntity::getId, order.getId())
+                .set(EnrollmentOrderEntity::getPickupAddressSnapshot, pickup)
+                .set(EnrollmentOrderEntity::getDropoffAddressSnapshot, dropoff));
+    }
+
     private ItemFeeTotals itemFeeTotals(List<EnrollmentOrderItemEntity> items) {
         return new ItemFeeTotals(
-                items.stream().map(item -> defaultAmount(item.getPickupFeeAmount())).reduce(ZERO_AMOUNT, BigDecimal::add),
-                items.stream().map(item -> defaultAmount(item.getDropoffFeeAmount())).reduce(ZERO_AMOUNT, BigDecimal::add),
+                items.stream().map(item -> Boolean.TRUE.equals(item.getPickupRequiredSnapshot())
+                        ? defaultAmount(item.getPickupFeeAmount()) : ZERO_AMOUNT).reduce(ZERO_AMOUNT, BigDecimal::add),
+                items.stream().map(item -> Boolean.TRUE.equals(item.getDropoffRequiredSnapshot())
+                        ? defaultAmount(item.getDropoffFeeAmount()) : ZERO_AMOUNT).reduce(ZERO_AMOUNT, BigDecimal::add),
                 items.stream().map(item -> defaultAmount(item.getExtraFeeAmount())).reduce(ZERO_AMOUNT, BigDecimal::add));
     }
 
-    private void applyCorrectedMoney(EnrollmentOrderEntity order, EnrollmentOrderCorrectionRequest request,
-                                     ItemFeeTotals previousItemFees) {
-        // 请求可以只包含改过的课程行；金额必须从本订单全部已保存课程计算。
+    private void applyCorrectedMoney(EnrollmentOrderEntity order, EnrollmentOrderCorrectionRequest request) {
+        // 请求只包含变化的课程行；订单费用必须从全部已保存课程的当前值汇总。
         List<EnrollmentOrderItemEntity> savedItems = listOrderItemsByOrderId(order.getId());
         ItemFeeTotals currentItemFees = itemFeeTotals(savedItems);
         BigDecimal tuition = request.getItems() == null ? defaultAmount(order.getTuitionSubtotalAmount()) : savedItems.stream()
                 .map(item -> defaultAmount(item.getPriceAmount())).reduce(ZERO_AMOUNT, BigDecimal::add);
-        BigDecimal pickup = request.getPickupFeeCharged() != null || request.getPickupFeeAmount() != null
-                ? resolveCorrectedRegistrationFee(request.getPickupFeeCharged(), request.getPickupFeeAmount(), order.getPickupFeeAmount())
-                : defaultAmount(order.getPickupFeeAmount()).add(currentItemFees.pickup()).subtract(previousItemFees.pickup());
-        BigDecimal dropoff = request.getDropoffFeeCharged() != null || request.getDropoffFeeAmount() != null
-                ? resolveCorrectedRegistrationFee(request.getDropoffFeeCharged(), request.getDropoffFeeAmount(), order.getDropoffFeeAmount())
-                : defaultAmount(order.getDropoffFeeAmount()).add(currentItemFees.dropoff()).subtract(previousItemFees.dropoff());
-        BigDecimal extra = request.getExtraFeeAmount() != null
-                ? defaultAmount(request.getExtraFeeAmount())
-                : request.getExtraFees() != null
-                ? currentItemFees.extra().add(sumFeeLines(request.getExtraFees()))
-                : defaultAmount(order.getExtraFeeAmount()).add(currentItemFees.extra()).subtract(previousItemFees.extra());
+        BigDecimal pickup = currentItemFees.pickup();
+        BigDecimal dropoff = currentItemFees.dropoff();
+        BigDecimal extra = currentItemFees.extra();
         BigDecimal discount = request.getParticipantBillings() != null && !request.getParticipantBillings().isEmpty()
                 ? request.getParticipantBillings().stream()
                 .filter(Objects::nonNull)
@@ -3184,14 +3199,6 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         order.setAmountDue(due);
         order.setBalanceAmount(due.subtract(received));
         order.setPaymentStatus(resolvePaymentStatus(original, discount, received));
-    }
-
-    private BigDecimal resolveCorrectedRegistrationFee(Boolean charged,
-                                                       BigDecimal requestedAmount,
-                                                       BigDecimal existingAmount) {
-        if (Boolean.FALSE.equals(charged)) return ZERO_AMOUNT;
-        if (requestedAmount != null) return defaultAmount(requestedAmount);
-        return defaultAmount(existingAmount);
     }
 
     /** 汇总本订单仍有效的退款记录；REFUND 金额在账本中以负数保存。 */
@@ -5886,8 +5893,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 ClassSlotRotation.Assignment assignment = ClassSlotRotation.resolve(slot, date,
                         classGroup.getStartDate(),
                         ClassScheduleDates.resolveBaseEndDate(classGroup.getScheduleBaseEndDate(), horizonEnd),
-                        slots,
-                        holidayDate -> classHolidayService.isHoliday(holidayDate, holidays));
+                        slots);
                 occ.setPlannedTeacherId(assignment.teacherId() == null
                         ? classGroup.getTeacherId() : assignment.teacherId());
                 occ.setSubjectName(assignment.subjectName());

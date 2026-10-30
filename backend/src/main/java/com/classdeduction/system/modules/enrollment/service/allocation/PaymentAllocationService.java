@@ -90,7 +90,7 @@ public class PaymentAllocationService {
                 applySavedAllocation(saved, remaining);
             } else {
                 List<PaymentAllocationCalculator.AllocationLine> lines = amount.compareTo(BigDecimal.ZERO) > 0
-                        ? evenPay(amount, remaining, WholeDollarBilling.appliesTo(order))
+                        ? allocateUnassignedPayment(amount, remaining, orderHasOverpayment, WholeDollarBilling.appliesTo(order))
                         : legacyRefund(amount.negate(), items, remaining, WholeDollarBilling.appliesTo(order));
                 for (PaymentAllocationCalculator.AllocationLine line : lines) {
                     BigDecimal signedAmount = amount.signum() > 0 ? line.amount() : line.amount().negate();
@@ -216,6 +216,15 @@ public class PaymentAllocationService {
     }
 
     // ─── 内部 ───────────────────────────────────────────────────────────
+
+    /** 单课程超收仍属于该课程；多课程缺少付款归属时保留校验，避免猜测分配。 */
+    private List<PaymentAllocationCalculator.AllocationLine> allocateUnassignedPayment(
+            BigDecimal amount, Map<Long, BigDecimal> remaining, boolean overpaid, boolean wholeDollars) {
+        if (overpaid && remaining.size() == 1) {
+            return List.of(new PaymentAllocationCalculator.AllocationLine(remaining.keySet().iterator().next(), amount));
+        }
+        return evenPay(amount, remaining, wholeDollars);
+    }
 
     private List<PaymentAllocationCalculator.AllocationLine> evenPay(BigDecimal amount,
                                                                      Map<Long, BigDecimal> remaining,
@@ -421,8 +430,10 @@ public class PaymentAllocationService {
         boolean hasCourseFeeSnapshots = items.stream().anyMatch(this::hasCourseFeeSnapshot);
         if (hasCourseFeeSnapshots) {
             List<BigDecimal> courseFees = items.stream()
-                    .map(item -> defaultAmount(item.getPickupFeeAmount())
-                            .add(defaultAmount(item.getDropoffFeeAmount()))
+                    .map(item -> (Boolean.TRUE.equals(item.getPickupRequiredSnapshot())
+                            ? defaultAmount(item.getPickupFeeAmount()) : BigDecimal.ZERO)
+                            .add(Boolean.TRUE.equals(item.getDropoffRequiredSnapshot())
+                                    ? defaultAmount(item.getDropoffFeeAmount()) : BigDecimal.ZERO)
                             .add(defaultAmount(item.getExtraFeeAmount())))
                     .toList();
             BigDecimal orderFeeTotal = defaultAmount(order.getPickupFeeAmount())
@@ -447,8 +458,6 @@ public class PaymentAllocationService {
     private boolean hasCourseFeeSnapshot(EnrollmentOrderItemEntity item) {
         return Boolean.TRUE.equals(item.getPickupRequiredSnapshot())
                 || Boolean.TRUE.equals(item.getDropoffRequiredSnapshot())
-                || defaultAmount(item.getPickupFeeAmount()).compareTo(BigDecimal.ZERO) > 0
-                || defaultAmount(item.getDropoffFeeAmount()).compareTo(BigDecimal.ZERO) > 0
                 || defaultAmount(item.getExtraFeeAmount()).compareTo(BigDecimal.ZERO) > 0;
     }
 

@@ -131,6 +131,7 @@ export interface RecurringScheduleRuleUpdatePayload {
   startDate: string;
   notes?: string;
   reclaimEndedUnconfirmedLessons?: boolean;
+  expectedPendingLessonSnapshots?: string[];
   slots: RecurringScheduleSlotPayload[];
 }
 

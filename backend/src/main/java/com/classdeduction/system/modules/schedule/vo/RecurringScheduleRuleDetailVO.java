@@ -34,6 +34,7 @@ public record RecurringScheduleRuleDetailVO(
         Double startingHours,
         List<RecurringScheduleSlotVO> slots,
         List<UnlinkedLessonHistoryVO> unlinkedHistory,
+        List<SchedulePendingLessonVO> pendingReclaimLessons,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {

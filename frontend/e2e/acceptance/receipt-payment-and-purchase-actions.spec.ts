@@ -2,6 +2,69 @@ import { expect, test, type Page } from '@playwright/test';
 
 const admin = { userId: '1', username: 'admin', displayName: 'Admin', userType: 'ADMIN', roleCodes: ['ADMIN'] };
 
+test('Edit Receipt keeps zero pickup fee and payment unchanged when pickup is toggled', async ({ page }) => {
+  await useMockAdmin(page);
+  let correction: Record<string, any> | undefined;
+  let pickupTotal = 300;
+  const item = { id: '500', orderItemId: '500', lineNo: 1, courseType: 'GROUP', courseProductId: '10',
+    groupProjectId: '20', groupRegistrationPlanId: '30', classId: '40', className: 'G1',
+    packageUnit: 'MONTH', packageQuantity: 10, purchasedMonths: 10, priceAmount: 3499,
+    pickupRequiredSnapshot: true, pickupFeeAmount: 0, dropoffRequiredSnapshot: false,
+    dropoffFeeAmount: 0, extraFeeAmount: 0, discountAmount: 400, startDate: '2026-09-10', itemStatus: 'ACTIVE' };
+  const payment = { id: '900', paymentMethod: 'CASH', amount: 3399, paidAt: '2026-04-30T00:00:00' };
+  const setup = { productId: '10', productName: 'After School', projects: [{ id: '20', projectName: 'G1-G5', status: 'ACTIVE',
+    plans: [{ id: '30', planName: '10 months', packageUnit: 'MONTH', packageQuantity: 10, fullDayPrice: 3499, status: 'ACTIVE' }],
+    classes: [{ id: '40', className: 'G1', actualClass: 'G1', campusId: '1', campusName: 'North Campus', status: 'ACTIVE' }] }] };
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (!path.startsWith('/api/')) return route.continue();
+    if (path.endsWith('/v1/enrollment/orders/100/correction') && route.request().method() === 'PUT') {
+      correction = route.request().postDataJSON();
+      item.pickupRequiredSnapshot = correction?.items?.[0]?.pickupRequired ?? item.pickupRequiredSnapshot;
+      item.pickupFeeAmount = correction?.pickupFeeAmount ?? item.pickupFeeAmount;
+      pickupTotal = correction?.pickupFeeAmount ?? pickupTotal;
+      await route.fulfill({ json: { success: true, code: 'OK', data: null } });
+      return;
+    }
+    const order = { id: '100', version: 1, studentId: '200', studentNameSnapshot: 'Cynthia Xu',
+      signupDate: '2026-04-30', orderStatus: 'CONFIRMED', amountDue: 3099 + pickupTotal, receivedAmount: 3399,
+      balanceAmount: pickupTotal - 300, pickupRequiredSnapshot: true, pickupFeeAmount: pickupTotal, dropoffFeeAmount: 0,
+      extraFeeAmount: 0, discountAmount: 400, campusId: '1', campusNameSnapshot: 'North Campus',
+      items: [item], packages: [], payments: [payment], participants: [],
+      receipts: [{ id: '300', templateCode: 'DEFAULT_RECEIPT', receiptPayload: JSON.stringify({ items: [item] }) }] };
+    const data = path.endsWith('/v1/auth/me') ? admin
+      : path.endsWith('/v1/enrollment/orders/100') ? order
+        : path.endsWith('/v2/group-course-model/products/10') ? setup
+          : path.endsWith('/v1/enrollment/payment-methods/active') ? [{ id: '1', methodCode: 'CASH', methodName: 'Cash', status: 'ACTIVE' }]
+            : path.endsWith('/v1/base/campuses') ? [{ id: '1', campusName: 'North Campus', status: 'ACTIVE' }]
+              : path.endsWith('/v1/base/course-products') ? { records: [], total: 0 } : [];
+    await route.fulfill({ json: { success: true, code: 'OK', data } });
+  });
+  await page.goto('/registration?orderId=100');
+  await page.getByRole('button', { name: 'Edit Receipt' }).click();
+  const paymentCard = page.locator('.course-adjustment-card--payment').first();
+  const pickup = page.locator('label.service-charge-toggle').filter({ hasText: 'Pickup needed' }).locator('input');
+  await expect(pickup).toBeChecked();
+  await expect(paymentCard).toContainText('$3,099 due');
+  await pickup.uncheck();
+  await expect(paymentCard).toContainText('$3,099 due');
+  await pickup.check();
+  await expect(paymentCard).toContainText('$3,099 due');
+  await pickup.uncheck();
+  await expect(paymentCard).toContainText('$3,099 due');
+  await expect(page.locator('.course-payment-entry').first().locator('.payment-amount-field input')).toHaveValue('3,399');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Save correction' }).click();
+  await expect.poll(() => correction).toBeDefined();
+  expect(correction?.pickupFeeAmount).toBe(0);
+  expect(correction?.items?.[0]?.pickupRequired).toBe(false);
+  expect(correction).not.toHaveProperty('payments');
+  await page.getByRole('button', { name: 'Edit Receipt' }).click();
+  await expect(page.locator('.course-adjustment-card--payment').first()).toContainText('$3,099 due');
+  await expect(page.locator('label.service-charge-toggle').filter({ hasText: 'Pickup needed' }).locator('input')).not.toBeChecked();
+  await expect(page.locator('.course-payment-entry').first().locator('.payment-amount-field input')).toHaveValue('3,399');
+});
+
 async function useMockAdmin(page: Page) {
   await page.addInitScript((user) => {
     localStorage.setItem('jbt_auth_token', 'test-token');

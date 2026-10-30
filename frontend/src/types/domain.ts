@@ -564,8 +564,21 @@ export interface RecurringScheduleRuleDetailItem extends RecurringScheduleRuleIt
   preservedReservedHours?: number;
   startingHours?: number;
   slots: RecurringScheduleSlotItem[];
+  pendingReclaimLessons?: SchedulePendingLesson[];
   createdAt: string;
   updatedAt?: string;
+}
+
+export interface SchedulePendingLesson {
+  occurrenceId: EntityId;
+  snapshot: string;
+  subjectName?: string;
+  teacherName?: string;
+  plannedStartAt?: string;
+  plannedEndAt?: string;
+  plannedHours: number;
+  status: string;
+  inProgress: boolean;
 }
 
 export interface LessonOccurrenceItem {

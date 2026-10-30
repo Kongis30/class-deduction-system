@@ -70,9 +70,13 @@
               cellClass(day, time.hour, time.minute),
               { 'wts-cell--event-start': occupiedEvent(day, time.hour, time.minute) },
             ]"
+            :data-weekday="day"
+            :data-hour="time.hour"
+            :data-minute="time.minute"
             @mousedown.prevent="onMouseDown(day, time.hour, time.minute)"
             @mouseenter="onMouseEnter(day, time.hour, time.minute)"
             @click="onCellClick(day, time.hour, time.minute)"
+            @touchstart="onCellTouchStart(day, time.hour, time.minute, $event)"
           >
             <el-tooltip
               v-if="isOccupied(day, time.hour, time.minute)"
@@ -225,6 +229,13 @@ let pinchAnchorX = 0;
 let pinchAnchorY = 0;
 let resizeObserver: ResizeObserver | null = null;
 
+// 触摸拖动选择（移动端编辑排课）：单指在日历上拖动可形成连续时段。
+let touchSelecting = false;
+let touchStartX = 0;
+let touchStartY = 0;
+let touchMoved = false;
+let suppressMouseUntil = 0;
+
 function applyZoom(value: number) {
   mobileZoom.value = clampMobileZoom(value);
 }
@@ -271,6 +282,11 @@ function touchDistance(first: Touch, second: Touch) {
 // 双指缩放只改变手机日历网格密度，并围绕手势中心保留当前查看位置。
 function onTouchStart(event: TouchEvent) {
   if (!props.pinchZoomEnabled || event.touches.length !== 2) return;
+  // 进入双指缩放时取消单指拖动选择，避免两个手势互相干扰。
+  if (touchSelecting) {
+    touchSelecting = false;
+    clearDrag();
+  }
   hasManualZoom.value = true;
   const scroller = gridScroll.value;
   if (!scroller) return;
@@ -285,28 +301,82 @@ function onTouchStart(event: TouchEvent) {
   pinchAnchorY = (scroller.scrollTop + centerY) / pinchStartZoom;
 }
 
-function onTouchMove(event: TouchEvent) {
-  if (!props.pinchZoomEnabled || !pinchStartDistance || event.touches.length !== 2) return;
+// 单指按住日历单元格开始选择；移动端用触摸拖动形成连续时段。
+function onCellTouchStart(weekday: number, hour: number, minute: number, event: TouchEvent) {
+  if (props.readonly || !props.pinchZoomEnabled) return;
+  if (event.touches.length !== 1) return;
+  if (timeToMinutes(hour, minute) >= SCHEDULE_DAY_END_MINUTES) return;
+  const touch = event.touches[0];
+  touchStartX = touch.clientX;
+  touchStartY = touch.clientY;
+  touchMoved = false;
+  touchSelecting = true;
+  anchor.value = { weekday, hour, minute };
+  currentHover.value = anchor.value;
+  selecting.value = true;
+  // 阻止随后的合成鼠标事件与页面滚动，让拖动专心用于选择。
   if (event.cancelable) event.preventDefault();
+}
 
-  const scroller = gridScroll.value;
-  if (!scroller) return;
-  const [first, second] = Array.from(event.touches);
-  const rect = scroller.getBoundingClientRect();
-  const centerX = (first.clientX + second.clientX) / 2 - rect.left;
-  const centerY = (first.clientY + second.clientY) / 2 - rect.top;
-  const nextZoom = clampMobileZoom(pinchStartZoom * touchDistance(first, second) / pinchStartDistance);
-  mobileZoom.value = nextZoom;
+function touchCellAt(clientX: number, clientY: number) {
+  const element = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+  const cell = element?.closest?.('.wts-cell') as HTMLElement | null;
+  if (!cell || cell.dataset.weekday == null) return null;
+  return {
+    weekday: Number(cell.dataset.weekday),
+    hour: Number(cell.dataset.hour),
+    minute: Number(cell.dataset.minute),
+  };
+}
 
-  void nextTick(() => {
-    if (!gridScroll.value) return;
-    gridScroll.value.scrollLeft = Math.max(0, pinchAnchorX * nextZoom - centerX);
-    gridScroll.value.scrollTop = Math.max(0, pinchAnchorY * nextZoom - centerY);
-  });
+function onTouchMove(event: TouchEvent) {
+  // 双指缩放优先。
+  if (props.pinchZoomEnabled && pinchStartDistance && event.touches.length === 2) {
+    if (event.cancelable) event.preventDefault();
+
+    const scroller = gridScroll.value;
+    if (!scroller) return;
+    const [first, second] = Array.from(event.touches);
+    const rect = scroller.getBoundingClientRect();
+    const centerX = (first.clientX + second.clientX) / 2 - rect.left;
+    const centerY = (first.clientY + second.clientY) / 2 - rect.top;
+    const nextZoom = clampMobileZoom(pinchStartZoom * touchDistance(first, second) / pinchStartDistance);
+    mobileZoom.value = nextZoom;
+
+    void nextTick(() => {
+      if (!gridScroll.value) return;
+      gridScroll.value.scrollLeft = Math.max(0, pinchAnchorX * nextZoom - centerX);
+      gridScroll.value.scrollTop = Math.max(0, pinchAnchorY * nextZoom - centerY);
+    });
+    return;
+  }
+
+  // 单指拖动选择连续时段。
+  if (!touchSelecting || props.readonly || event.touches.length !== 1) return;
+  if (event.cancelable) event.preventDefault();
+  const touch = event.touches[0];
+  if (Math.abs(touch.clientX - touchStartX) > 3 || Math.abs(touch.clientY - touchStartY) > 3) {
+    touchMoved = true;
+  }
+  const cell = touchCellAt(touch.clientX, touch.clientY);
+  if (!cell || !anchor.value) return;
+  // 只允许在同一天内纵向拖动，避免滑到相邻列时选中错误时段。
+  if (cell.weekday !== anchor.value.weekday) return;
+  currentHover.value = cell;
 }
 
 function onTouchEnd(event: TouchEvent) {
   if (event.touches.length < 2) pinchStartDistance = 0;
+
+  if (!touchSelecting) return;
+  touchSelecting = false;
+  // 拖动结束后提交连续时段；轻点则形成单个 30 分钟时段。
+  const preview = dragPreview.value;
+  if (preview) commitPreviewSlot(preview);
+  clearDrag();
+  // 阻止浏览器在触摸结束后补发 click，避免重复处理。
+  suppressMouseUntil = Date.now() + 500;
+  if (event.cancelable) event.preventDefault();
 }
 
 // ─── Day labels with optional dates ─────────
@@ -528,6 +598,7 @@ function onCellClick(weekday: number, hour: number, minute: number) {
 
 function onMouseDown(weekday: number, hour: number, minute: number) {
   if (props.readonly) return;
+  if (Date.now() < suppressMouseUntil) return;
   if (timeToMinutes(hour, minute) >= SCHEDULE_DAY_END_MINUTES) return;
   anchor.value = { weekday, hour, minute };
   currentHover.value = anchor.value;
@@ -540,14 +611,8 @@ function onMouseEnter(weekday: number, hour: number, minute: number) {
   currentHover.value = { weekday, hour, minute };
 }
 
-function onMouseUp() {
-  if (props.readonly) return;
-  const preview = dragPreview.value;
-  if (!preview) {
-    clearDrag();
-    return;
-  }
-
+// 鼠标拖动和触摸拖动共用同一套提交逻辑，保证两种输入得到一致的连续时段。
+function commitPreviewSlot(preview: NonNullable<typeof dragPreview.value>) {
   const { startMin, endMin, units } = preview;
 
   const newSlot: SlotDef = {
@@ -567,7 +632,18 @@ function onMouseUp() {
   if (!overlaps) {
     emit('update:modelValue', [...props.modelValue, newSlot]);
   }
+}
 
+function onMouseUp() {
+  if (props.readonly) return;
+  if (Date.now() < suppressMouseUntil) return;
+  const preview = dragPreview.value;
+  if (!preview) {
+    clearDrag();
+    return;
+  }
+
+  commitPreviewSlot(preview);
   clearDrag();
 }
 

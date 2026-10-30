@@ -652,6 +652,7 @@ class EnrollmentOrderServiceImplTest {
         plan.setPackageUnit("MONTH");
         plan.setPackageQuantity(new BigDecimal("12"));
         plan.setCoverageType("ROLLING_MONTHS");
+        plan.setFullDayPrice(new BigDecimal("1200"));
         plan.setStatus("ACTIVE");
 
         EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
@@ -708,6 +709,7 @@ class EnrollmentOrderServiceImplTest {
         payload.setPackageUnit("MONTH");
         payload.setPackageQuantity(new BigDecimal("12"));
         payload.setPurchasedMonths(12);
+        payload.setPriceAmount(new BigDecimal("1200"));
         payload.setStartDate(LocalDate.of(2026, 10, 15));
         request.setItems(List.of(payload));
 
@@ -929,6 +931,49 @@ class EnrollmentOrderServiceImplTest {
         verify(classGroupScheduleSlotMapper, never()).selectList(any());
         verify(classEnrollmentMapper, never()).updateById(any(ClassEnrollmentEntity.class));
         verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
+    }
+
+    @Test
+    void shouldRecalculateZeroPickupFromCurrentCourseWithoutChangingPayment() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setStudentId(101L);
+        order.setOrderStatus("CONFIRMED");
+        order.setPaymentStatus("PAID");
+        order.setTuitionSubtotalAmount(new BigDecimal("3499.00"));
+        order.setPickupFeeAmount(new BigDecimal("300.00"));
+        order.setDiscountAmount(new BigDecimal("400.00"));
+        order.setAmountDue(new BigDecimal("3399.00"));
+        order.setReceivedAmount(new BigDecimal("3399.00"));
+
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(8001L);
+        item.setEnrollmentOrderId(2001L);
+        item.setLineNo(1);
+        item.setCourseType("GROUP");
+        item.setPriceAmount(new BigDecimal("3499.00"));
+        item.setPickupRequiredSnapshot(true);
+        item.setPickupFeeAmount(BigDecimal.ZERO);
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(studentMapper.selectById(101L)).thenReturn(buildStudent());
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(receiptRecordMapper.selectList(any())).thenReturn(List.of());
+
+        RegistrationIntakeRequest.CourseItemPayload edit = new RegistrationIntakeRequest.CourseItemPayload();
+        edit.setOrderItemId(8001L);
+        edit.setPickupRequired(false);
+        edit.setCorrectionChangedFields(List.of("pickupRequired"));
+        EnrollmentOrderCorrectionRequest request = new EnrollmentOrderCorrectionRequest();
+        request.setItems(List.of(edit));
+        request.setPickupFeeAmount(BigDecimal.ZERO);
+        request.setPickupFeeCharged(true);
+        enrollmentOrderService.correctOrder(2001L, request);
+
+        assertThat(order.getPickupFeeAmount()).isEqualByComparingTo("0.00");
+        assertThat(order.getAmountDue()).isEqualByComparingTo("3099.00");
+        assertThat(order.getReceivedAmount()).isEqualByComparingTo("3399.00");
+        assertThat(order.getBalanceAmount()).isEqualByComparingTo("-300.00");
+        verify(paymentRecordMapper, never()).updateById(any(PaymentRecordEntity.class));
     }
 
     @Test

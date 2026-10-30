@@ -1055,6 +1055,12 @@
                   </div>
                   <span class="course-adjustment-card__context">{{ formatMoney(activeCourseAmountDue(line, lineIndex)) }} due</span>
                 </header>
+                <p class="course-adjustment-card__empty">
+                  Tuition {{ formatMoney(activeCourseTuition(line)) }}
+                  + fees {{ formatMoney(activeCourseFeeShare(line, lineIndex)) }}
+                  − discount {{ formatMoney(activeCourseDiscountAmount(line.rowKey)) }}
+                  = {{ formatMoney(activeCourseAmountDue(line, lineIndex)) }} due
+                </p>
                 <div v-if="paymentsForCourse(line.rowKey).length" class="course-payment-list">
                   <div
                     v-for="(payment, paymentIndex) in paymentsForCourse(line.rowKey)"
@@ -1225,10 +1231,12 @@
             <span>Drop-off service</span>
             <b>{{ formatMoney(effectiveDropoffFeeAmount) }}</b>
           </div>
-          <div v-for="fee in extraFees.filter((item) => item.amount > 0)" :key="`print-${fee.rowKey}`" class="receipt-financial-summary__row">
-            <span>{{ fee.label || 'Other fee' }}</span>
-            <b>{{ formatMoney(fee.amount) }}</b>
-          </div>
+          <template v-for="line in courseLines" :key="`print-fees-${line.rowKey}`">
+            <div v-for="fee in line.serviceFees.filter((item) => item.amount > 0)" :key="`print-${fee.rowKey}`" class="receipt-financial-summary__row">
+              <span>{{ fee.label || 'Other fee' }}</span>
+              <b>{{ formatMoney(fee.amount) }}</b>
+            </div>
+          </template>
         </div>
 
         <div class="receipt-financial-summary__column">
@@ -1684,7 +1692,6 @@ const privateParticipantCount = ref(1);
 const privateParticipantForms = ref<PrivateParticipantForm[]>([]);
 // 已保存收据中的每位学生收费快照，仅用于按原收据金额展示，不参与重新计费。
 const privateParticipantPriceSnapshots = ref<Array<number | undefined>>([]);
-const extraFees = ref<MoneyLine[]>([createMoneyLine('Other fee')]);
 const discounts = ref<DiscountLine[]>([createDiscountLine()]);
 const payments = ref<PaymentLine[]>([createPaymentLine(courseLines.value[0]?.rowKey)]);
 const creditTopUpAmount = ref(0);
@@ -1781,12 +1788,24 @@ const canPrintSavedReceipt = computed(() => isReadOnly.value
   && !editingCorrection.value
   && !historicalOrderLoading.value
   && historicalOrder.value !== null);
-const correctionDataWarnings = computed(() => (historicalOrder.value?.items ?? []).flatMap((item) => {
-  const receiptQuantity = item.packageUnit === 'MONTH' ? item.purchasedMonths : item.sessions;
-  if (!item.packageUnit || receiptQuantity == null || item.entitlementPurchasedQuantity == null
-      || Number(receiptQuantity) === Number(item.entitlementPurchasedQuantity)) return [];
-  return [`Course ${item.lineNo}: receipt records ${receiptQuantity} ${item.packageUnit.toLowerCase()}(s), but the current class enrollment records ${item.entitlementPurchasedQuantity}. This difference will not be changed automatically.`];
-}));
+const correctionDataWarnings = computed(() => {
+  const order = historicalOrder.value;
+  if (!order) return [];
+  const warnings = order.items.flatMap((item) => {
+    const receiptQuantity = item.packageUnit === 'MONTH' ? item.purchasedMonths : item.sessions;
+    if (!item.packageUnit || receiptQuantity == null || item.entitlementPurchasedQuantity == null
+        || Number(receiptQuantity) === Number(item.entitlementPurchasedQuantity)) return [];
+    return [`Course ${item.lineNo}: receipt records ${receiptQuantity} ${item.packageUnit.toLowerCase()}(s), but the current class enrollment records ${item.entitlementPurchasedQuantity}. This difference will not be changed automatically.`];
+  });
+  const displayed = [effectivePickupFeeAmount.value, effectiveDropoffFeeAmount.value, courseServiceExtraFeeTotal.value];
+  const recorded = [order.pickupFeeAmount, order.dropoffFeeAmount, order.extraFeeAmount];
+  ['Pickup', 'Drop-off', 'Other'].forEach((label, index) => {
+    if (recorded[index] != null && Math.abs(numeric(recorded[index]) - displayed[index]) > 0.005) {
+      warnings.push(`${label} fees: order total ${formatMoney(numeric(recorded[index]))}; currently displayed course fees ${formatMoney(displayed[index])}. Review the course fees before saving changes.`);
+    }
+  });
+  return warnings;
+});
 const wholeDollarForm = computed(() => !isReadOnly.value || historicalOrder.value?.billingPolicy === 'WHOLE_DOLLAR_V1');
 // Contact fields are editable when creating a new registration or when correcting a saved one.
 const contactLocked = computed(() => isReadOnly.value && !editingCorrection.value);
@@ -1989,22 +2008,12 @@ const privateParticipantReceiptRows = computed(() => {
 const courseSubtotal = computed(() => sumNumbers(courseLines.value.map((line) => {
   return courseAggregatePrice(line);
 })));
-const extraFeeTotal = computed(() => sumNumbers(extraFees.value.map((line) => line.amount)));
-const hasExplicitCourseFees = computed(() => courseLines.value.some((line) =>
-  line.pickupRequired || line.dropoffRequired
-  || line.serviceFees.some((fee) => numeric(fee.amount) > 0)));
-// 新报名按课程行记录接送；只有更正旧订单时才读取订单级接送字段。
-const usesLegacyOrderTransportFields = computed(() =>
-  isReadOnly.value && editingCorrection.value && !hasExplicitCourseFees.value);
-const effectivePickupFeeAmount = computed(() => hasExplicitCourseFees.value
-  ? roundMoney(courseLines.value.reduce((total, line) => total + (line.pickupRequired ? numeric(line.pickupFeeAmount) : 0), 0))
-  : usesLegacyOrderTransportFields.value && form.student.pickupRequired ? roundMoney(form.pickupFeeAmount) : 0);
-const effectiveDropoffFeeAmount = computed(() => hasExplicitCourseFees.value
-  ? roundMoney(courseLines.value.reduce((total, line) => total + (line.dropoffRequired ? numeric(line.dropoffFeeAmount) : 0), 0))
-  : usesLegacyOrderTransportFields.value && form.student.dropoffRequired ? roundMoney(form.dropoffFeeAmount) : 0);
-const courseServiceExtraFeeTotal = computed(() => hasExplicitCourseFees.value
-  ? roundMoney(courseLines.value.reduce((total, line) => total + sumNumbers(line.serviceFees.map((fee) => fee.amount)), 0))
-  : extraFeeTotal.value);
+const effectivePickupFeeAmount = computed(() => roundMoney(courseLines.value.reduce(
+  (total, line) => total + (line.pickupRequired ? numeric(line.pickupFeeAmount) : 0), 0)));
+const effectiveDropoffFeeAmount = computed(() => roundMoney(courseLines.value.reduce(
+  (total, line) => total + (line.dropoffRequired ? numeric(line.dropoffFeeAmount) : 0), 0)));
+const courseServiceExtraFeeTotal = computed(() => roundMoney(courseLines.value.reduce(
+  (total, line) => total + sumNumbers(line.serviceFees.map((fee) => fee.amount)), 0)));
 const serviceFeeTotal = computed(() => roundMoney(effectivePickupFeeAmount.value + effectiveDropoffFeeAmount.value));
 const discountableAmount = computed(() => roundMoney(courseSubtotal.value + serviceFeeTotal.value + courseServiceExtraFeeTotal.value));
 const printableCourseTransportLines = computed(() => courseLines.value.filter((line) =>
@@ -2808,6 +2817,22 @@ function changedCorrectionPayload(current: EnrollmentOrderCorrectionPayload): En
       Object.assign(changes, { [key]: current[key] });
     }
   }
+  // 金额变更以页面上全部课程的当前费用重算订单汇总，不把订单旧汇总差额叠加回来。
+  const changedItemFields = new Set((changes.items ?? []).flatMap((item) => item.correctionChangedFields ?? []));
+  const financialFields = ['priceAmount', 'discountAmount', 'pickupRequired', 'pickupFeeAmount',
+    'dropoffRequired', 'dropoffFeeAmount', 'serviceFees'];
+  const financialChange = financialFields.some((field) => changedItemFields.has(field))
+    || changes.payments !== undefined || changes.participantBillings !== undefined
+    || changes.discountAmount !== undefined || changes.discounts !== undefined
+    || (changes.items ?? []).some((item) => !item.orderItemId);
+  if (financialChange) {
+    changes.pickupFeeCharged = true;
+    changes.pickupFeeAmount = effectivePickupFeeAmount.value;
+    changes.dropoffFeeCharged = true;
+    changes.dropoffFeeAmount = effectiveDropoffFeeAmount.value;
+    changes.extraFeeAmount = courseServiceExtraFeeTotal.value;
+    changes.extraFees = [];
+  }
   if (Object.keys(changes).length === 1) ElMessage.info('No changes to save.');
   return Object.keys(changes).length > 1 ? changes : null;
 }
@@ -3228,30 +3253,6 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
     courseLines.value = [createCourseLine()];
   }
 
-  const historicalExtraFees = getMoneyLines(receiptPayload, 'extraFees');
-  const savedPickupFee = historicalExtraFees.find((fee) => fee.label === 'Pickup service');
-  const savedDropoffFee = historicalExtraFees.find((fee) => fee.label === 'Drop-off service');
-  if (form.pickupFeeAmount === 0 && savedPickupFee) {
-    form.pickupFeeAmount = savedPickupFee.amount;
-    form.pickupFeeCharged = true;
-  }
-  // 早期收据只有服务费金额，没有同步保存 pickupRequired 标记；金额本身就是历史上
-  // 已收费的事实，编辑时要把它恢复成当前按课程编辑器可见的接送需求。
-  if (!form.student.pickupRequired && form.pickupFeeAmount > 0) {
-    form.student.pickupRequired = true;
-  }
-  if (form.dropoffFeeAmount === 0 && savedDropoffFee) {
-    form.dropoffFeeAmount = savedDropoffFee.amount;
-    form.dropoffFeeCharged = true;
-  }
-  if (!form.student.dropoffRequired && form.dropoffFeeAmount > 0) {
-    form.student.dropoffRequired = true;
-  }
-  applyHistoricalRegistrationTransportFallback();
-  extraFees.value = historicalExtraFees.filter((fee) => !['Pickup service', 'Drop-off service'].includes(fee.label));
-  if (extraFees.value.length === 0) {
-    extraFees.value = [createMoneyLineWithAmount('Other fee', firstPositiveNumber(getNumber(receiptPayload, 'extraFeeAmount'), order.extraFeeAmount))];
-  }
   discounts.value = historicalDiscountLines(receiptPayload, order);
   if (discounts.value.length === 0) {
     discounts.value = [createDiscountLine('Custom discount')];
@@ -3315,35 +3316,6 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   validationErrors.value = [];
   studentReuseStatus.value = 'idle';
   reusableStudent.value = null;
-}
-
-/**
- * 兼容早期只保存整单接送费的收据：编辑时把整单快照迁移到课程行，
- * 保证现行按课程编辑器能看到原来的地址和金额，同时不重复计费。
- */
-function applyHistoricalRegistrationTransportFallback() {
-  const line = courseLines.value.find((candidate) => candidate.pickupRequired || numeric(candidate.pickupFeeAmount) > 0)
-    ?? courseLines.value[0];
-  const dropoffLine = courseLines.value.find((candidate) => candidate.dropoffRequired || numeric(candidate.dropoffFeeAmount) > 0)
-    ?? courseLines.value[0];
-  if (!line) return;
-
-  if (form.student.pickupRequired) {
-    line.pickupRequired = true;
-    line.pickupAddress ||= form.student.pickupAddress;
-    if (numeric(line.pickupFeeAmount) <= 0) {
-      line.pickupFeeAmount = roundMoney(form.pickupFeeAmount);
-    }
-    line.pickupFeeCharged = true;
-  }
-  if (dropoffLine && form.student.dropoffRequired) {
-    dropoffLine.dropoffRequired = true;
-    dropoffLine.dropoffAddress ||= form.student.dropoffAddress;
-    if (numeric(dropoffLine.dropoffFeeAmount) <= 0) {
-      dropoffLine.dropoffFeeAmount = roundMoney(form.dropoffFeeAmount);
-    }
-    dropoffLine.dropoffFeeCharged = true;
-  }
 }
 
 /**
@@ -3451,18 +3423,19 @@ function toHistoricalCourseLine(
   fallback?: EnrollmentOrderDetailItem['items'][number],
 ): RegistrationCourseLine {
   const periodLabel = getString(fallback, 'periodLabel') || getString(item, 'periodLabel');
-  const pickupFeeAmount = optionalNumber(fallback, 'pickupFeeAmount') ?? getNumber(item, 'pickupFeeAmount');
-  const dropoffFeeAmount = optionalNumber(fallback, 'dropoffFeeAmount') ?? getNumber(item, 'dropoffFeeAmount');
+  // 订单行中的 0 是有效金额，不能用收据快照中的非零金额覆盖。
+  const pickupFeeAmount = presentNumber(fallback, 'pickupFeeAmount') ?? getNumber(item, 'pickupFeeAmount');
+  const dropoffFeeAmount = presentNumber(fallback, 'dropoffFeeAmount') ?? getNumber(item, 'dropoffFeeAmount');
   const pickupRequired = getBoolean(
     fallback,
     'pickupRequiredSnapshot',
-    getBoolean(item, 'pickupRequiredSnapshot', getBoolean(item, 'pickupRequired', false)),
-  ) || pickupFeeAmount > 0;
+    getBoolean(item, 'pickupRequiredSnapshot', getBoolean(item, 'pickupRequired', pickupFeeAmount > 0)),
+  );
   const dropoffRequired = getBoolean(
     fallback,
     'dropoffRequiredSnapshot',
-    getBoolean(item, 'dropoffRequiredSnapshot', getBoolean(item, 'dropoffRequired', false)),
-  ) || dropoffFeeAmount > 0;
+    getBoolean(item, 'dropoffRequiredSnapshot', getBoolean(item, 'dropoffRequired', dropoffFeeAmount > 0)),
+  );
   const itemServiceFees = getMoneyLines(item, 'extraFees');
   const fallbackServiceFees = parseMoneyDetail(getString(fallback, 'extraFeeDetail'))
     .filter(isRecord)
@@ -3472,6 +3445,10 @@ function toHistoricalCourseLine(
       amount: getNumber(fee, 'amount'),
     }))
     .filter((fee) => fee.amount > 0);
+  const savedExtraFeeAmount = presentNumber(fallback, 'extraFeeAmount');
+  if (!getString(fallback, 'extraFeeDetail') && savedExtraFeeAmount != null && savedExtraFeeAmount > 0) {
+    fallbackServiceFees.push({ rowKey: `history-fee-${index}-total`, label: 'Other fee', amount: savedExtraFeeAmount });
+  }
   return {
     rowKey: `history-course-${getString(item, 'id') || getString(item, 'orderItemId') || getString(fallback, 'id') || index}`,
     // 订单明细是业务主数据；收据 payload 是历史快照，内部 JSON 的 Snowflake ID
@@ -3534,7 +3511,9 @@ function toHistoricalCourseLine(
     pickupFeeAmount,
     dropoffFeeCharged: dropoffRequired,
     dropoffFeeAmount,
-    serviceFees: fallbackServiceFees.length > 0 ? fallbackServiceFees : itemServiceFees,
+    // 已保存的课程费用以订单明细为准，明确的 0 不能被旧收据项目重新带回。
+    serviceFees: getString(fallback, 'extraFeeDetail') || savedExtraFeeAmount != null
+      ? fallbackServiceFees : itemServiceFees,
     remark: getString(fallback, 'remark') || getString(item, 'remark') || undefined,
   };
 }
@@ -3657,14 +3636,6 @@ function createMoneyLine(label: string): MoneyLine {
     rowKey: `money-${++rowSeed}`,
     label,
     amount: 0,
-  };
-}
-
-function createMoneyLineWithAmount(label: string, amount: number): MoneyLine {
-  return {
-    rowKey: `money-${++rowSeed}`,
-    label,
-    amount: roundMoney(amount),
   };
 }
 
@@ -3805,10 +3776,6 @@ function removeCourseLine(index: number) {
   courseLines.value.splice(index, 1);
 }
 
-function addExtraFee() {
-  extraFees.value.push(createMoneyLine(''));
-}
-
 function addCourseServiceFee(line: RegistrationCourseLine) {
   line.serviceFees.push(createMoneyLine(''));
 }
@@ -3816,12 +3783,6 @@ function addCourseServiceFee(line: RegistrationCourseLine) {
 function removeCourseServiceFee(line: RegistrationCourseLine, index: number) {
   if (line.serviceFees.length > 1) {
     line.serviceFees.splice(index, 1);
-  }
-}
-
-function removeExtraFee(index: number) {
-  if (extraFees.value.length > 1) {
-    extraFees.value.splice(index, 1);
   }
 }
 
@@ -4198,28 +4159,35 @@ function buildCoursePaymentAllocations(payment: PaymentLine) {
     .filter((allocation) => allocation.amount > 0);
 }
 
-function courseAmountDue(line: RegistrationCourseLine, index: number) {
+function courseAmountDue(line: RegistrationCourseLine, _index: number) {
   const fees = serviceFeeTotal.value + courseServiceExtraFeeTotal.value;
-  const feeShare = courseFeeShare(index, fees, line);
+  const feeShare = courseFeeShare(fees, line);
   return roundMoney(courseAggregatePrice(line) + feeShare - activeCourseDiscountAmount(line.rowKey));
 }
 
-function activeCourseAmountDue(line: RegistrationCourseLine, index: number) {
+/** 付款区展示与应付计算使用相同的学生收费和费用分摊口径。 */
+function activeCourseTuition(line: RegistrationCourseLine) {
   const billing = activeParticipantBilling.value;
-  if (!billing) {
-    return courseAmountDue(line, index);
-  }
-  const fees = billing.participantIndex === 1
+  return billing ? participantCoursePrice(line, billing.participantIndex - 1) : courseAggregatePrice(line);
+}
+
+function activeCourseFeeShare(line: RegistrationCourseLine, _index: number) {
+  const billing = activeParticipantBilling.value;
+  const fees = !billing || billing.participantIndex === 1
     ? serviceFeeTotal.value + courseServiceExtraFeeTotal.value
     : 0;
-  return roundMoney(participantCoursePrice(line, billing.participantIndex - 1)
-    + courseFeeShare(index, fees, line)
+  return courseFeeShare(fees, line);
+}
+
+function activeCourseAmountDue(line: RegistrationCourseLine, index: number) {
+  return roundMoney(activeCourseTuition(line)
+    + activeCourseFeeShare(line, index)
     - activeCourseDiscountAmount(line.rowKey));
 }
 
 function participantCourseAmountDue(
   line: RegistrationCourseLine,
-  index: number,
+  _index: number,
   billing: ParticipantBillingForm,
   afterDiscount: boolean,
 ) {
@@ -4231,28 +4199,15 @@ function participantCourseAmountDue(
       .reduce((total, item) => total + numeric(item.amount), 0)
     : 0;
   return roundMoney(participantCoursePrice(line, billing.participantIndex - 1)
-    + courseFeeShare(index, fees, line)
+    + courseFeeShare(fees, line)
     - discount);
 }
 
-function courseFeeShare(index: number, totalFees: number, line?: RegistrationCourseLine) {
-  if (hasExplicitCourseFees.value && line) {
-    return courseFeeAmount(line, index);
-  }
-  const weights = courseLines.value.map(courseAggregatePrice);
-  const weightTotal = sumNumbers(weights);
-  const shareAt = (lineIndex: number) => weightTotal > 0
-    ? Math.floor((totalFees * weights[lineIndex] / weightTotal + 1e-8) * 100) / 100
-    : Math.floor((totalFees / Math.max(1, weights.length) + 1e-8) * 100) / 100;
-  return index === weights.length - 1
-    ? roundMoney(totalFees - weights.slice(0, index).reduce((total, _weight, lineIndex) => total + shareAt(lineIndex), 0))
-    : shareAt(index);
+function courseFeeShare(totalFees: number, line: RegistrationCourseLine) {
+  return totalFees === 0 ? 0 : courseFeeAmount(line);
 }
 
-function courseFeeAmount(line: RegistrationCourseLine, _index = 0) {
-  if (!hasExplicitCourseFees.value) {
-    return 0;
-  }
+function courseFeeAmount(line: RegistrationCourseLine, _index?: number) {
   return roundMoney(
     (line.pickupRequired ? numeric(line.pickupFeeAmount) : 0)
     + (line.dropoffRequired ? numeric(line.dropoffFeeAmount) : 0)
@@ -5766,7 +5721,6 @@ function validateForm() {
       requireWhole(line.dropoffFeeAmount, `Course ${index + 1} drop-off fee`);
       line.serviceFees.forEach((fee) => requireWhole(fee.amount, 'Course fee'));
     });
-    extraFees.value.forEach((fee) => requireWhole(fee.amount, 'Extra fee'));
     [...discounts.value, ...participantBillings.value.flatMap((billing) => billing.discounts)]
       .forEach((discount) => requireWhole(discount.amount, 'Discount'));
     [...payments.value, ...participantBillings.value.flatMap((billing) => billing.payments)]
@@ -5845,7 +5799,7 @@ function validateForm() {
   if (!form.handledByName.trim()) {
     errors.push('Handled by is required.');
   }
-  if (exceedsMoney(discountTotal.value, courseSubtotal.value + serviceFeeTotal.value + extraFeeTotal.value)) {
+  if (exceedsMoney(discountTotal.value, courseSubtotal.value + serviceFeeTotal.value + courseServiceExtraFeeTotal.value)) {
     errors.push('Discount cannot exceed tuition plus fees.');
   }
   if (exceedsMoney(paidAmount.value, amountDue.value)) {
@@ -5911,7 +5865,6 @@ function validateForm() {
       }
     }
   });
-  validateMoneyLines(extraFees.value, 'Other fee', errors);
   if (isSharedPrivateLesson.value) {
     participantBillings.value.slice(0, privateParticipantCount.value).forEach((billing) => {
       validateMoneyLines(billing.discounts, `${privateWorkspaceTabLabel(billing.participantIndex)} discount`, errors);
@@ -6314,7 +6267,6 @@ function buildPayload(): RegistrationIntakePayload {
   const campus = selectedCampus.value;
   const pickupAddress = form.student.pickupAddress.trim();
   const dropoffAddress = form.student.dropoffAddress.trim();
-  const useLegacyOrderTransportFields = usesLegacyOrderTransportFields.value && !isCreditTopUpOnly.value;
   const payload: RegistrationIntakePayload = {
     student: {
       studentId: reusableStudent.value?.id ?? historicalPrimaryStudentId.value,
@@ -6404,12 +6356,7 @@ function buildPayload(): RegistrationIntakePayload {
       })),
       remark: line.remark,
     })),
-    pickupFeeCharged: useLegacyOrderTransportFields ? form.student.pickupRequired : undefined,
-    pickupFeeAmount: useLegacyOrderTransportFields ? roundMoney(effectivePickupFeeAmount.value) : undefined,
-    dropoffFeeCharged: useLegacyOrderTransportFields ? form.student.dropoffRequired : undefined,
-    dropoffFeeAmount: useLegacyOrderTransportFields ? roundMoney(effectiveDropoffFeeAmount.value) : undefined,
-    extraFeeAmount: isCreditTopUpOnly.value || hasExplicitCourseFees.value ? undefined : roundMoney(extraFeeTotal.value),
-    extraFees: isCreditTopUpOnly.value || hasExplicitCourseFees.value ? [] : buildMoneyPayload(extraFees.value),
+    extraFees: [],
     discountAmount: isCreditTopUpOnly.value ? 0 : roundMoney(discountTotal.value),
     discounts: isCreditTopUpOnly.value || isSharedPrivateLesson.value
       ? []
@@ -6478,15 +6425,6 @@ function buildParticipantDiscountPayload(lines: DiscountLine[]) {
       label: line.label.trim(),
       amount: roundMoney(line.amount),
       orderItemLineNo: courseLines.value.findIndex((course) => course.rowKey === line.courseRowKey) + 1,
-    }));
-}
-
-function buildMoneyPayload(lines: MoneyLine[]) {
-  return lines
-    .filter((line) => line.amount > 0)
-    .map((line) => ({
-      label: line.label.trim(),
-      amount: roundMoney(line.amount),
     }));
 }
 
@@ -6585,7 +6523,6 @@ function resetForNextRegistration() {
   participantBillings.value = [];
   activePrivateWorkspaceTab.value = 'all';
   studentPickerQuery.value = '';
-  extraFees.value = [createMoneyLine('Other fee')];
   discounts.value = [createDiscountLine()];
   payments.value = [createPaymentLine(courseLines.value[0]?.rowKey)];
   studentReuseStatus.value = 'idle';
@@ -6901,6 +6838,14 @@ function getNumber(payload: unknown, key: string) {
 function optionalNumber(payload: unknown, key: string) {
   const value = getNumber(payload, key);
   return value > 0 ? value : undefined;
+}
+
+/** 读取已保存的数字，区分明确的零和缺失值。 */
+function presentNumber(payload: unknown, key: string) {
+  const value = isRecord(payload) ? payload[key] : undefined;
+  if (value == null || value === '') return undefined;
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount : undefined;
 }
 
 function firstPositiveNumber(...values: Array<number | undefined>) {

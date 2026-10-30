@@ -915,6 +915,71 @@ class RecurringScheduleRuleServiceImplTest {
     }
 
     @Test
+    void pendingReclaimIncludesEarlierAndUnlinkedPeriodsWithoutIncludingOtherPackages() {
+        RecurringScheduleRuleEntity rule = buildExistingRule();
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        LessonOccurrenceEntity current = buildRuleOccurrence(9301L, now.toLocalDate().minusDays(2), 4, "SCHEDULED");
+        LessonOccurrenceEntity older = buildRuleOccurrence(9302L, now.toLocalDate().minusDays(4), 2, "SCHEDULED");
+        older.setScheduleRuleId(4001L);
+        LessonOccurrenceEntity unlinked = buildRuleOccurrence(9303L, now.toLocalDate().minusDays(6), 4, "SCHEDULED");
+        unlinked.setScheduleRuleId(null);
+        LessonOccurrenceEntity other = buildRuleOccurrence(9304L, now.toLocalDate().minusDays(8), 4, "SCHEDULED");
+        other.setPackageId(9999L);
+        LessonOccurrenceEntity confirmed = buildRuleOccurrence(9305L, now.toLocalDate().minusDays(9), 4, "MERGED");
+        LessonRecordEntity done = buildRecord(9305L, 4);
+        done.setConfirmStage("CONFIRMED");
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(current, older, unlinked, other, confirmed));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(done));
+
+        List<?> pending = ReflectionTestUtils.invokeMethod(recurringScheduleRuleService,
+                "listPendingReclaimLessons", rule, now);
+        assertThat(pending).hasSize(3);
+        List<Long> ids = pending.stream().map(item -> {
+            com.classdeduction.system.modules.schedule.vo.SchedulePendingLessonVO view =
+                    ReflectionTestUtils.invokeMethod(item, "view");
+            return view.occurrenceId();
+        }).toList();
+        assertThat(ids).containsExactly(9301L, 9302L, 9303L);
+    }
+
+    @Test
+    void partiallyConfirmedSharedLessonRequiresReviewInsteadOfReclaim() {
+        RecurringScheduleRuleEntity rule = buildExistingRule();
+        rule.setPrivateLessonGroupId(7001L);
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        LessonOccurrenceEntity shared = buildRuleOccurrence(9301L, now.toLocalDate().minusDays(2), 4, "SCHEDULED");
+        shared.setPrivateLessonGroupId(7001L);
+        LessonRecordEntity confirmed = buildRecord(9301L, 4);
+        confirmed.setConfirmStage("CONFIRMED");
+        PrivateLessonGroupMemberEntity first = new PrivateLessonGroupMemberEntity();
+        first.setPackageId(1001L);
+        PrivateLessonGroupMemberEntity second = new PrivateLessonGroupMemberEntity();
+        second.setPackageId(1002L);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(shared));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(confirmed));
+        when(privateLessonGroupMemberMapper.selectList(any())).thenReturn(List.of(first, second));
+
+        List<?> pending = ReflectionTestUtils.invokeMethod(recurringScheduleRuleService,
+                "listPendingReclaimLessons", rule, now);
+        com.classdeduction.system.modules.schedule.vo.SchedulePendingLessonVO view =
+                ReflectionTestUtils.invokeMethod(pending.get(0), "view");
+        assertThat(view.status()).isEqualTo("PARTIALLY_CONFIRMED");
+    }
+
+    @Test
+    void pendingReclaimSnapshotChangesWhenLessonOrSubmissionChanges() {
+        LessonOccurrenceEntity occurrence = buildRuleOccurrence(9301L, LocalDate.of(2026, 10, 1), 4, "SCHEDULED");
+        LessonRecordEntity record = buildRecord(9301L, 0);
+        record.setVersion(1);
+        String before = ReflectionTestUtils.invokeMethod(recurringScheduleRuleService,
+                "pendingLessonSnapshot", occurrence, List.of(record), List.of());
+        record.setConfirmStage("CONFIRMED");
+        String after = ReflectionTestUtils.invokeMethod(recurringScheduleRuleService,
+                "pendingLessonSnapshot", occurrence, List.of(record), List.of());
+        assertThat(after).isNotEqualTo(before);
+    }
+
+    @Test
     void shouldRequireExplicitChoiceBeforeReclaimingEndedUnconfirmedLessons() {
         RecurringScheduleRuleEntity rule = buildExistingRule();
         rule.setRuleStatus("PAUSED");
@@ -942,42 +1007,13 @@ class RecurringScheduleRuleServiceImplTest {
 
     @Test
     void shouldReclaimEndedPendingSubmissionWithoutChangingPackageBalance() {
-        RecurringScheduleRuleEntity rule = buildExistingRule();
-        rule.setRuleStatus("PAUSED");
-        RecurringScheduleRuleUpdateRequest request = buildUpdateRequest(4);
-        request.setRuleStatus("PAUSED");
-        request.setReclaimEndedUnconfirmedLessons(true);
-        request.setNotes(null);
         LessonOccurrenceEntity oldLesson = buildRuleOccurrence(9102L,
                 AppTime.nowLocalDateTime().toLocalDate().minusDays(2), 4, "SCHEDULED");
-        oldLesson.setScheduleSlotId(6001L);
-        RecurringScheduleSlotEntity slot = new RecurringScheduleSlotEntity();
-        slot.setId(6001L);
-        slot.setRuleId(5001L);
-        slot.setTeacherId(3001L);
-        slot.setSubjectName("Math");
-        slot.setWeekday(1);
-        slot.setStartTime(LocalTime.of(18, 0));
-        slot.setEndTime(LocalTime.of(20, 0));
-        slot.setPlannedUnits(4);
-        slot.setAllocatedUnits(28);
-        slot.setSlotStatus("ACTIVE");
         LessonRecordEntity pending = new LessonRecordEntity();
         pending.setId(9201L);
         pending.setOccurrenceId(oldLesson.getId());
         pending.setPackageId(1001L);
         pending.setConfirmStage("PENDING_ADMIN");
-        CoursePackageEntity coursePackage = buildPackage();
-        coursePackage.setTotalUnits(100);
-        coursePackage.setRemainingUnits(100);
-
-        when(recurringScheduleRuleMapper.selectById(5001L)).thenReturn(rule);
-        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
-        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
-        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
-        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
-        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(oldLesson), Collections.emptyList());
-        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(pending));
         when(lessonOccurrenceMapper.selectByIdForUpdate(oldLesson.getId())).thenReturn(oldLesson);
         when(lessonRecordMapper.selectByOccurrenceIdForUpdate(oldLesson.getId())).thenReturn(List.of(pending));
@@ -985,11 +1021,12 @@ class RecurringScheduleRuleServiceImplTest {
         when(lessonOccurrenceMapper.softDeleteEndedUnconfirmedPrivateLessons(any(), any())).thenReturn(1);
         when(jsonHelper.toJson(any())).thenReturn("{}");
 
-        ScheduleRuleUpdateResultVO result = recurringScheduleRuleService.updateRule(5001L, request);
-
-        assertThat(result.reclaimedOccurrenceCount()).isEqualTo(1);
-        assertThat(result.deletedOccurrenceCount()).isZero();
-        assertThat(coursePackage.getRemainingUnits()).isEqualTo(100);
+        List<LessonOccurrenceEntity> occurrences = new ArrayList<>(List.of(oldLesson));
+        Integer result = ReflectionTestUtils.invokeMethod(recurringScheduleRuleService,
+                "reclaimEndedUnconfirmedOccurrences", 5001L, occurrences, true,
+                AppTime.nowLocalDateTime(), null, null);
+        assertThat(result).isEqualTo(1);
+        assertThat(occurrences).isEmpty();
         verify(lessonRecordMapper).softDeleteUnconfirmedByIds(
                 org.mockito.ArgumentMatchers.eq(List.of(9201L)), any());
         verify(lessonOccurrenceMapper).softDeleteEndedUnconfirmedPrivateLessons(

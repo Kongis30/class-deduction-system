@@ -314,6 +314,11 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             recordGeneratedMakeup(records.get(0), makeup);
         }
         applyLeaveCarryover(makeupPlan);
+        // 共享课每个成员都必须在扣课后仍能覆盖有效排课与保留课次。
+        for (PrivateLessonGroupMemberEntity member : members) {
+            CoursePackageEntity updated = coursePackageMapper.selectById(member.getPackageId());
+            recurringScheduleRuleService.validateBalanceReduction(member.getPackageId(), updated.getRemainingUnits());
+        }
         reconcileScheduleAfterConfirmation(primaryPackage.getId());
 
         LocalDate makeupEndDate = makeup == null ? null : makeup.getPlannedEndAt().toLocalDate();
@@ -658,6 +663,9 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             recordGeneratedMakeup(record, makeup);
         }
         applyLeaveCarryover(makeupPlan);
+        // 实际扣课可能大于原预留；在同一事务内复核余额，避免旧课扣课挤占当前分配。
+        CoursePackageEntity updatedPackage = coursePackageMapper.selectById(coursePackage.getId());
+        recurringScheduleRuleService.validateBalanceReduction(coursePackage.getId(), updatedPackage.getRemainingUnits());
         reconcileScheduleAfterConfirmation(coursePackage.getId());
         LocalDate makeupEndDate = makeup == null ? null : makeup.getPlannedEndAt().toLocalDate();
         refreshEstimatedEndDateAfterScheduleChange(coursePackage, originalPlannedUnits, decision,
