@@ -403,8 +403,10 @@
             </li>
           </ul>
           <p>Total: {{ pendingStartedLessons.reduce((sum, lesson) => sum + lesson.plannedHours, 0).toFixed(1) }}h</p>
-          <el-checkbox v-model="reclaimEndedUnconfirmedLessons" :disabled="pendingStartedLessons.some(lesson => lesson.inProgress || lesson.status === 'PARTIALLY_CONFIRMED')">Withdraw these pending records and continue</el-checkbox>
-          <el-button link type="primary" @click="goToOneOnOneDeduction">Open 1-on-1 Lessons</el-button>
+          <div class="edit-deduction-prompt__actions">
+            <el-checkbox v-model="reclaimEndedUnconfirmedLessons" :disabled="pendingStartedLessons.some(lesson => lesson.inProgress || lesson.status === 'PARTIALLY_CONFIRMED')">Withdraw these pending records and continue</el-checkbox>
+            <el-button link type="primary" @click="goToOneOnOneDeduction">Open 1-on-1 Lessons</el-button>
+          </div>
         </el-alert>
 
         <el-form ref="editFormRef" :model="editForm" :rules="editFormRules" label-width="130px">
@@ -3293,6 +3295,13 @@ function disabledPastDate(date: Date) {
   color: #606266;
   font-size: 13px;
   line-height: 1.8;
+}
+.edit-deduction-prompt__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
 }
 
 .schedule-page {
