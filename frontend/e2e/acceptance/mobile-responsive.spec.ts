@@ -391,6 +391,47 @@ test.describe('mobile responsive workspace', () => {
     await expect(page.locator('.wts-header__date').first()).not.toHaveText(firstDayOfWeek ?? '');
   });
 
+  test('teacher and student calendars use the compact week toolbar on mobile', async ({ page }, testInfo) => {
+    for (const [tab, trigger, groupSelector, gradeSelector] of [
+      ['teacher', 'Select a teacher', '.teacher-group__header', ''],
+      ['student', 'Select a student', '.student-product-group__header', '.student-grade-group__header'],
+    ] as const) {
+      await page.goto(`/calendar?tab=${tab}`);
+      await page.getByRole('button', { name: trigger }).click();
+      const panel = page.locator('.calendar-mobile-roster__panel:visible');
+      await panel.locator(groupSelector).first().click();
+      if (gradeSelector) await panel.locator(gradeSelector).first().click();
+      await panel.locator('.calendar-mobile-roster__item').first().click();
+
+      const nav = page.locator('.calendar-controls__nav:visible').first();
+      const week = nav.locator('.calendar-week-current');
+      await expect(week.locator('.calendar-controls__count')).toBeVisible();
+      const weekLabel = week.locator('.calendar-controls__label');
+      await expect(weekLabel).toHaveText(/–/);
+      expect(await weekLabel.evaluate(element => element.scrollWidth > element.clientWidth + 1), `${tab} week label should not truncate`).toBe(false);
+
+      const picker = week.locator('.calendar-date-picker');
+      const pickerSize = await picker.evaluate(element => {
+        const { width, height } = element.getBoundingClientRect();
+        return { width, height };
+      });
+      expect(pickerSize.width).toBeLessThanOrEqual(44);
+      expect(pickerSize.height).toBeLessThanOrEqual(44);
+
+      const [navBox, zoomBox] = await Promise.all([
+        nav.boundingBox(),
+        page.locator('.wts-mobile-zoom-bar:visible').first().boundingBox(),
+      ]);
+      expect(navBox).not.toBeNull();
+      expect(zoomBox).not.toBeNull();
+      expect(Math.abs(zoomBox!.width - navBox!.width), `${tab} zoom bar should align with the week toolbar`).toBeLessThanOrEqual(1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+        await page.evaluate(() => document.documentElement.clientWidth) + 1,
+      );
+      await page.screenshot({ path: testInfo.outputPath(`calendar-${tab}-toolbar-mobile.png`) });
+    }
+  });
+
   test('lesson confirmation uses a full-width student list before showing lesson details', async ({ page }) => {
     await page.goto('/schedule/adjustments');
     const workspace = page.locator('.adj-workspace').first();

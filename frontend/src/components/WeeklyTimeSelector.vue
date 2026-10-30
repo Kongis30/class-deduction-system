@@ -681,14 +681,16 @@ function weekdayName(d: number) {
 .wts-mobile-zoom-bar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 8px;
   margin-bottom: 6px;
+  padding: 0 2px;
 }
 
 .wts-mobile-zoom-bar__label {
-  color: #7b8797;
-  font-size: 11px;
+  color: #52647c;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .wts-mobile-zoom-controls {

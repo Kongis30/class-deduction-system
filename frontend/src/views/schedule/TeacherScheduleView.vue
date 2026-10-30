@@ -116,20 +116,33 @@
           <template v-else>
             <div class="calendar-controls">
               <div class="calendar-controls__nav">
-                <el-button-group>
-                  <el-button :icon="ArrowLeft" @click="prevWeek" />
-                  <el-button :icon="ArrowRight" @click="nextWeek" />
-                </el-button-group>
-                <el-date-picker
-                  v-model="pickerDate"
-                  type="date"
-                  placeholder="Jump to week"
-                  value-format="YYYY-MM-DD"
-                  style="width: 150px;"
-                  @change="jumpToDate"
-                />
-                <span class="calendar-controls__label">{{ weekLabel }}</span>
-                <el-tag size="small" type="info">{{ occurrences.length }} lessons this week</el-tag>
+                <el-button class="calendar-week-step" :icon="ArrowLeft" aria-label="Previous week" @click="prevWeek" />
+                <div class="calendar-week-current">
+                  <span class="calendar-controls__label" aria-live="polite">
+                    {{ appStore.isMobileViewport ? compactWeekLabel : weekLabel }}
+                  </span>
+                  <span
+                    v-if="appStore.isMobileViewport"
+                    class="calendar-controls__count"
+                    :aria-label="`${occurrences.length} lessons this week`"
+                  >
+                    {{ occurrences.length }} lesson{{ occurrences.length === 1 ? '' : 's' }}
+                  </span>
+                  <el-date-picker
+                    v-model="pickerDate"
+                    type="date"
+                    aria-label="Choose a date"
+                    placeholder="Jump to week"
+                    value-format="YYYY-MM-DD"
+                    format="MMM D, YYYY"
+                    :clearable="false"
+                    :editable="false"
+                    class="calendar-date-picker"
+                    @change="jumpToDate"
+                  />
+                </div>
+                <el-button class="calendar-week-step" :icon="ArrowRight" aria-label="Next week" @click="nextWeek" />
+                <el-tag v-if="!appStore.isMobileViewport" size="small" type="info">{{ occurrences.length }} lessons this week</el-tag>
               </div>
               <span class="calendar-controls__teacher">
                 {{ selectedTeacherName }}
@@ -390,6 +403,15 @@ const weekLabel = computed(() => {
   const monday = dayjs(weekMonday.value);
   const sunday = monday.add(6, 'day');
   return `${monday.format('MMM D')} – ${sunday.format('MMM D, YYYY')}`;
+});
+
+const compactWeekLabel = computed(() => {
+  const monday = dayjs(weekMonday.value);
+  const sunday = monday.add(6, 'day');
+  if (sunday.year() === dayjs().year()) {
+    return `${monday.format('MMM D')} – ${sunday.format('MMM D')}`;
+  }
+  return `${monday.format('MMM D, YYYY')} – ${sunday.format('MMM D, YYYY')}`;
 });
 
 const pickerDate = ref<string | null>(null);
@@ -870,6 +892,16 @@ onMounted(async () => {
   gap: 10px;
 }
 
+.calendar-week-current {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.calendar-date-picker {
+  width: 150px;
+}
+
 .calendar-controls__label {
   font-size: 13px;
   font-weight: 600;
@@ -1019,20 +1051,26 @@ onMounted(async () => {
 }
 
 @media (max-width: 920px) {
-  .calendar-panel .calendar-controls__nav {
-    display: grid;
-    width: 100%;
-    grid-template-columns: max-content minmax(0, 1fr);
-    gap: 6px;
-  }
-
-  .calendar-panel .calendar-controls__nav :deep(.el-button) { height: 34px; padding: 0 8px; font-size: 12px; }
-  .calendar-panel .calendar-controls__nav :deep(.el-button-group .el-button) { width: 34px; min-width: 34px; }
-  .calendar-panel .calendar-controls__nav :deep(.el-date-editor) { width: 100% !important; height: 34px; }
-  .calendar-panel .calendar-controls__nav :deep(.el-date-editor .el-input__wrapper) { min-height: 34px; padding: 0 8px; }
-  .calendar-panel .calendar-controls__nav :deep(.el-date-editor .el-input__inner) { font-size: 12px; }
-  .calendar-panel .calendar-controls__nav :deep(.el-tag) { font-size: 11px; }
-  .calendar-controls__label { grid-column: 1 / -1; font-size: 12px; }
+  .calendar-controls { display: grid; grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 0; margin: 0 0 4px; }
+  .calendar-controls__nav { display: grid; width: 100%; min-width: 0; grid-template-columns: 44px minmax(0, 1fr) 44px; grid-template-rows: 44px; gap: 4px 6px; }
+  .calendar-controls__nav > * { min-width: 0; max-width: 100%; }
+  .calendar-week-step { width: 44px; height: 44px; min-height: 44px; margin: 0; padding: 0; border-radius: 10px; }
+  .calendar-week-step:first-child { grid-column: 1; grid-row: 1; }
+  .calendar-week-step:nth-child(3) { grid-column: 3; grid-row: 1; }
+  .calendar-week-current { display: flex; align-items: center; justify-content: space-between; gap: 6px; grid-column: 2; grid-row: 1; min-width: 0; padding: 0 4px 0 8px; border: 1px solid #dce5ef; border-radius: 10px; background: #fff; }
+  .calendar-controls__label { flex: 1 1 auto; min-width: 0; overflow: hidden; font-size: 12px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+  .calendar-controls__count { flex: 0 0 auto; padding: 3px 5px; border-radius: 10px; background: #f1f5f9; color: #64748b; font-size: 10px; line-height: 1.2; white-space: nowrap; }
+  .calendar-date-picker { display: inline-flex; flex: 0 0 44px; width: 44px !important; min-width: 44px !important; max-width: 44px; height: 44px; overflow: hidden; }
+  .calendar-controls__nav :deep(.calendar-date-picker.el-date-editor) { display: inline-flex; width: 44px !important; min-width: 44px !important; height: 44px; }
+  .calendar-date-picker :deep(.el-input__wrapper) { position: relative; justify-content: center; width: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 8px; box-shadow: none !important; background: transparent; }
+  .calendar-date-picker :deep(.el-input__prefix) { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin: 0; }
+  .calendar-date-picker :deep(.el-input__prefix-inner) { display: flex; align-items: center; justify-content: center; }
+  .calendar-date-picker :deep(.el-input__inner) { position: absolute; width: 1px; height: 1px; padding: 0; opacity: 0; pointer-events: none; }
+  .calendar-date-picker :deep(.el-input__suffix) { display: none; }
   .calendar-controls__teacher { display: none; }
+}
+
+@media (max-width: 360px) {
+  .calendar-controls__count { display: none; }
 }
 </style>
