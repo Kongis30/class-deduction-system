@@ -2584,6 +2584,14 @@ async function startCourseRenewal(line: RegistrationCourseLine) {
     renewalSourceOrderItemId: sourceItem.id,
     renewalStartAfter: latestRenewalExpiry(sourceItem),
     manualPriceOverride: false,
+    pickupRequired: false,
+    pickupAddress: '',
+    pickupFeeCharged: false,
+    pickupFeeAmount: 0,
+    dropoffRequired: false,
+    dropoffAddress: '',
+    dropoffFeeCharged: false,
+    dropoffFeeAmount: 0,
     serviceFees: sourceLine.serviceFees.map((fee) => ({ ...fee, rowKey: `money-${++rowSeed}` })),
     priceAmount: 0,
     originalPriceAmount: undefined,
@@ -4383,7 +4391,7 @@ async function handleCourseProductChange(line: RegistrationCourseLine) {
     line.courseType = 'GROUP';
     await loadGroupCourseSetup(product.id);
   }
-  if ((isReadOnly.value || isRenewalMode.value)
+  if ((isRenewalMode.value || (isReadOnly.value && !editingCorrection.value))
       && !line.pickupAddress && !line.dropoffAddress && !line.pickupRequired && !line.dropoffRequired) {
     line.pickupRequired = form.student.pickupRequired;
     line.pickupAddress = form.student.pickupAddress;
