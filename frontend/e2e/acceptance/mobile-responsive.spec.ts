@@ -572,7 +572,22 @@ test.describe('mobile responsive workspace', () => {
     expect(addBox!.x + addBox!.width).toBeLessThanOrEqual(page.viewportSize()!.width + 1);
 
     await add.click();
-    await expect(page.locator('.student-dialog:visible')).toBeVisible();
+    const dialog = page.locator('.student-dialog:visible');
+    await expect(dialog).toBeVisible();
+    const profileForm = dialog.locator('.student-form--profile');
+    expect(await profileForm.evaluate(element => getComputedStyle(element).gridTemplateColumns.split(' ').length), 'Profile fields should use one column on a phone').toBe(1);
+    expect(await dialog.locator('.el-input__inner').first().evaluate(element => getComputedStyle(element).fontSize)).toBe('14px');
+    const [formBox, ...switchBoxes] = await Promise.all([
+      profileForm.boundingBox(),
+      ...(await dialog.locator('.el-switch').all()).map(item => item.boundingBox()),
+    ]);
+    expect(formBox).not.toBeNull();
+    for (const box of switchBoxes) {
+      expect(box).not.toBeNull();
+      expect(box!.x + box!.width, 'Pickup/drop-off switches should stay inside the form').toBeLessThanOrEqual(formBox!.x + formBox!.width + 1);
+    }
+    const dialogBody = await dialog.locator('.el-dialog__body').evaluate(element => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }));
+    expect(dialogBody.scrollWidth).toBeLessThanOrEqual(dialogBody.clientWidth + 1);
     await page.screenshot({ path: testInfo.outputPath('people-student-add-mobile.png') });
     await page.keyboard.press('Escape');
   });

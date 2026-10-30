@@ -216,7 +216,7 @@
         </div>
       </template>
 
-      <el-form ref="studentFormRef" label-position="top" :model="studentForm" :rules="studentFormRules" :validate-on-rule-change="false" class="student-form">
+      <el-form ref="studentFormRef" label-position="top" :model="studentForm" :rules="studentFormRules" :validate-on-rule-change="false" class="student-form student-form--profile">
         <h4 class="student-form__section-title">Student profile</h4>
         <div class="student-form__row">
           <el-form-item label="Student name" prop="studentName" class="student-form__half">
@@ -2417,5 +2417,21 @@ onBeforeUnmount(() => {
   .detail-header__actions :deep(.el-button) { min-height: 34px; padding: 0 8px; font-size: 11px; }
   .detail-card { gap: 8px; padding: 10px; border-radius: 7px; }
   .detail-card h3 { font-size: 13px; }
+}
+
+@media (max-width: 480px) {
+  /* Student profile fields become one column on a phone so placeholders,
+     switches and their labels have enough room. */
+  .student-form--profile { grid-template-columns: minmax(0, 1fr); }
+  .student-form--profile .student-form__half,
+  .student-form--profile .student-form__third { grid-column: 1 / -1; }
+
+  .student-form--profile :deep(.el-input__inner),
+  .student-form--profile :deep(.el-select__placeholder),
+  .student-form--profile :deep(.el-select__selected-item),
+  .student-form--profile :deep(.el-textarea__inner) { font-size: 14px; }
+
+  .student-form--profile :deep(.el-form-item__label) { font-size: 12px; }
+  .student-form--profile .student-form__section-title { font-size: 13px; }
 }
 </style>
