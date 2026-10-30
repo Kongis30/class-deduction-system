@@ -5,7 +5,7 @@
       <el-select
         id="mobile-group-product"
         :model-value="selectedProductId"
-        filterable
+        popper-class="mobile-course-select-popper"
         aria-label="Choose group class course"
         placeholder="Choose a course"
         @change="selectProduct"
@@ -213,7 +213,7 @@
       <el-empty v-else-if="!loading" description="Select a group class product." />
     </main>
 
-    <el-dialog v-model="projectDialogVisible" :title="editingProject ? 'Edit teaching project' : 'Add teaching project'" width="min(520px, calc(100vw - 32px))" :close-on-click-modal="false">
+    <el-dialog v-model="projectDialogVisible" class="group-model-dialog group-model-dialog--project" :title="editingProject ? 'Edit teaching project' : 'Add teaching project'" width="min(520px, calc(100vw - 32px))" :close-on-click-modal="false">
       <el-form label-position="top">
         <el-form-item label="Project name" required><el-input v-model="projectForm.projectName" maxlength="128" placeholder="e.g. SHSAT / PSAT / SAT" /></el-form-item>
         <el-form-item label="Description"><el-input v-model="projectForm.description" type="textarea" :rows="2" maxlength="500" /></el-form-item>
@@ -222,7 +222,7 @@
       <template #footer><el-button @click="projectDialogVisible = false">Cancel</el-button><el-button type="primary" :loading="saving" @click="saveProject">Save project</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="planDialogVisible" :title="editingPlan ? 'Edit registration plan' : 'Add registration plan'" width="min(640px, calc(100vw - 32px))" :close-on-click-modal="false">
+    <el-dialog v-model="planDialogVisible" class="group-model-dialog group-model-dialog--plan" :title="editingPlan ? 'Edit registration plan' : 'Add registration plan'" width="min(640px, calc(100vw - 32px))" :close-on-click-modal="false">
       <el-form label-position="top" class="plan-form">
         <el-form-item label="Plan name" required><el-input v-model="planForm.planName" maxlength="128" placeholder="e.g. Fall, Spring, Full year, 6 months" /></el-form-item>
         <div class="plan-form__row">
@@ -251,7 +251,7 @@
       <template #footer><el-button @click="planDialogVisible = false">Cancel</el-button><el-button type="primary" :loading="saving" @click="savePlan">Save plan</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="classDialogVisible" :title="editingClass ? 'Edit actual class' : 'Add actual class'" width="min(540px, calc(100vw - 32px))" :close-on-click-modal="false">
+    <el-dialog v-model="classDialogVisible" class="group-model-dialog group-model-dialog--class" :title="editingClass ? 'Edit actual class' : 'Add actual class'" width="min(540px, calc(100vw - 32px))" :close-on-click-modal="false">
       <el-form label-position="top">
         <el-form-item label="Class name" required><el-input v-model="classForm.actualClass" maxlength="64" placeholder="e.g. G3, SHSAT" /></el-form-item>
         <el-form-item label="Campus (optional)"><el-select v-model="classForm.campusId" filterable clearable placeholder="Shared across campuses" style="width: 100%"><el-option v-for="campus in campuses" :key="campus.id" :label="campus.campusName" :value="campus.id" /></el-select></el-form-item>
@@ -270,7 +270,7 @@
       @saved="onScheduleSaved"
     />
 
-    <el-dialog v-model="holidayDialogVisible" :title="`${holidayProject?.projectName ?? 'Project'} holidays`" width="min(760px, calc(100vw - 32px))" :close-on-click-modal="false">
+    <el-dialog v-model="holidayDialogVisible" class="group-model-dialog group-model-dialog--holiday" :title="`${holidayProject?.projectName ?? 'Project'} holidays`" width="min(760px, calc(100vw - 32px))" :close-on-click-modal="false">
       <el-alert
         title="A project holiday applies to every actual class and campus in this project. Lessons inside these dates are cancelled; lessons outside them and the class end date do not change. No make-up lessons are added."
         type="info"
@@ -288,7 +288,18 @@
           <el-button type="primary" :loading="savingHoliday" @click="saveHoliday">{{ editingHoliday ? 'Save changes' : 'Add holiday' }}</el-button>
         </div>
       </el-form>
-      <el-table v-loading="loadingHolidays" :data="holidays" border>
+      <div v-if="appStore.isMobileViewport" v-loading="loadingHolidays" class="mobile-holiday-list">
+        <article v-for="holiday in holidays" :key="holiday.id" class="mobile-holiday-card">
+          <header><strong>{{ holiday.holidayName }}</strong></header>
+          <small>{{ holiday.startDate }} – {{ holiday.endDate }}</small>
+          <div class="mobile-holiday-card__actions">
+            <el-button size="small" @click="editHoliday(holiday)">Edit</el-button>
+            <el-button size="small" type="danger" plain @click="removeHoliday(holiday)">Delete</el-button>
+          </div>
+        </article>
+        <el-empty v-if="!holidays.length" :image-size="38" description="No holidays configured" />
+      </div>
+      <el-table v-else v-loading="loadingHolidays" :data="holidays" border>
         <el-table-column prop="holidayName" label="Holiday" min-width="180" />
         <el-table-column label="Dates" min-width="220"><template #default="{ row }">{{ row.startDate }} – {{ row.endDate }}</template></el-table-column>
         <el-table-column label="Actions" width="140" align="center">
@@ -898,5 +909,66 @@ function errorMessage(error: any) {
   .mobile-model-card dl dd { font-size:12px; }
   .mobile-model-card__actions { align-items:center; gap:4px; margin-top:7px; }
   .mobile-model-card__actions .el-button { min-height:30px; padding:0 9px; font-size:12px; }
+
+  /* Price-page dialogs are teleported to body, so keep these overrides scoped by
+     the dialog class and the mobile breakpoint. Desktop keeps Element Plus defaults. */
+  :global(.group-model-dialog.el-dialog) { border-radius:12px; overflow:hidden; }
+  :global(.group-model-dialog .el-dialog__header) { margin:0; padding:12px 16px 8px; border-bottom:1px solid #eef2f7; }
+  :global(.group-model-dialog .el-dialog__title) { color:#1f2937; font-size:16px; font-weight:700; line-height:1.35; }
+  :global(.group-model-dialog .el-dialog__headerbtn) { top:10px; right:10px; width:30px; height:30px; }
+  :global(.group-model-dialog .el-dialog__close) { font-size:16px; }
+  :global(.group-model-dialog .el-dialog__body) { max-height:calc(100dvh - 138px); padding:10px 16px 4px; }
+  :global(.group-model-dialog .el-dialog__footer) {
+    display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px;
+    padding:10px 16px 12px; border-top:1px solid #eef2f7;
+  }
+  :global(.group-model-dialog .el-dialog__footer > .el-button) {
+    flex:0 0 auto; min-width:88px; min-height:38px !important; height:38px;
+    margin:0; padding:0 14px; border-radius:8px; font-size:13px;
+  }
+  :global(.group-model-dialog .el-form-item) { margin-bottom:14px; }
+  :global(.group-model-dialog .el-form-item__label) {
+    margin-bottom:5px; padding:0; color:#4b5563; font-size:13px; font-weight:600; line-height:1.35;
+  }
+  :global(.group-model-dialog .el-input__wrapper),
+  :global(.group-model-dialog .el-select__wrapper) {
+    min-height:38px !important; height:38px; padding:1px 10px; border-radius:8px;
+  }
+  :global(.group-model-dialog .el-input__inner),
+  :global(.group-model-dialog .el-select__selected-item) { font-size:14px; }
+  :global(.group-model-dialog .el-textarea__inner) {
+    min-height:68px !important; padding:8px 10px; border-radius:8px; font-size:14px; line-height:1.45;
+  }
+  :global(.group-model-dialog .el-input-number) { width:100%; }
+  :global(.group-model-dialog .el-alert) { padding:9px 11px; border-radius:8px; }
+  :global(.group-model-dialog .el-alert__title),
+  :global(.group-model-dialog .el-alert__description) { font-size:12px; line-height:1.45; }
+  :global(.group-model-dialog .plan-form__row) { gap:10px; }
+  :global(.group-model-dialog--holiday .holiday-form) { margin-top:12px; }
+  :global(.group-model-dialog--holiday .holiday-form__actions) { gap:6px; margin-bottom:12px; }
+  :global(.group-model-dialog--holiday .holiday-form__actions .el-button) {
+    min-height:36px !important; height:36px; padding:0 12px; font-size:13px;
+  }
+  :global(.group-model-dialog--holiday .el-table) { font-size:12px; }
+  :global(.group-model-dialog--holiday .el-table .cell) { padding:0 8px; }
+  :global(.group-model-dialog--holiday .el-table th.el-table__cell),
+  :global(.group-model-dialog--holiday .el-table td.el-table__cell) { padding:7px 0; }
+  :global(.mobile-holiday-list) { display:grid; gap:8px; margin-top:4px; }
+  :global(.mobile-holiday-card) {
+    padding:10px; border:1px solid #e6ebf2; border-radius:8px; background:#fff;
+  }
+  :global(.mobile-holiday-card header) { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  :global(.mobile-holiday-card strong) { min-width:0; color:#1f2937; font-size:13px; overflow-wrap:anywhere; }
+  :global(.mobile-holiday-card small) { display:block; margin-top:5px; color:#6b7a90; font-size:11px; }
+  :global(.mobile-holiday-card__actions) { display:flex; align-items:center; gap:6px; margin-top:8px; }
+  :global(.mobile-holiday-card__actions .el-button) {
+    min-height:30px; height:30px; margin:0; padding:0 9px; border-radius:7px; font-size:12px;
+  }
+  :global(.mobile-course-select-popper .el-select-dropdown__wrap) {
+    max-height:min(45dvh, 320px);
+    overflow-y:auto;
+    overscroll-behavior:contain;
+    -webkit-overflow-scrolling:touch;
+  }
 }
 </style>
