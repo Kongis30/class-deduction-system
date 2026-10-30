@@ -532,6 +532,11 @@ test.describe('mobile responsive workspace', () => {
       expect(await bodyScroller.evaluate(element => element.scrollWidth > element.clientWidth + 1), `${tab} table body should be horizontally scrollable`).toBe(true);
       const firstHeader = table.locator('.el-table__header-wrapper th').first();
       const firstBodyCell = table.locator('.el-table__body-wrapper tbody tr').first().locator('td').first();
+      if (tab === 'students') {
+        const studentCellText = (await firstBodyCell.textContent()) ?? '';
+        expect(studentCellText).not.toMatch(/STU\d/i);
+        expect(studentCellText).not.toMatch(/Active|Inactive/i);
+      }
       const summary = tab === 'students' ? page.locator('details.student-group > summary:visible').first() : null;
       const before = await Promise.all([
         firstHeader.boundingBox(),

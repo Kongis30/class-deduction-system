@@ -107,7 +107,7 @@
           <template #default="{ row }">
             <div class="cell-stack">
               <strong>{{ row.studentName }}</strong>
-              <span>{{ row.studentNo }} · {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}</span>
+              <span v-if="!appStore.isMobileViewport">{{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}</span>
             </div>
           </template>
         </el-table-column>
