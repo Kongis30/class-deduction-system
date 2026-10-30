@@ -528,7 +528,75 @@
             <h3>Registration history</h3>
             <span>{{ studentOrders.length }} order(s)</span>
           </div>
-          <el-table :data="studentOrders" row-key="id" class="product-table" empty-text="No enrollment orders.">
+          <div v-if="appStore.isMobileViewport" class="student-orders-mobile">
+            <div v-if="studentOrders.length === 0" class="student-orders-mobile__empty">No enrollment orders.</div>
+            <article v-for="order in studentOrders" :key="order.id" class="student-order-card">
+              <div class="student-order-card__header">
+                <div class="student-order-card__title">
+                  <strong>{{ order.enrollmentNo }}</strong>
+                  <span>{{ formatDate(order.signupDate) }}</span>
+                </div>
+                <div class="student-order-card__tags">
+                  <el-tag size="small" :type="orderStatusType(order.orderStatus)">
+                    {{ orderStatusLabel(order.orderStatus) }}
+                  </el-tag>
+                  <el-tag size="small" :type="paymentStatusType(order.paymentStatus)" effect="plain">
+                    {{ paymentStatusLabel(order.paymentStatus) }}
+                  </el-tag>
+                </div>
+              </div>
+
+              <p class="student-order-card__courses">{{ summarizeOrderItems(order) }}</p>
+
+              <div class="student-order-metrics">
+                <div>
+                  <span>Amount due</span>
+                  <strong>{{ formatMoney(order.amountDue) }}</strong>
+                </div>
+                <div>
+                  <span>Paid</span>
+                  <strong>{{ formatMoney(order.receivedAmount) }}</strong>
+                </div>
+                <div>
+                  <span>Balance</span>
+                  <strong :class="{ 'balance-due': numeric(order.balanceAmount) > 0 }">
+                    {{ formatMoney(order.balanceAmount) }}
+                  </strong>
+                </div>
+              </div>
+
+              <details v-if="paymentTimeline(order).length > 0" class="student-order-timeline">
+                <summary>
+                  {{ paymentTimeline(order).length }} payment record{{ paymentTimeline(order).length === 1 ? '' : 's' }}
+                </summary>
+                <div class="student-order-timeline__list">
+                  <div v-for="payment in paymentTimeline(order)" :key="payment.id" class="student-order-timeline__record">
+                    <div class="student-order-timeline__top">
+                      <strong>{{ formatMoney(payment.amount) }}</strong>
+                      <span>{{ formatDateTime(payment.paidAt) }}</span>
+                    </div>
+                    <span class="student-order-timeline__meta">
+                      {{ paymentMethodName(payment.paymentMethod) }} · {{ paymentTypeLabel(payment.paymentType) }} · {{ payment.handledByName || '-' }}
+                    </span>
+                    <span v-if="payment.remark" class="student-order-timeline__remark">{{ payment.remark }}</span>
+                  </div>
+                </div>
+              </details>
+              <p v-else class="student-order-timeline__empty">No payment records.</p>
+
+              <div class="student-order-card__actions">
+                <el-button size="small" type="primary" plain @click="openReceipt(order)">View receipt</el-button>
+                <el-button size="small" :disabled="!canRecordPayment(order)" @click="openPaymentDialog(order)">
+                  Record payment
+                </el-button>
+                <el-button size="small" type="warning" plain :disabled="!canRefundOrder(order)" @click="openRefundDialog(order)">
+                  Refund
+                </el-button>
+              </div>
+            </article>
+          </div>
+
+          <el-table v-else :data="studentOrders" row-key="id" class="product-table" empty-text="No enrollment orders.">
             <el-table-column label="Order no." min-width="150" prop="enrollmentNo" />
             <el-table-column label="Signup date" min-width="110">
               <template #default="{ row }">{{ formatDate(row.signupDate) }}</template>
@@ -2255,6 +2323,33 @@ onBeforeUnmount(() => {
 
 .student-form__row--three {
   grid-template-columns: repeat(3, 1fr);
+}
+
+@media (max-width: 920px) {
+  .student-orders-mobile { display: grid; gap: 10px; }
+  .student-orders-mobile__empty { padding: 20px 10px; border: 1px dashed #dbe4ee; border-radius: 8px; color: #909399; font-size: 12px; text-align: center; }
+  .student-order-card { display: grid; gap: 10px; padding: 12px; border: 1px solid #dfe7f0; border-radius: 10px; background: #f9fbfd; }
+  .student-order-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .student-order-card__title { display: grid; gap: 2px; min-width: 0; }
+  .student-order-card__title strong { color: #1f2a44; font-size: 13px; line-height: 1.3; overflow-wrap: anywhere; }
+  .student-order-card__title span { color: #8795a5; font-size: 11px; }
+  .student-order-card__tags { display: flex; flex: 0 0 auto; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .student-order-card__courses { margin: 0; color: #52647c; font-size: 12px; line-height: 1.45; }
+  .student-order-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .student-order-metrics span { display: block; margin-bottom: 2px; color: #8795a5; font-size: 10px; }
+  .student-order-metrics strong { color: #1f2a44; font-size: 12px; }
+  .student-order-timeline { border-top: 1px solid #e5edf4; padding-top: 8px; }
+  .student-order-timeline > summary { color: #2563eb; font-size: 11px; font-weight: 600; cursor: pointer; }
+  .student-order-timeline__list { display: grid; gap: 6px; margin-top: 8px; }
+  .student-order-timeline__record { display: grid; gap: 3px; padding: 8px; border: 1px solid #e5edf4; border-radius: 8px; background: #fff; }
+  .student-order-timeline__top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .student-order-timeline__top strong { color: #1f2a44; font-size: 12px; }
+  .student-order-timeline__top span { color: #8795a5; font-size: 10px; }
+  .student-order-timeline__meta { color: #52647c; font-size: 11px; line-height: 1.4; }
+  .student-order-timeline__remark { color: #8795a5; font-size: 11px; line-height: 1.4; }
+  .student-order-timeline__empty { margin: 0; color: #909399; font-size: 11px; }
+  .student-order-card__actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 8px; border-top: 1px solid #e5edf4; }
+  .student-order-card__actions :deep(.el-button) { flex: 1 1 92px; min-height: 34px; margin: 0; padding: 0 8px; font-size: 11px; }
 }
 
 @media (max-width: 640px) {

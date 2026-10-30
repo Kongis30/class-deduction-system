@@ -480,6 +480,35 @@ test.describe('mobile responsive workspace', () => {
     }
   });
 
+  test('student detail uses readable registration cards on mobile', async ({ page }, testInfo) => {
+    await page.goto('/admin/config/people?tab=students');
+    await page.locator('details.student-product > summary').first().click();
+    await page.locator('details.student-project > summary').first().click();
+    await page.locator('details.student-group > summary').first().click();
+    await page.locator('.el-table__body-wrapper tbody tr').first().click();
+
+    const drawer = page.locator('.student-detail-drawer:visible');
+    await expect(drawer).toBeVisible();
+    const cards = drawer.locator('.student-order-card');
+    await expect(cards.first()).toBeVisible();
+    await expect(drawer.locator('.el-table')).toHaveCount(0);
+    expect(await cards.first().evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'order cards should not overflow').toBe(true);
+    await expect(cards.first().locator('.student-order-card__actions').getByRole('button', { name: 'View receipt' })).toBeVisible();
+
+    const timeline = cards.first().locator('.student-order-timeline');
+    if (await timeline.count()) {
+      await timeline.locator('summary').click();
+      await expect(timeline.locator('.student-order-timeline__record').first()).toBeVisible();
+    }
+    await page.screenshot({ path: testInfo.outputPath('student-detail-registration-cards.png') });
+
+    // Desktop keeps the original table inside the same drawer.
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.waitForTimeout(300);
+    await expect(drawer.locator('.el-table')).toBeVisible();
+    await expect(drawer.locator('.student-order-card')).toHaveCount(0);
+  });
+
   test('student add action shares the mobile search row', async ({ page }, testInfo) => {
     await page.goto('/admin/config/people?tab=students');
     const add = page.locator('.student-add-trigger');
