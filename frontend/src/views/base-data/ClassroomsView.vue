@@ -168,7 +168,7 @@
     <!-- Classroom dialog -->
     <el-dialog
       v-model="classroomDialogVisible"
-      width="540px"
+      :width="appStore.isMobileViewport ? 'calc(100vw - 24px)' : '540px'"
       :close-on-click-modal="false"
       class="classroom-dialog"
     >
@@ -517,20 +517,21 @@ loadData();
   gap: 8px;
 }
 
-/* Classroom dialog */
-.classroom-dialog :deep(.el-dialog__body) {
+/* Classroom dialog — el-dialog 内容被 teleport 到 body，scoped 作用域 ID 不会挂在
+   .el-dialog 根节点上，因此这里统一用 :global() 才能命中弹窗内的样式。 */
+:global(.classroom-dialog .el-dialog__body) {
   max-height: 65vh;
   overflow-y: auto;
   padding: 16px 20px;
 }
 
-.classroom-dialog :deep(.el-dialog__header) {
+:global(.classroom-dialog .el-dialog__header) {
   border-bottom: 1px solid #ebeef5;
   padding: 14px 20px;
   margin-right: 0;
 }
 
-.classroom-dialog :deep(.el-dialog__footer) {
+:global(.classroom-dialog .el-dialog__footer) {
   border-top: 1px solid #ebeef5;
   padding: 12px 20px;
 }
@@ -570,8 +571,35 @@ loadData();
   .mobile-classroom-table :deep(.el-table__header-wrapper .el-table-fixed-column--right) { background: #f5f7fa; }
   .table-footer { align-items: stretch; flex-direction: column; gap: 8px; }
   .table-footer :deep(.el-pagination) { width: 100%; min-width: 0; }
-  .classroom-dialog :deep(.el-dialog__header),
-  .classroom-dialog :deep(.el-dialog__body),
-  .classroom-dialog :deep(.el-dialog__footer) { padding-right: 14px; padding-left: 14px; }
+  :global(.classroom-dialog .el-dialog__header),
+  :global(.classroom-dialog .el-dialog__body),
+  :global(.classroom-dialog .el-dialog__footer) { padding-right: 14px; padding-left: 14px; }
+  :global(.classroom-dialog .el-dialog__header) { padding-top: 12px; padding-bottom: 12px; }
+  :global(.classroom-dialog .el-dialog__header h3) { font-size: 16px; }
+  :global(.classroom-dialog .el-dialog__body) { padding-top: 14px; padding-bottom: 6px; }
+  :global(.classroom-dialog .el-form) { display: flex; flex-direction: column; gap: 14px; }
+  :global(.classroom-dialog .el-form-item) {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    flex: 0 0 auto !important;
+    margin: 0;
+  }
+  :global(.classroom-dialog .el-form-item__label) {
+    height: auto;
+    margin: 0 0 5px;
+    padding: 0;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: #5e6e82;
+  }
+  :global(.classroom-dialog .el-form-item__content) { width: 100%; min-width: 0; }
+  :global(.classroom-dialog .el-form-item__content .el-input),
+  :global(.classroom-dialog .el-form-item__content .el-select),
+  :global(.classroom-dialog .el-form-item__content .el-input-number) { width: 100% !important; min-width: 0; }
+  :global(.classroom-dialog .dialog-footer) { width: 100%; gap: 10px; }
+  :global(.classroom-dialog .dialog-footer .el-button) { flex: 1 1 0; }
 }
 </style>
