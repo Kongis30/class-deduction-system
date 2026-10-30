@@ -474,7 +474,6 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     public EnrollmentOrderDetailVO getOrder(Long id) {
         EnrollmentOrderEntity order = requireOrder(id);
         StudentEntity student = requireStudent(order.getStudentId());
-        var birthdayBefore = StudentBirthdayChange.snapshot(student);
         List<EnrollmentOrderItemEntity> orderItems = listOrderItemsByOrderId(id);
         Set<Long> itemClassIds = orderItems.stream()
                 .map(EnrollmentOrderItemEntity::getClassId)
@@ -1452,6 +1451,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             GroupClassEntitlementRules.lockStudents(studentMapper, studentIds);
         }
         StudentEntity student = requireStudent(order.getStudentId());
+        var birthdayBefore = StudentBirthdayChange.snapshot(student);
         boolean studentChanged = StringUtils.hasText(request.getStudentName())
                 || request.getGrade() != null || request.getStudentClass() != null
                 || request.getSchool() != null || request.getGuardianPhone() != null
