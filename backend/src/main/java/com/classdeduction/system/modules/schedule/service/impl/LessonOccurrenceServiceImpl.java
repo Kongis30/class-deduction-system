@@ -855,6 +855,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .flatMap(List::stream)
                 .map(LessonOccurrenceEntity::getId)
                 .collect(Collectors.toSet());
+        // 一次读取所有课位（含历史课位），供老师分组和每条课包时间线复用。
+        Map<Long, RecurringScheduleSlotEntity> recurringSlots = loadRecurringSlotMap(
+                allocationOccurrenceMap.values().stream().flatMap(List::stream).toList());
         Map<Long, List<RecurringSlotSubjectHistoryVO>> subjectHistoryBySlot =
                 loadRecurringSlotSubjectHistory(allocationOccurrenceMap.values().stream()
                         .flatMap(List::stream).toList());
@@ -893,7 +896,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         LinkedHashMap<Long, LinkedHashMap<Long, List<CoursePackageEntity>>> grouped = new LinkedHashMap<>();
         for (CoursePackageEntity coursePackage : packages) {
             for (Long groupTeacherId : resolveOneOnOneGroupTeacherIds(
-                    coursePackage, occurrenceMap, teacherId, hoursContext)) {
+                    coursePackage, occurrenceMap, teacherId, hoursContext, recurringSlots)) {
                 grouped.computeIfAbsent(groupTeacherId, key -> new LinkedHashMap<>())
                         .computeIfAbsent(coursePackage.getStudentId(), key -> new ArrayList<>())
                         .add(coursePackage);
@@ -906,7 +909,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                         studentMap, teacherMap, classroomMap, courseProductMap, orderItemMap,
                         occurrenceMap, recordIndex, hoursContext, statusNameMap,
                         groupMembersForView, resolvedPackages, scheduleChangesByPackage,
-                        subjectHistoryBySlot))
+                        subjectHistoryBySlot, recurringSlots))
                 .toList();
     }
 
@@ -1991,7 +1994,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     private Set<Long> resolveOneOnOneGroupTeacherIds(CoursePackageEntity coursePackage,
                                                      Map<Long, List<LessonOccurrenceEntity>> occurrenceMap,
                                                      Long requestedTeacherId,
-                                                     PackageHoursContext hoursContext) {
+                                                     PackageHoursContext hoursContext,
+                                                     Map<Long, RecurringScheduleSlotEntity> recurringSlots) {
         List<LessonOccurrenceEntity> occurrences = occurrenceMap.getOrDefault(
                 coursePackage.getId(), Collections.emptyList());
         if (requestedTeacherId != null) {
@@ -2000,7 +2004,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             boolean hasCurrentAllocation = hoursContext.allocatedByTeacherByPackage()
                     .getOrDefault(coursePackage.getId(), Collections.emptyMap()).containsKey(requestedTeacherId);
             boolean hasCurrentOneOffAssignment = !currentOwners.isEmpty()
-                    && hasCurrentOneOffAssignment(requestedTeacherId, occurrences, currentOwners);
+                    && hasCurrentOneOffAssignment(requestedTeacherId, occurrences, currentOwners, recurringSlots);
             boolean hasPendingLesson = hoursContext.unconfirmedScheduledByTeacherByPackage()
                     .getOrDefault(coursePackage.getId(), Collections.emptyMap()).containsKey(requestedTeacherId);
             if (!currentOwners.isEmpty() && !hasCurrentAllocation
@@ -2026,8 +2030,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     /** 临时代课仍显示在实际授课老师入口，但排课周期已交接后不再把旧老师留作当前入口。 */
     private boolean hasCurrentOneOffAssignment(Long teacherId,
                                                List<LessonOccurrenceEntity> occurrences,
-                                               Map<Long, Long> currentTeacherByLineage) {
-        Map<Long, RecurringScheduleSlotEntity> slots = loadRecurringSlotMap(occurrences);
+                                               Map<Long, Long> currentTeacherByLineage,
+                                               Map<Long, RecurringScheduleSlotEntity> slots) {
         return occurrences.stream()
                 .filter(item -> "ADJUSTED".equals(item.getPlanningStatus())
                         && Objects.equals(item.getPlannedTeacherId(), teacherId))
@@ -2057,13 +2061,14 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                   Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersByPackage,
                                                   List<CoursePackageEntity> allPackages,
                                                   Map<Long, List<OneOnOneScheduleChangeVO>> scheduleChangesByPackage,
-                                                  Map<Long, List<RecurringSlotSubjectHistoryVO>> subjectHistoryBySlot) {
+                                                  Map<Long, List<RecurringSlotSubjectHistoryVO>> subjectHistoryBySlot,
+                                                  Map<Long, RecurringScheduleSlotEntity> recurringSlots) {
         List<OneOnOneStudentVO> students = studentPackages.entrySet().stream()
                 .map(entry -> toOneOnOneStudentVO(entry.getKey(), entry.getValue(), studentMap, teacherMap,
                         classroomMap, courseProductMap, orderItemMap, occurrenceMap, recordIndex,
                         hoursContext, statusNameMap,
                         groupMembersByPackage, allPackages, scheduleChangesByPackage,
-                        subjectHistoryBySlot, teacherId))
+                        subjectHistoryBySlot, recurringSlots, teacherId))
                 .toList();
         TeacherEntity teacher = teacherId == null ? null : teacherMap.get(teacherId);
         int packageCount = studentPackages.values().stream().mapToInt(List::size).sum();
@@ -2099,13 +2104,14 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                   List<CoursePackageEntity> allPackages,
                                                   Map<Long, List<OneOnOneScheduleChangeVO>> scheduleChangesByPackage,
                                                   Map<Long, List<RecurringSlotSubjectHistoryVO>> subjectHistoryBySlot,
+                                                  Map<Long, RecurringScheduleSlotEntity> recurringSlots,
                                                   Long teacherId) {
         StudentEntity student = studentMap.get(studentId);
         List<OneOnOnePackageVO> packageVOs = packages.stream()
                 .map(item -> toOneOnOnePackageVO(item, teacherMap, classroomMap, courseProductMap,
                         orderItemMap, occurrenceMap, recordIndex, hoursContext, statusNameMap,
                         groupMembersByPackage, allPackages,
-                        studentMap, teacherId, scheduleChangesByPackage, subjectHistoryBySlot))
+                        studentMap, teacherId, scheduleChangesByPackage, subjectHistoryBySlot, recurringSlots))
                 .toList();
         UnitSummary units = summarizeUnits(packages);
         return OneOnOneStudentVO.builder()
@@ -2136,17 +2142,17 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                   Map<Long, StudentEntity> studentMap,
                                                   Long teacherId,
                                                   Map<Long, List<OneOnOneScheduleChangeVO>> scheduleChangesByPackage,
-                                                  Map<Long, List<RecurringSlotSubjectHistoryVO>> subjectHistoryBySlot) {
+                                                  Map<Long, List<RecurringSlotSubjectHistoryVO>> subjectHistoryBySlot,
+                                                  Map<Long, RecurringScheduleSlotEntity> recurringSlots) {
         // 当前老师按 slot lineage 接手整条课程时间线；课次自身快照仍决定展示老师与额度归属。
         List<LessonOccurrenceEntity> packageOccurrences = occurrenceMap.getOrDefault(
                 coursePackage.getId(), Collections.emptyList());
-        Map<Long, RecurringScheduleSlotEntity> allRecurringSlots = loadRecurringSlotMap(packageOccurrences);
         Map<Long, Long> currentTeacherByLineage = hoursContext.currentSlotTeacherByLineageByPackage()
                 .getOrDefault(coursePackage.getId(), Collections.emptyMap());
         List<LessonOccurrenceEntity> occurrences = packageOccurrences.stream()
                 .filter(item -> {
                     if (teacherId == null) return item.getPlannedTeacherId() == null;
-                    RecurringScheduleSlotEntity sourceSlot = allRecurringSlots.get(item.getScheduleSlotId());
+                    RecurringScheduleSlotEntity sourceSlot = recurringSlots.get(item.getScheduleSlotId());
                     Long lineageId = item.getHistoryOwnerLineageId() != null ? item.getHistoryOwnerLineageId()
                             : sourceSlot == null ? null
                             : sourceSlot.getSlotLineageId() == null ? sourceSlot.getId() : sourceSlot.getSlotLineageId();
@@ -2163,10 +2169,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 })
                 .toList();
         Map<Long, LessonRecordEntity> packageRecords = recordIndex.forPackage(coursePackage.getId(), occurrences);
-        Map<Long, RecurringScheduleSlotEntity> recurringSlotMap = loadRecurringSlotMap(occurrences);
         List<OneOnOneLessonVO> lessons = occurrences.stream()
                 .map(item -> toOneOnOneLessonVO(item, packageRecords.get(item.getId()), teacherMap, classroomMap,
-                        recurringSlotMap, subjectHistoryBySlot, statusNameMap))
+                        recurringSlots, subjectHistoryBySlot, statusNameMap))
                 .toList();
         EnrollmentOrderItemEntity orderItem = orderItemMap.get(coursePackage.getEnrollmentOrderItemId());
         int totalUnitsRaw = safeUnits(coursePackage.getTotalUnits());
@@ -2415,9 +2420,13 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             return Collections.emptyMap();
         }
         try {
-            return recurringScheduleSlotMapper.selectIncludingDeletedByIds(slotIds)
-                    .stream()
-                    .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, Function.identity()));
+            Map<Long, RecurringScheduleSlotEntity> slots = new HashMap<>();
+            for (int start = 0; start < slotIds.size(); start += 500) {
+                List<Long> batch = slotIds.subList(start, Math.min(start + 500, slotIds.size()));
+                recurringScheduleSlotMapper.selectIncludingDeletedByIds(batch)
+                        .forEach(slot -> slots.put(slot.getId(), slot));
+            }
+            return slots;
         } catch (RuntimeException ex) {
             log.warn("Unable to load recurring schedule slot metadata for one-on-one deductions; "
                     + "returning lessons without slot lesson names.", ex);
