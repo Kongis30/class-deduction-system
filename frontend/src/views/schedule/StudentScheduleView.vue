@@ -1,11 +1,6 @@
 <template>
   <div class="page-stack">
     <section class="student-calendar">
-      <div class="student-calendar__header">
-        <span class="student-calendar__title">{{ isStudent ? 'My Schedule' : 'Student Schedule' }}</span>
-        <el-button v-if="canViewDailyPrivateLessons" type="primary" plain @click="openDailyPrivateLessons">Daily 1-on-1</el-button>
-      </div>
-
       <div class="student-calendar__body">
         <!-- Left: Student list (hidden for student users) -->
         <aside v-if="!isStudent" class="student-list-panel">
@@ -441,7 +436,7 @@ import type { CoursePackageItem, EntityId, LessonOccurrenceItem } from '@/types/
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
 import { useAuthStore } from '@/stores/auth';
-import { isStudentUser, isAdminOrStaffUser, isManagerUser } from '@/types/auth';
+import { isStudentUser } from '@/types/auth';
 import { findScheduleConflictGroups } from '@/utils/schedule-conflicts';
 import { useAppStore } from '@/stores/app';
 
@@ -462,6 +457,8 @@ function openDailyPrivateLessons() {
   dailyVisible.value = true;
   void loadDailyPrivateLessons();
 }
+
+defineExpose({ openDailyPrivateLessons });
 
 function stepDailyDate(days: number) {
   dailyDate.value = dayjs(dailyDate.value).add(days, 'day').format('YYYY-MM-DD');
@@ -920,20 +917,6 @@ onMounted(async () => {
   gap: 14px;
   height: calc(100vh - 120px);
   min-height: 600px;
-}
-
-.student-calendar__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-shrink: 0;
-}
-
-.student-calendar__title {
-  font-size: 15px;
-  font-weight: 600;
-  color: #1a1a1a;
 }
 
 .student-calendar__body {

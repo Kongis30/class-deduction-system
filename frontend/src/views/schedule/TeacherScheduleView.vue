@@ -1,10 +1,6 @@
 <template>
   <div class="page-stack">
     <section class="teacher-calendar">
-      <div class="teacher-calendar__header">
-        <span class="teacher-calendar__title">{{ isTeacher ? 'My Calendar' : 'Teacher Calendar' }}</span>
-      </div>
-
       <div class="teacher-calendar__body">
         <!-- Left: Teacher list -->
         <aside v-if="!isTeacher" class="teacher-list-panel">
@@ -642,20 +638,6 @@ onMounted(async () => {
   gap: 14px;
   height: calc(100vh - 120px);
   min-height: 600px;
-}
-
-.teacher-calendar__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-shrink: 0;
-}
-
-.teacher-calendar__title {
-  font-size: 15px;
-  font-weight: 600;
-  color: #1a1a1a;
 }
 
 .teacher-calendar__body {

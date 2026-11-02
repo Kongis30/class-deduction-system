@@ -8,29 +8,37 @@
       </div>
     </section>
 
-    <el-tabs v-if="canViewAllCalendars" v-model="activeTab" class="calendar-tabs">
-      <el-tab-pane name="teacher">
-        <template #label>
-          <span class="calendar-tab-label calendar-tab-label--desktop">Teacher Calendar</span>
-          <span class="calendar-tab-label calendar-tab-label--mobile">Teachers</span>
-        </template>
-        <TeacherScheduleView />
-      </el-tab-pane>
-      <el-tab-pane name="student">
-        <template #label>
-          <span class="calendar-tab-label calendar-tab-label--desktop">Student Calendar</span>
-          <span class="calendar-tab-label calendar-tab-label--mobile">Students</span>
-        </template>
-        <StudentScheduleView />
-      </el-tab-pane>
-      <el-tab-pane name="room">
-        <template #label>
-          <span class="calendar-tab-label calendar-tab-label--desktop">Room Calendar</span>
-          <span class="calendar-tab-label calendar-tab-label--mobile">Rooms</span>
-        </template>
-        <ClassroomOccupancyView />
-      </el-tab-pane>
-    </el-tabs>
+    <div v-if="canViewAllCalendars" class="calendar-tabs-toolbar">
+      <el-tabs v-model="activeTab" class="calendar-tabs">
+        <el-tab-pane name="teacher">
+          <template #label>
+            <span class="calendar-tab-label calendar-tab-label--desktop">Teacher Calendar</span>
+            <span class="calendar-tab-label calendar-tab-label--mobile">Teachers</span>
+          </template>
+          <TeacherScheduleView />
+        </el-tab-pane>
+        <el-tab-pane name="student">
+          <template #label>
+            <span class="calendar-tab-label calendar-tab-label--desktop">Student Calendar</span>
+            <span class="calendar-tab-label calendar-tab-label--mobile">Students</span>
+          </template>
+          <StudentScheduleView ref="studentCalendarRef" />
+        </el-tab-pane>
+        <el-tab-pane name="room">
+          <template #label>
+            <span class="calendar-tab-label calendar-tab-label--desktop">Room Calendar</span>
+            <span class="calendar-tab-label calendar-tab-label--mobile">Rooms</span>
+          </template>
+          <ClassroomOccupancyView />
+        </el-tab-pane>
+      </el-tabs>
+      <div
+        v-if="activeTab === 'student'"
+        class="calendar-tabs-toolbar__action"
+      >
+        <el-button type="primary" plain @click="studentCalendarRef?.openDailyPrivateLessons()">Daily 1-on-1</el-button>
+      </div>
+    </div>
 
     <TeacherScheduleView v-else-if="workspace === 'TEACHER'" />
     <StudentScheduleView v-else-if="workspace === 'STUDENT'" />
@@ -51,6 +59,7 @@ import TeacherScheduleView from './TeacherScheduleView.vue';
 const authStore = useAuthStore();
 const route = useRoute();
 const activeTab = ref('teacher');
+const studentCalendarRef = ref<{ openDailyPrivateLessons: () => void }>();
 
 const workspace = computed(() => getUserWorkspace(authStore.currentUser));
 const canViewAllCalendars = computed(() => workspace.value === 'STAFF');
@@ -97,6 +106,18 @@ const description = computed(() => {
   min-height: max(calc(100vh - 92px), 860px);
   overflow: auto;
 }
+
+.calendar-tabs-toolbar { position: relative; min-width: 0; }
+.calendar-tabs-toolbar__action {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 2;
+  display: flex;
+  height: 40px;
+  align-items: center;
+}
+.calendar-tabs-toolbar :deep(.el-tabs__header) { padding-right: 128px; }
 
 .calendar-hero {
   display: flex;
@@ -165,9 +186,10 @@ const description = computed(() => {
   .calendar-home { min-height: 0; height: auto; overflow: visible; gap: 4px; }
   .calendar-hero { display: none; }
   .calendar-tabs { min-height: 0; padding: 0; border-radius: 0; background: transparent; box-shadow: none; }
+  .calendar-tabs-toolbar__action { top: 4px; right: 4px; height: 44px; }
   .calendar-tabs :deep(.el-tabs__header) {
     margin: 0 0 8px;
-    padding: 4px;
+    padding: 4px 120px 4px 4px;
     border-radius: 12px;
     background: #eaf0f6;
   }
