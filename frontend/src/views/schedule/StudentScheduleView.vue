@@ -319,7 +319,7 @@
       </div>
     </section>
 
-    <el-dialog v-model="dailyVisible" title="Daily 1-on-1 lessons" width="900px" :fullscreen="appStore.isMobileViewport" destroy-on-close>
+    <el-dialog v-model="dailyVisible" title="Daily 1-on-1 lessons" width="900px" :fullscreen="appStore.isMobileViewport" class="daily-lessons-dialog" destroy-on-close>
       <div class="daily-lessons__controls">
         <el-button :icon="ArrowLeft" aria-label="Previous day" @click="stepDailyDate(-1)" />
         <el-date-picker v-model="dailyDate" type="date" value-format="YYYY-MM-DD" :clearable="false" @change="loadDailyPrivateLessons" />
@@ -330,7 +330,7 @@
       <el-alert v-if="dailyError" type="error" :closable="false" title="Could not load lessons. Please try again.">
         <el-button text type="primary" @click="loadDailyPrivateLessons">Retry</el-button>
       </el-alert>
-      <el-table v-else v-loading="dailyLoading" :data="dailyLessons" max-height="55vh" empty-text="No 1-on-1 lessons on this date.">
+      <el-table v-else v-loading="dailyLoading" :data="dailyLessons" empty-text="No 1-on-1 lessons on this date.">
         <el-table-column label="Time (ET)" min-width="135">
           <template #default="{ row }">{{ dayjs(row.plannedStartAt).format('h:mm A') }} – {{ dayjs(row.plannedEndAt).format('h:mm A') }}</template>
         </el-table-column>
@@ -474,7 +474,16 @@ async function loadDailyPrivateLessons() {
   try {
     const response = await fetchDailyPrivateLessons(dailyDate.value);
     if (requestId !== dailyRequestId) return;
-    dailyLessons.value = response.data.data.lessons;
+    const nameOrder = new Intl.Collator('en', { sensitivity: 'base' });
+    dailyLessons.value = response.data.data.lessons
+      .map((lesson) => ({
+        ...lesson,
+        participantNames: [...lesson.participantNames].sort(nameOrder.compare),
+      }))
+      .sort((left, right) => {
+        const byStudent = nameOrder.compare(left.participantNames[0] ?? '', right.participantNames[0] ?? '');
+        return byStudent || left.plannedStartAt.localeCompare(right.plannedStartAt);
+      });
     dailyStudentCount.value = response.data.data.studentCount;
   } catch {
     if (requestId === dailyRequestId) dailyError.value = true;
@@ -905,6 +914,17 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+:global(.daily-lessons-dialog) {
+  display: flex;
+  flex-direction: column;
+  height: min(760px, 78vh);
+  max-height: 78vh;
+}
+:global(.daily-lessons-dialog .el-dialog__body) {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
 .daily-lessons__controls { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; color: #475569; font-size: 14px; }
 .daily-lessons__note { margin: 10px 0; color: #718096; font-size: 12px; }
 .student-calendar {
