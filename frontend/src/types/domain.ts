@@ -961,6 +961,8 @@ export interface TeacherPayRateItem {
 
 export interface UnpaidLessonItem {
   lessonRecordId: EntityId;
+  teacherId?: EntityId;
+  teacherName?: string;
   lessonStartAt: string | null;
   lessonEndAt: string | null;
   studentId: EntityId;
@@ -1013,4 +1015,6 @@ export interface TeacherPaymentItemDetail {
   amount: number;
   occurrenceType?: string;
   className?: string;
+  studentId?: EntityId;
+  studentName?: string;
 }

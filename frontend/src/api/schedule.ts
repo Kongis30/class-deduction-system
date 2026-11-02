@@ -35,6 +35,8 @@ export interface TeacherCalendarCategoryItem {
   teacherId: EntityId;
   categoryKey: string;
   categoryName: string;
+  productId?: EntityId;
+  productName?: string | null;
 }
 
 export function fetchTeacherCalendarCategories() {

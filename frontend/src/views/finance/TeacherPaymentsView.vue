@@ -4,102 +4,91 @@
       <div>
         <span class="table-page-header__eyebrow">Finance</span>
         <h2>Teacher payroll</h2>
-        <p class="tp-page-description">Select a teacher, review confirmed unpaid lessons, then create and confirm the payment.</p>
+        <p class="tp-page-description">Choose a period once to review confirmed unpaid lessons across all teachers.</p>
+      </div>
+    </section>
+
+    <section class="tp-section tp-section--filters">
+      <div class="tp-filters">
+        <div class="tp-filters__group">
+          <label class="tp-filters__label">Period</label>
+          <el-date-picker
+            v-model="dateRange"
+            type="daterange"
+            range-separator="–"
+            start-placeholder="Start"
+            end-placeholder="End"
+            value-format="YYYY-MM-DD"
+            class="tp-period-picker"
+            style="width: 260px;"
+          />
+        </div>
+        <div class="tp-filters__actions">
+          <el-button type="primary" :loading="unpaidLoading" @click="loadUnpaidLessons">
+            Load Unpaid Lessons
+          </el-button>
+        </div>
       </div>
     </section>
 
     <div class="tp-page">
-      <aside class="tp-sidebar" :class="{ 'tp-sidebar--mobile-hidden': appStore.isMobileViewport && selectedTeacherId }">
-      <div v-if="appStore.isMobileViewport" class="tp-mobile-list-header">
-        <div>
-          <strong>Teacher list</strong>
-          <span v-if="teachersLoading">Loading teachers…</span>
-          <span v-else>{{ filteredTeachers.length }} teachers</span>
-        </div>
-        <button
-          type="button"
-          class="mobile-search-trigger"
-          :aria-expanded="mobileSearchExpanded"
-          aria-label="Search teachers"
-          @click="mobileSearchExpanded = !mobileSearchExpanded"
-        >
-          <el-icon><Search /></el-icon>
-        </button>
-      </div>
-      <section v-show="!appStore.isMobileViewport || mobileSearchExpanded" :class="{ 'mobile-search-panel': appStore.isMobileViewport }">
-        <div v-if="appStore.isMobileViewport" class="mobile-search-panel__header">
-          <span>Find a teacher</span>
-          <button type="button" aria-label="Close search" @click="mobileSearchExpanded = false">
-            <el-icon><Close /></el-icon>
+      <aside class="tp-sidebar" :class="{ 'tp-sidebar--mobile-hidden': appStore.isMobileViewport && !mobileTeacherListVisible }">
+        <div class="tp-mobile-list-header">
+          <div>
+            <strong>Teachers by product</strong>
+            <span v-if="teachersLoading">Loading…</span>
+            <span v-else>{{ allTeachers.length }} teachers</span>
+          </div>
+          <button
+            type="button"
+            class="mobile-search-trigger"
+            :aria-expanded="mobileSearchExpanded"
+            aria-label="Search teachers"
+            @click="mobileSearchExpanded = !mobileSearchExpanded"
+          >
+            <el-icon><Search /></el-icon>
           </button>
         </div>
-        <div class="tp-sidebar__search">
-          <el-input v-model="teacherKeyword" placeholder="Search teacher..." clearable size="small" />
+        <div v-show="!appStore.isMobileViewport || mobileSearchExpanded" class="tp-sidebar__search">
+          <el-input v-model="teacherKeyword" placeholder="Search teachers or products…" clearable size="small" />
         </div>
-      </section>
-      <div class="tp-sidebar__list" v-loading="teachersLoading">
-        <div
-          v-for="t in filteredTeachers"
-          :key="t.id"
-          class="tp-sidebar__item"
-          :class="{ 'tp-sidebar__item--active': selectedTeacherId === t.id }"
-          @click="selectTeacher(t.id)"
-        >
-          <div class="tp-sidebar__name">{{ t.teacherName }}</div>
-          <div class="tp-sidebar__meta">{{ t.teacherNo }}</div>
-        </div>
-        <div v-if="!teachersLoading && filteredTeachers.length === 0" class="tp-sidebar__empty">
-          No teachers found.
-        </div>
-      </div>
+        <nav class="tp-sidebar__list" v-loading="teachersLoading">
+          <section v-for="group in filteredTeacherProductGroups" :key="group.key" class="tp-sidebar__group">
+            <button type="button" class="tp-sidebar__group-toggle" :aria-expanded="isGroupOpen(group.key)" @click="toggleGroup(group.key)">
+              <span>{{ group.productName }}</span>
+              <span class="tp-sidebar__chevron" :class="{ 'tp-sidebar__chevron--open': isGroupOpen(group.key) }" aria-hidden="true">›</span>
+            </button>
+            <div v-show="isGroupOpen(group.key)">
+            <button
+              v-for="teacher in group.teachers"
+              :key="`${group.key}-${teacher.id}`"
+              type="button"
+              class="tp-sidebar__item"
+              :class="{ 'tp-sidebar__item--active': isTeacherSelected(teacher.id) }"
+              @click="selectTeacher(teacher.id)"
+            >
+              <span class="tp-sidebar__name">{{ teacher.teacherName }}</span>
+            </button>
+            </div>
+          </section>
+          <div v-if="!teachersLoading && filteredTeacherProductGroups.length === 0" class="tp-sidebar__empty">
+            No teachers found.
+          </div>
+        </nav>
       </aside>
 
-
-      <main class="tp-content" :class="{ 'tp-content--mobile-hidden': appStore.isMobileViewport && !selectedTeacherId }">
-      <div v-if="appStore.isMobileViewport && selectedTeacher" class="tp-mobile-selection">
-        <el-button text @click="selectedTeacherId = null">← Teacher list</el-button>
-        <strong>{{ selectedTeacher.teacherName }}</strong>
-        <small>{{ selectedTeacher.teacherNo }}</small>
-      </div>
-      <div v-if="!selectedTeacherId" class="tp-content__placeholder">
-        Select a teacher from the left panel to view their payment records.
-      </div>
-
-      <template v-else-if="selectedTeacher">
+      <main v-loading="teacherSwitchLoading" class="tp-content" :class="{ 'tp-content--mobile-hidden': appStore.isMobileViewport && mobileTeacherListVisible }">
+        <div v-if="appStore.isMobileViewport && !mobileTeacherListVisible" class="tp-mobile-selection">
+          <el-button text @click="mobileTeacherListVisible = true">← Teacher list</el-button>
+          <strong>{{ selectedTeacher?.teacherName || 'All teachers' }}</strong>
+          <small v-if="selectedTeacher">{{ selectedTeacher.teacherNo }}</small>
+        </div>
         <div class="tp-content__header">
           <div class="tp-content__title">
-            <strong>{{ selectedTeacher.teacherName }}</strong>
-            <span class="tp-content__no">{{ selectedTeacher.teacherNo }}</span>
+            <strong>{{ selectedTeacher?.teacherName || 'All teachers' }}</strong>
+            <span v-if="selectedTeacher" class="tp-content__no">{{ selectedTeacher.teacherNo }}</span>
           </div>
         </div>
-
-        <!-- ─── 1. Period filter ─────────────────────── -->
-        <section class="tp-section tp-section--filters">
-          <div class="tp-filters">
-            <div class="tp-filters__group">
-              <label class="tp-filters__label">Period</label>
-              <el-date-picker
-                v-model="dateRange"
-                type="daterange"
-                range-separator="–"
-                start-placeholder="Start"
-                end-placeholder="End"
-                value-format="YYYY-MM-DD"
-                class="tp-period-picker"
-                style="width: 260px;"
-              />
-            </div>
-            <div class="tp-filters__actions">
-              <el-button
-                type="primary"
-                :loading="unpaidLoading"
-                @click="loadUnpaidLessons"
-              >
-                Load Unpaid Lessons
-              </el-button>
-            </div>
-          </div>
-        </section>
 
         <el-alert
           v-if="missingRateCount > 0"
@@ -114,6 +103,15 @@
           <el-button text type="primary" @click="router.push('/admin/config/teacher-pay-rates')">
             Configure rates
           </el-button>
+        </el-alert>
+
+        <el-alert
+          v-if="searched && unpaidLessons.length > 0 && !selectedTeacherId"
+          type="info"
+          :closable="false"
+          class="tp-rate-alert"
+        >
+          All teachers’ lessons are loaded. Choose one teacher from the left list to select lessons and create that teacher’s payment.
         </el-alert>
 
         <!-- ─── 2. Unpaid 1:1 Lessons ────────────────── -->
@@ -138,6 +136,7 @@
             <el-table-column label="Date" min-width="200" class-name="tp-table__nowrap">
               <template #default="{ row }">{{ formatLessonSchedule(row) }}</template>
             </el-table-column>
+            <el-table-column v-if="!selectedTeacherId" label="Teacher" min-width="140" prop="teacherName" />
             <el-table-column label="Type" width="80" align="center" header-class-name="tp-table__nowrap">
               <template #default="{ row }">
                 <el-tag size="small" type="primary">1:1</el-tag>
@@ -168,7 +167,7 @@
                 <el-checkbox :model-value="isLessonSelected(row)" :disabled="!canSelectLesson(row)" :aria-label="`Select ${row.studentName}`" @change="toggleLessonSelection(row, Boolean($event))" />
                 <div class="tp-mobile-lesson-card__identity">
                   <strong>{{ row.participantNames?.length ? row.participantNames.join(' / ') : row.studentName }}</strong>
-                  <span>{{ formatLessonSchedule(row) }} · 1:1</span>
+                  <span>{{ formatLessonSchedule(row) }} · 1:1 · {{ row.teacherName }}</span>
                 </div>
               </div>
               <dl class="tp-mobile-lesson-card__details">
@@ -203,6 +202,7 @@
             <el-table-column label="Date" min-width="200" class-name="tp-table__nowrap">
               <template #default="{ row }">{{ formatLessonSchedule(row) }}</template>
             </el-table-column>
+            <el-table-column v-if="!selectedTeacherId" label="Teacher" min-width="140" prop="teacherName" />
             <el-table-column label="Type" width="80" align="center" header-class-name="tp-table__nowrap">
               <template #default="{ row }">
                 <el-tag size="small" type="warning">G</el-tag>
@@ -229,7 +229,7 @@
                 <el-checkbox :model-value="isLessonSelected(row)" :disabled="!canSelectLesson(row)" :aria-label="`Select ${row.className || row.productName}`" @change="toggleLessonSelection(row, Boolean($event))" />
                 <div class="tp-mobile-lesson-card__identity">
                   <strong>{{ row.className || row.productName || 'Group class' }}</strong>
-                  <span>{{ formatLessonSchedule(row) }} · Group</span>
+                  <span>{{ formatLessonSchedule(row) }} · Group · {{ row.teacherName }}</span>
                 </div>
               </div>
               <dl class="tp-mobile-lesson-card__details">
@@ -295,6 +295,7 @@
             class="tp-table"
           >
             <el-table-column label="Payment No" min-width="140" prop="paymentNo" />
+            <el-table-column v-if="!selectedTeacherId" label="Teacher" min-width="140" prop="teacherName" />
             <el-table-column label="Period" min-width="155">
               <template #default="{ row }">
                 {{ row.periodStart }} – {{ row.periodEnd }}
@@ -316,9 +317,9 @@
                 {{ row.paidAt ? formatDateTime(row.paidAt) : '—' }}
               </template>
             </el-table-column>
-            <el-table-column label="Actions" width="130" fixed="right">
+            <el-table-column label="Actions" width="155" fixed="right">
               <template #default="{ row }">
-                <el-button text type="primary" size="small" @click="viewDetail(row)">Detail</el-button>
+                <el-button text type="primary" @click="viewDetail(row)">Detail</el-button>
                 <el-button
                   v-if="row.status === 'PENDING'"
                   text
@@ -334,7 +335,7 @@
           <div class="tp-mobile-history-list">
             <article v-for="row in historyData" :key="`mobile-history-${row.id}`" class="tp-mobile-history-card">
               <div class="tp-mobile-history-card__header">
-                <div><strong>{{ row.paymentNo }}</strong><span>{{ row.periodStart }} – {{ row.periodEnd }}</span></div>
+                <div><strong>{{ row.paymentNo }}</strong><span>{{ row.teacherName }} · {{ row.periodStart }} – {{ row.periodEnd }}</span></div>
                 <el-tag :type="row.status === 'PAID' ? 'success' : 'warning'" size="small">{{ row.status }}</el-tag>
               </div>
               <div class="tp-mobile-history-card__summary">
@@ -342,7 +343,7 @@
                 <strong>${{ row.totalAmount?.toFixed(2) }}</strong>
               </div>
               <div class="tp-mobile-history-card__actions">
-                <el-button text type="primary" size="small" @click="viewDetail(row)">Detail</el-button>
+                <el-button text type="primary" class="tp-history-detail-button" @click="viewDetail(row)">Detail</el-button>
                 <el-button v-if="row.status === 'PENDING'" text type="success" size="small" @click="handleConfirm(row)">Confirm</el-button>
               </div>
             </article>
@@ -363,7 +364,6 @@
         </section>
 
         <!-- ─── 7. Pending payment banner ────────────── -->
-      </template>
       </main>
     </div>
 
@@ -410,48 +410,59 @@
           </div>
         </div>
 
-        <el-table
-          v-if="!appStore.isMobileViewport && detailData.items?.length"
-          :data="detailData.items"
-          row-key="id"
-          class="tp-table"
-          style="margin-top: 14px;"
-        >
-          <el-table-column label="Type" width="60" align="center">
-            <template #default="{ row }">
-              <el-tag v-if="row.className" size="small" type="warning">G</el-tag>
-              <el-tag v-else size="small" type="primary">1</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="Package" min-width="130" prop="packageName" />
-          <el-table-column label="Product" min-width="110" prop="productName" />
-          <el-table-column label="Class" min-width="100" prop="className">
-            <template #default="{ row }">{{ row.className || '—' }}</template>
-          </el-table-column>
-          <el-table-column label="Hours" width="60" align="center" prop="hours" />
-          <el-table-column label="Rate" width="85" align="right">
-            <template #default="{ row }">${{ row.hourlyRate?.toFixed(2) }}</template>
-          </el-table-column>
-          <el-table-column label="Amount" width="95" align="right">
-            <template #default="{ row }">${{ row.amount?.toFixed(2) }}</template>
-          </el-table-column>
-        </el-table>
-        <div v-if="appStore.isMobileViewport && detailData.items?.length" class="tp-mobile-detail-list">
-          <article v-for="item in detailData.items" :key="item.id" class="tp-mobile-detail-card">
-            <header>
-              <el-tag v-if="item.className" size="small" type="warning">Group</el-tag>
-              <el-tag v-else size="small" type="primary">1:1</el-tag>
-              <strong>{{ item.packageName || item.productName }}</strong>
+        <div v-if="detailData.items?.length" class="tp-detail-list-scroll">
+          <section
+            v-for="studentGroup in detailStudentGroups"
+            :key="studentGroup.key"
+            class="tp-detail-student-group"
+          >
+            <header class="tp-detail-student-group__header">
+              <strong>{{ studentGroup.studentName }}</strong>
+              <span>{{ studentGroup.items.length }} lesson(s) · {{ studentGroup.totalHours }}h · ${{ studentGroup.totalAmount.toFixed(2) }}</span>
             </header>
-            <span v-if="item.className || item.productName" class="tp-mobile-detail-card__context">
-              {{ item.productName }}<template v-if="item.className"> · {{ item.className }}</template>
-            </span>
-            <div class="tp-mobile-lesson-card__metrics">
-              <div><small>Hours</small><strong>{{ item.hours }}</strong></div>
-              <div><small>Rate</small><strong>${{ item.hourlyRate?.toFixed(2) }}</strong></div>
-              <div><small>Amount</small><strong>${{ item.amount?.toFixed(2) }}</strong></div>
+            <el-table
+              v-if="!appStore.isMobileViewport"
+              :data="studentGroup.items"
+              row-key="id"
+              class="tp-table tp-detail-table"
+            >
+              <el-table-column label="Type" width="72" align="center" header-class-name="tp-table__nowrap">
+                <template #default="{ row }">
+                  <el-tag v-if="row.className" size="small" type="warning">G</el-tag>
+                  <el-tag v-else size="small" type="primary">1</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="Package" width="145" prop="packageName" header-class-name="tp-table__nowrap" />
+              <el-table-column label="Product" width="120" prop="productName" header-class-name="tp-table__nowrap" />
+              <el-table-column label="Class" width="105" prop="className" header-class-name="tp-table__nowrap">
+                <template #default="{ row }">{{ row.className || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="Hours" width="75" align="center" prop="hours" header-class-name="tp-table__nowrap" />
+              <el-table-column label="Rate" width="95" align="right" header-class-name="tp-table__nowrap">
+                <template #default="{ row }">${{ row.hourlyRate?.toFixed(2) }}</template>
+              </el-table-column>
+              <el-table-column label="Amount" width="110" align="right" header-class-name="tp-table__nowrap">
+                <template #default="{ row }">${{ row.amount?.toFixed(2) }}</template>
+              </el-table-column>
+            </el-table>
+            <div v-else class="tp-mobile-detail-list">
+              <article v-for="item in studentGroup.items" :key="item.id" class="tp-mobile-detail-card">
+                <header>
+                  <el-tag v-if="item.className" size="small" type="warning">Group</el-tag>
+                  <el-tag v-else size="small" type="primary">1:1</el-tag>
+                  <strong>{{ item.packageName || item.productName }}</strong>
+                </header>
+                <span v-if="item.className || item.productName" class="tp-mobile-detail-card__context">
+                  {{ item.productName }}<template v-if="item.className"> · {{ item.className }}</template>
+                </span>
+                <div class="tp-mobile-lesson-card__metrics">
+                  <div><small>Hours</small><strong>{{ item.hours }}</strong></div>
+                  <div><small>Rate</small><strong>${{ item.hourlyRate?.toFixed(2) }}</strong></div>
+                  <div><small>Amount</small><strong>${{ item.amount?.toFixed(2) }}</strong></div>
+                </div>
+              </article>
             </div>
-          </article>
+          </section>
         </div>
       </template>
 
@@ -463,9 +474,9 @@
 </template>
 
 <script setup lang="ts">
-import { Close, Search } from '@element-plus/icons-vue';
+import { Search } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAppStore } from '@/stores/app';
 
@@ -477,39 +488,146 @@ import {
   fetchUnpaidLessons,
 } from '@/api/finance';
 import { fetchAllTeachers } from '@/api/base-data';
+import { fetchTeacherCalendarCategories, type TeacherCalendarCategoryItem } from '@/api/schedule';
 import type { EntityId, TeacherPaymentItem, UnpaidLessonItem } from '@/types/domain';
 
 const router = useRouter();
 const appStore = useAppStore();
-const mobileSearchExpanded = ref(false);
-
-const teacherKeyword = ref('');
 const teachersLoading = ref(false);
 const allTeachers = ref<{ id: EntityId; teacherName: string; teacherNo: string }[]>([]);
-const selectedTeacherId = ref<EntityId | null>(null);
+const teacherProductCategories = ref<TeacherCalendarCategoryItem[]>([]);
+const teacherKeyword = ref('');
+const productExpansionStorageKey = 'teacher-payroll-expanded-products';
+function loadExpandedProducts(): Set<string> {
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(productExpansionStorageKey) || '[]');
+    return new Set(Array.isArray(saved) ? saved.filter((key): key is string => typeof key === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+const expandedProducts = ref(loadExpandedProducts());
+const searchCollapsedProducts = ref(new Set<string>());
+watch(() => Boolean(teacherKeyword.value.trim()), () => { searchCollapsedProducts.value = new Set(); });
 
-const filteredTeachers = computed(() => {
-  const kw = teacherKeyword.value.toLowerCase().trim();
-  if (!kw) return allTeachers.value;
-  return allTeachers.value.filter(t =>
-    t.teacherName.toLowerCase().includes(kw) ||
-    t.teacherNo.toLowerCase().includes(kw),
-  );
-});
+function isGroupOpen(key: string) {
+  return teacherKeyword.value.trim() ? !searchCollapsedProducts.value.has(key) : expandedProducts.value.has(key);
+}
+
+function toggleGroup(key: string) {
+  if (teacherKeyword.value.trim()) {
+    const collapsed = new Set(searchCollapsedProducts.value);
+    collapsed.has(key) ? collapsed.delete(key) : collapsed.add(key);
+    searchCollapsedProducts.value = collapsed;
+    return;
+  }
+  const expanded = new Set(expandedProducts.value);
+  expanded.has(key) ? expanded.delete(key) : expanded.add(key);
+  expandedProducts.value = expanded;
+  try {
+    localStorage.setItem(productExpansionStorageKey, JSON.stringify([...expanded]));
+  } catch {
+    // 浏览器禁用本地存储时仍允许在当前页面展开和折叠。
+  }
+}
+const mobileSearchExpanded = ref(false);
+const mobileTeacherListVisible = ref(true);
+const selectedTeacherId = ref<EntityId | null>(null);
+const teacherSwitchLoading = ref(false);
+let teacherSwitchRequest = 0;
 
 const selectedTeacher = computed(() =>
-  allTeachers.value.find(t => t.id === selectedTeacherId.value),
+  allTeachers.value.find(t => String(t.id) === String(selectedTeacherId.value)),
 );
 
-async function selectTeacher(id: EntityId) {
-  selectedTeacherId.value = id;
+interface TeacherProductGroup {
+  key: string;
+  productName: string;
+  teachers: typeof allTeachers.value;
+}
 
-  dateRange.value = currentMonthRange();
-  searched.value = false;
-  clearUnpaidSelections();
-  unpaidLessons.value = [];
-  loadHistory(1);
-  loadUnpaidLessons();
+const teacherProductGroups = computed<TeacherProductGroup[]>(() => {
+  const teachersById = new Map(allTeachers.value.map(teacher => [String(teacher.id), teacher]));
+  const products = new Map<string, { productName: string; teacherIds: Set<string> }>();
+
+  for (const category of teacherProductCategories.value) {
+    if (category.productId == null) continue;
+    const key = String(category.productId);
+    const product = products.get(key) ?? {
+      productName: category.productName?.trim() || category.categoryName,
+      teacherIds: new Set<string>(),
+    };
+    product.teacherIds.add(String(category.teacherId));
+    products.set(key, product);
+  }
+
+  const associatedTeacherIds = new Set<string>();
+  const groups = [...products.entries()].map(([key, product]) => {
+    const teachers = [...product.teacherIds]
+      .map(id => teachersById.get(id))
+      .filter((teacher): teacher is (typeof allTeachers.value)[number] => Boolean(teacher))
+      .sort((left, right) => left.teacherName.localeCompare(right.teacherName));
+    teachers.forEach(teacher => associatedTeacherIds.add(String(teacher.id)));
+    return { key, productName: product.productName, teachers };
+  });
+
+  const teachersWithoutProduct = allTeachers.value
+    .filter(teacher => !associatedTeacherIds.has(String(teacher.id)))
+    .sort((left, right) => left.teacherName.localeCompare(right.teacherName));
+  if (teachersWithoutProduct.length > 0) {
+    groups.push({ key: 'no-active-product', productName: 'No active product', teachers: teachersWithoutProduct });
+  }
+
+  return groups.sort((left, right) => left.productName.localeCompare(right.productName));
+});
+
+const filteredTeacherProductGroups = computed(() => {
+  const keyword = teacherKeyword.value.trim().toLocaleLowerCase();
+  if (!keyword) return teacherProductGroups.value;
+  return teacherProductGroups.value
+    .map(group => ({
+      ...group,
+      teachers: group.teachers.filter(teacher =>
+        teacher.teacherName.toLocaleLowerCase().includes(keyword)
+        || teacher.teacherNo.toLocaleLowerCase().includes(keyword)
+        || group.productName.toLocaleLowerCase().includes(keyword)),
+    }))
+    .filter(group => group.teachers.length > 0);
+});
+
+function isTeacherSelected(teacherId: EntityId) {
+  return selectedTeacherId.value != null && String(selectedTeacherId.value) === String(teacherId);
+}
+
+async function selectTeacher(teacherId: EntityId) {
+  const request = ++teacherSwitchRequest;
+  teacherSwitchLoading.value = true;
+  try {
+    const [history, unpaid] = await Promise.all([
+      fetchPayments({
+        teacherId,
+        status: historyFilter.status,
+        pageNum: 1,
+        pageSize: pagination.size,
+      }),
+      searched.value && dateRange.value?.[0] && dateRange.value?.[1]
+        ? fetchUnpaidLessons({ teacherId, startDate: dateRange.value[0], endDate: dateRange.value[1] })
+        : Promise.resolve(null),
+    ]);
+    if (request !== teacherSwitchRequest) return;
+    clearUnpaidSelections();
+    selectedTeacherId.value = teacherId;
+    historyData.value = history.data.data.records;
+    pagination.page = 1;
+    pagination.total = history.data.data.total;
+    if (unpaid) unpaidLessons.value = unpaid.data.data;
+    mobileTeacherListVisible.value = false;
+    mobileSearchExpanded.value = false;
+  } catch {
+    if (request === teacherSwitchRequest) ElMessage.error('Failed to load teacher payroll. Please try again.');
+  } finally {
+    if (request === teacherSwitchRequest) teacherSwitchLoading.value = false;
+  }
 }
 
 
@@ -535,16 +653,20 @@ const individualSelections = ref<UnpaidLessonItem[]>([]);
 const groupSelections = ref<UnpaidLessonItem[]>([]);
 const selectedIds = ref<EntityId[]>([]);
 
+const visibleUnpaidLessons = computed(() => selectedTeacherId.value == null
+  ? unpaidLessons.value
+  : unpaidLessons.value.filter(row => String(row.teacherId) === String(selectedTeacherId.value)));
+
 const individualLessons = computed(() =>
-  unpaidLessons.value.filter(r => !r.className),
+  visibleUnpaidLessons.value.filter(r => !r.className),
 );
 
 const groupLessons = computed(() =>
-  unpaidLessons.value.filter(r => !!r.className),
+  visibleUnpaidLessons.value.filter(r => !!r.className),
 );
 
 const missingRateCount = computed(() =>
-  unpaidLessons.value.filter(row => !hasPayRate(row)).length,
+  visibleUnpaidLessons.value.filter(row => !hasPayRate(row)).length,
 );
 
 function hasPayRate(row: UnpaidLessonItem) {
@@ -552,7 +674,9 @@ function hasPayRate(row: UnpaidLessonItem) {
 }
 
 function canSelectLesson(row: UnpaidLessonItem) {
-  return hasPayRate(row);
+  return hasPayRate(row)
+    && selectedTeacherId.value != null
+    && String(row.teacherId) === String(selectedTeacherId.value);
 }
 
 // 移动端卡片与桌面表格共用同一组选中状态，确保付款提交的课次集合一致。
@@ -607,12 +731,15 @@ const selectedTotalAmount = computed(() => {
 });
 
 async function loadUnpaidLessons() {
-  if (!selectedTeacherId.value) return;
+  if (!dateRange.value?.[0] || !dateRange.value?.[1]) {
+    ElMessage.warning('Select a period before loading unpaid lessons.');
+    return;
+  }
   unpaidLoading.value = true;
   searched.value = true;
   try {
     const res = await fetchUnpaidLessons({
-      teacherId: selectedTeacherId.value,
+      teacherId: selectedTeacherId.value ?? undefined,
       startDate: dateRange.value?.[0],
       endDate: dateRange.value?.[1],
     });
@@ -654,12 +781,7 @@ async function handleCreatePayment() {
       lessonRecordIds: selectedIds.value,
     });
     ElMessage.success('Payment created.');
-    unpaidLessons.value = [];
-    individualSelections.value = [];
-    groupSelections.value = [];
-    selectedIds.value = [];
-    searched.value = false;
-    loadHistory(1);
+    await Promise.all([loadUnpaidLessons(), loadHistory(1)]);
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Failed to create payment.');
   } finally {
@@ -677,11 +799,10 @@ const pagination = reactive({ page: 1, size: 10, total: 0 });
 
 async function loadHistory(pageNum?: number) {
   if (pageNum) pagination.page = pageNum;
-  if (!selectedTeacherId.value) return;
   historyLoading.value = true;
   try {
     const res = await fetchPayments({
-      teacherId: selectedTeacherId.value,
+      teacherId: selectedTeacherId.value ?? undefined,
       status: historyFilter.status,
       pageNum: pagination.page,
       pageSize: pagination.size,
@@ -700,6 +821,28 @@ async function loadHistory(pageNum?: number) {
 
 const detailVisible = ref(false);
 const detailData = ref<TeacherPaymentItem | null>(null);
+const detailStudentGroups = computed(() => {
+  const groups = new Map<string, {
+    key: string;
+    studentName: string;
+    items: NonNullable<TeacherPaymentItem['items']>;
+    totalHours: number;
+    totalAmount: number;
+  }>();
+  for (const item of detailData.value?.items ?? []) {
+    const studentName = item.studentName?.trim() || 'Student not available';
+    const key = item.studentId != null ? `student:${item.studentId}` : `name:${studentName}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = { key, studentName, items: [], totalHours: 0, totalAmount: 0 };
+      groups.set(key, group);
+    }
+    group.items.push(item);
+    group.totalHours += item.hours || 0;
+    group.totalAmount += item.amount || 0;
+  }
+  return [...groups.values()].sort((left, right) => left.studentName.localeCompare(right.studentName));
+});
 
 async function viewDetail(row: TeacherPaymentItem) {
   try {
@@ -768,12 +911,18 @@ function formatLessonSchedule(row: UnpaidLessonItem) {
 
 
 onMounted(async () => {
+  dateRange.value = currentMonthRange();
   teachersLoading.value = true;
   try {
-    const [teachersRes] = await Promise.all([fetchAllTeachers()]);
+    const [teachersRes, categoriesRes] = await Promise.all([
+      fetchAllTeachers(),
+      fetchTeacherCalendarCategories().catch(() => null),
+    ]);
     allTeachers.value = teachersRes.data.data;
+    teacherProductCategories.value = categoriesRes?.data.data ?? [];
   } catch { /* silent */ }
   teachersLoading.value = false;
+  loadHistory(1);
 });
 </script>
 
@@ -788,22 +937,23 @@ onMounted(async () => {
   display: flex;
   align-items: flex-start;
   gap: 16px;
+  min-width: 0;
 }
 
-/* ─── Sidebar ────────────────────────────────────────── */
-
+/* 按当前有效排课关联老师与产品；同一老师可在多个产品组中出现。 */
 .tp-sidebar {
-  flex-shrink: 0;
-  width: 220px;
-  height: calc(100vh - 180px);
-  min-height: 320px;
-  max-height: 720px;
+  display: flex;
+  flex: 0 0 240px;
+  flex-direction: column;
+  height: clamp(450px, calc(100dvh - 80px), 850px);
+  overflow: hidden;
   border: 1px solid #e8edf2;
   border-radius: 8px;
   background: #fff;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+}
+
+.tp-mobile-list-header {
+  display: none;
 }
 
 .tp-sidebar__search {
@@ -815,43 +965,88 @@ onMounted(async () => {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  overscroll-behavior-y: contain;
-  padding: 4px 0;
+  padding: 6px;
 }
 
 .tp-sidebar__item {
-  padding: 10px 14px;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #334155;
   cursor: pointer;
-  transition: background 0.15s;
-  border-left: 3px solid transparent;
+  text-align: left;
 }
 
-.tp-sidebar__item:hover {
-  background: #f5f7fa;
+.tp-sidebar__group {
+  margin-top: 8px;
 }
 
-.tp-sidebar__item--active {
-  background: #ecf5ff;
-  border-left-color: #409eff;
+.tp-sidebar__group-toggle {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: #f5f8fc;
+  color: #475569;
+  cursor: pointer;
+  text-align: left;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tp-sidebar__chevron { flex: none; font-size: 20px; line-height: 1; transition: transform 0.15s; }
+.tp-sidebar__chevron--open { transform: rotate(90deg); }
+
+.tp-sidebar__item {
+  padding: 9px 10px 9px 24px;
+  font-size: 14px;
 }
 
 .tp-sidebar__name {
-  font-size: 14px;
-  font-weight: 500;
-  color: #303133;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.tp-sidebar__meta {
-  font-size: 12px;
-  color: #909399;
-  margin-top: 2px;
+.tp-sidebar__item:hover {
+  background: #f2f6fb;
+}
+
+.tp-sidebar__item--active {
+  background: #eaf3ff;
+  color: #2468b4;
 }
 
 .tp-sidebar__empty {
-  padding: 20px;
-  text-align: center;
+  padding: 16px 10px;
   color: #909399;
-  font-size: 13px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.mobile-search-trigger {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #dce5ef;
+  border-radius: 6px;
+  background: #fff;
+  color: #64748b;
 }
 
 /* ─── Content ────────────────────────────────────────── */
@@ -862,19 +1057,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  overflow: auto;
-}
-
-.tp-content__placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 200px;
-  color: #909399;
-  font-size: 14px;
-  border: 1px dashed #e8edf2;
-  border-radius: 8px;
-  background: #fff;
+  overflow: visible;
 }
 
 .tp-content__header {
@@ -1019,10 +1202,25 @@ onMounted(async () => {
 /* ─── Detail Dialog ───────────────────────────────────── */
 
 .tp-dialog :deep(.el-dialog__body) {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(100dvh - 160px);
+  overflow: hidden;
   padding: 16px 20px;
 }
 
+.tp-dialog :deep(.el-dialog) {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 32px);
+  margin: 16px auto !important;
+  overflow: hidden;
+}
+
 .tp-dialog :deep(.el-dialog__header) {
+  flex: 0 0 auto;
   border-bottom: 1px solid #ebeef5;
   padding: 16px 20px;
 }
@@ -1035,12 +1233,61 @@ onMounted(async () => {
 }
 
 .tp-dialog :deep(.el-dialog__footer) {
+  flex: 0 0 auto;
   border-top: 1px solid #ebeef5;
   padding: 12px 20px;
 }
 
+.tp-detail-list-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  margin-top: 14px;
+}
+
+.tp-detail-table {
+  min-width: 722px;
+}
+
+.tp-detail-student-group + .tp-detail-student-group {
+  margin-top: 14px;
+}
+
+.tp-detail-student-group__header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 1px solid #dce5ef;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  background: #f5f8fc;
+}
+
+.tp-detail-student-group__header strong {
+  color: #334155;
+  font-size: 13px;
+}
+
+.tp-detail-student-group__header span {
+  color: #718096;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.tp-detail-student-group .tp-detail-table {
+  border-radius: 0 0 6px 6px;
+}
+
 .tp-detail-summary {
   display: grid;
+  flex: 0 0 auto;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px 14px;
   padding: 12px;
@@ -1065,39 +1312,26 @@ onMounted(async () => {
   color: #303133;
 }
 
-@media (max-width: 920px) {
-  .tp-page { flex-direction: column; }
-  .tp-page { height: calc(100dvh - 214px); min-height: 0; align-items: stretch; }
-  .tp-sidebar { width: 100%; height: 100%; min-height: 0; max-height: none; border-color: #d5deea; border-radius: 10px; box-shadow: 0 2px 8px rgb(33 53 77 / 5%); }
-  .tp-sidebar--mobile-hidden,
-  .tp-content--mobile-hidden { display: none; }
-  .tp-sidebar__list { display: block; flex: 1; min-height: 0; max-height: none; overflow-y: auto; overscroll-behavior: contain; padding: 4px 0; }
-  .tp-mobile-list-header { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:58px; padding:9px 12px; border-bottom:1px solid #e1e8f0; background:#f8fafc; }
-  .tp-mobile-list-header > div { display:grid; gap:2px; }
-  .tp-mobile-list-header strong { color:#27384b; font-size:14px; }
-  .tp-mobile-list-header span { color:#8190a2; font-size:11px; }
-  .tp-mobile-list-header .mobile-search-trigger { flex:none; }
-  .tp-sidebar__item { min-height:58px; padding:10px 14px; border-left:3px solid transparent; border-bottom:1px solid #e7edf3; }
-  .tp-sidebar__item--active { border-left-color: #409eff; border-bottom-color: #edf0f4; }
-  .tp-content { width: 100%; overflow: visible; padding-bottom: 72px; }
-  .tp-mobile-selection { display: flex; align-items: center; gap: 10px; min-height: 44px; margin: 0 0 10px; padding: 4px 8px; border: 1px solid #e1e8f0; border-radius: 10px; background: #fff; }
-  .tp-mobile-selection strong { overflow: hidden; color: #1f2937; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
-  .tp-mobile-selection small { flex:none; color:#8491a3; font-size:11px; }
-}
-
 @media (max-width: 640px) {
   .tp-view { gap: 8px; }
   .tp-view > .table-page-header { padding: 8px 12px; border: 0; border-bottom: 1px solid #e7edf3; border-radius: 0; }
   .tp-view > .table-page-header .table-page-header__eyebrow,
   .tp-page-description { display: none; }
   .tp-view > .table-page-header h2 { font-size: 16px; }
-  .tp-content__header { display:none; }
-  .tp-page { gap: 8px; }
-  .tp-sidebar { border-radius: 10px; }
-  .tp-content { gap: 8px; }
-  .tp-mobile-selection { min-height: 38px; margin-bottom: 4px; padding: 3px 7px; border-radius: 8px; }
-  .tp-mobile-selection .el-button { min-height: 30px; margin: 0; padding: 0 5px; font-size: 12px; }
+  .tp-page { display: block; min-height: 0; }
+  .tp-sidebar { width: 100%; height: clamp(390px, calc(100dvh - 80px), 850px); }
+  .tp-sidebar--mobile-hidden,
+  .tp-content--mobile-hidden { display: none; }
+  .tp-mobile-list-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-bottom: 1px solid #ebeef5; }
+  .tp-mobile-list-header > div { display: grid; gap: 2px; }
+  .tp-mobile-list-header strong { color: #334155; font-size: 13px; }
+  .tp-mobile-list-header span { color: #98a2b3; font-size: 11px; }
+  .tp-sidebar__search { padding: 8px 10px; }
+  .tp-mobile-selection { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
   .tp-mobile-selection strong { font-size: 13px; }
+  .tp-mobile-selection small { color: #8b95a5; }
+  .tp-content__header { display:none; }
+  .tp-content { gap: 8px; padding-bottom: 72px; }
   .tp-section, .tp-section--card, .tp-section--filters { padding: 10px; border-radius: 9px; }
   .tp-section--filters { padding: 10px; }
   .tp-filters { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
@@ -1145,6 +1379,7 @@ onMounted(async () => {
   .tp-mobile-history-card__totals strong { color: #35485f; font-size: 12px; }
   .tp-mobile-history-card__actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .tp-mobile-history-card__actions .el-button { min-height: 30px; margin: 0; padding: 0 9px; font-size: 11px; }
+  .tp-mobile-history-card__actions .tp-history-detail-button { min-height: 36px; font-size: 13px; }
   .tp-detail-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 9px; }
   .tp-detail-summary__item .value { overflow-wrap: anywhere; font-size: 12px; }
   .tp-mobile-detail-card__context { display: block; margin: 5px 0 8px; color: #78869a; font-size: 11px; line-height: 1.4; }

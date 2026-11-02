@@ -14,6 +14,8 @@ import java.util.List;
 @Schema(description = "Unpaid lesson record VO")
 public record UnpaidLessonVO(
         Long lessonRecordId,
+        Long teacherId,
+        String teacherName,
         LocalDateTime lessonStartAt,
         LocalDateTime lessonEndAt,
         Long studentId,

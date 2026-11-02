@@ -4,6 +4,8 @@ package com.classdeduction.system.modules.schedule.vo;
 public record TeacherCalendarCategoryVO(
         Long teacherId,
         String categoryKey,
-        String categoryName
+        String categoryName,
+        Long productId,
+        String productName
 ) {
 }

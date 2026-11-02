@@ -31,7 +31,7 @@ export function deletePayRate(id: EntityId) {
 // ─── Teacher Payments ───────────────────────────────────
 
 export interface UnpaidLessonQuery {
-  teacherId: EntityId;
+  teacherId?: EntityId;
   startDate?: string;
   endDate?: string;
 }

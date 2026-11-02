@@ -23,5 +23,7 @@ public record TeacherPaymentItemVO(
         BigDecimal hourlyRate,
         BigDecimal amount,
         String occurrenceType,
-        String className
+        String className,
+        Long studentId,
+        String studentName
 ) {}

@@ -194,13 +194,15 @@ public class TeacherCalendarRosterServiceImpl implements TeacherCalendarRosterSe
             boolean inPerson = "IN_PERSON".equalsIgnoreCase(deliveryMode) || classroomId != null;
             String key = online ? "ONE_ON_ONE:ONLINE" : inPerson ? "ONE_ON_ONE:IN_PERSON" : "ONE_ON_ONE:UNSPECIFIED";
             String label = online ? "Online 1-on-1" : inPerson ? "In-person 1-on-1" : "1-on-1 · Mode not set";
-            categories.add(new TeacherCalendarCategoryVO(teacherId, key, label));
+            categories.add(new TeacherCalendarCategoryVO(teacherId, key, label,
+                    product.getId(), product.getProductName()));
             return;
         }
         String productName = StringUtils.hasText(product.getProductName())
                 ? product.getProductName().trim()
                 : StringUtils.hasText(product.getCourseType()) ? product.getCourseType().trim() : "Other group class";
-        categories.add(new TeacherCalendarCategoryVO(teacherId, "PRODUCT:" + product.getId(), productName));
+        categories.add(new TeacherCalendarCategoryVO(teacherId, "PRODUCT:" + product.getId(), productName,
+                product.getId(), productName));
     }
 
     private boolean isOneOnOne(CourseProductEntity product) {

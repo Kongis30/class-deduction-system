@@ -108,7 +108,9 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
 
         List<LessonRecordEntity> records = lessonRecordMapper.selectList(
                 new LambdaQueryWrapper<LessonRecordEntity>()
-                        .eq(LessonRecordEntity::getActualTeacherId, query.getTeacherId())
+                        .eq(query.getTeacherId() != null,
+                                LessonRecordEntity::getActualTeacherId, query.getTeacherId())
+                        .isNotNull(LessonRecordEntity::getActualTeacherId)
                         .eq(LessonRecordEntity::getConfirmStage, "CONFIRMED")
                         .in(LessonRecordEntity::getResultStatus, PAYABLE_STATUSES)
                         .notIn(!paidRecordIds.isEmpty(), LessonRecordEntity::getId, paidRecordIds)
@@ -132,6 +134,9 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         Set<Long> occurrenceIds = records.stream().map(LessonRecordEntity::getOccurrenceId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
+        Set<Long> teacherIds = records.stream().map(LessonRecordEntity::getActualTeacherId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
 
         Map<Long, CoursePackageEntity> packageMap = !packageIds.isEmpty()
                 ? coursePackageMapper.selectBatchIds(packageIds).stream()
@@ -140,6 +145,10 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         Map<Long, StudentEntity> studentMap = !studentIds.isEmpty()
                 ? studentMapper.selectBatchIds(studentIds).stream()
                 .collect(Collectors.toMap(StudentEntity::getId, s -> s))
+                : Collections.emptyMap();
+        Map<Long, TeacherEntity> teacherMap = !teacherIds.isEmpty()
+                ? teacherMapper.selectBatchIds(teacherIds).stream()
+                .collect(Collectors.toMap(TeacherEntity::getId, t -> t))
                 : Collections.emptyMap();
 
         // 3a. 查询 occurrence 信息（occurrenceType + classGroupId）
@@ -180,7 +189,10 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         // 5. 获取老师的课时单价
         List<TeacherPayRateEntity> rates = payRateMapper.selectList(
                 new LambdaQueryWrapper<TeacherPayRateEntity>()
-                        .eq(TeacherPayRateEntity::getTeacherId, query.getTeacherId()));
+                        .eq(query.getTeacherId() != null,
+                                TeacherPayRateEntity::getTeacherId, query.getTeacherId())
+                        .in(query.getTeacherId() == null && !teacherIds.isEmpty(),
+                                TeacherPayRateEntity::getTeacherId, teacherIds));
         Map<String, BigDecimal> rateMap = toRateMap(rates);
 
         // 6. 组装结果
@@ -228,7 +240,7 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 Long productId = cg != null
                         ? cg.getProductId()
                         : privatePackage == null ? null : privatePackage.getCourseProductId();
-                BigDecimal hourlyRate = resolvePayRate(rateMap, query.getTeacherId(), productId,
+                BigDecimal hourlyRate = resolvePayRate(rateMap, rec.getActualTeacherId(), productId,
                         cg == null ? rec.getStudentId() : null,
                         resolveGradeBand(privateOrderItem, studentMap.get(rec.getStudentId()), cg),
                         resolveDeliveryMode(occurrence, cg, privateOrder, classroomMap));
@@ -238,9 +250,12 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 BigDecimal amount = hours.multiply(hourlyRate).setScale(2, RoundingMode.HALF_UP);
 
                 StudentEntity sharedStudent = studentMap.get(rec.getStudentId());
+                TeacherEntity teacher = teacherMap.get(rec.getActualTeacherId());
                 CourseProductEntity product = productId != null ? productMap.get(productId) : null;
                 result.add(UnpaidLessonVO.builder()
                         .lessonRecordId(rec.getId())
+                        .teacherId(rec.getActualTeacherId())
+                        .teacherName(teacher == null ? null : teacher.getTeacherName())
                         .lessonStartAt(lessonStartAt)
                         .lessonEndAt(lessonEndAt)
                         .studentId(rec.getStudentId())
@@ -270,7 +285,7 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
             Long productId = pkg != null ? pkg.getCourseProductId() : null;
             EnrollmentOrderItemEntity orderItem = pkg == null ? null : orderItemMap.get(pkg.getEnrollmentOrderItemId());
             EnrollmentOrderEntity order = pkg == null ? null : orderMap.get(pkg.getEnrollmentOrderId());
-            BigDecimal hourlyRate = resolvePayRate(rateMap, query.getTeacherId(), productId, rec.getStudentId(),
+            BigDecimal hourlyRate = resolvePayRate(rateMap, rec.getActualTeacherId(), productId, rec.getStudentId(),
                     resolveGradeBand(orderItem, studentMap.get(rec.getStudentId()), null),
                     resolveDeliveryMode(occurrence, null, order, classroomMap));
             BigDecimal hours = BigDecimal.valueOf(rec.getActualUnits())
@@ -278,10 +293,13 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
             BigDecimal amount = hours.multiply(hourlyRate).setScale(2, RoundingMode.HALF_UP);
 
             StudentEntity student = studentMap.get(rec.getStudentId());
+            TeacherEntity teacher = teacherMap.get(rec.getActualTeacherId());
             CourseProductEntity product = productId != null ? productMap.get(productId) : null;
 
             result.add(UnpaidLessonVO.builder()
                     .lessonRecordId(rec.getId())
+                    .teacherId(rec.getActualTeacherId())
+                    .teacherName(teacher == null ? null : teacher.getTeacherName())
                     .lessonStartAt(lessonStartAt)
                     .lessonEndAt(lessonEndAt)
                     .studentId(rec.getStudentId())
@@ -935,6 +953,7 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 ? lessonRecordMapper.selectBatchIds(lessonRecordIds).stream()
                 .collect(Collectors.toMap(LessonRecordEntity::getId, r -> r))
                 : Collections.emptyMap();
+        Map<Long, StudentEntity> studentMap = loadStudents(new ArrayList<>(recordMap.values()));
 
         Set<Long> occurrenceIds = recordMap.values().stream()
                 .map(LessonRecordEntity::getOccurrenceId)
@@ -951,6 +970,7 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
             CourseProductEntity product = productMap.get(item.getCourseProductId());
             LessonRecordEntity rec = recordMap.get(item.getLessonRecordId());
             LessonOccurrenceEntity occurrence = rec != null ? occurrenceMap.get(rec.getOccurrenceId()) : null;
+            StudentEntity student = rec != null ? studentMap.get(rec.getStudentId()) : null;
             return TeacherPaymentItemVO.builder()
                     .id(item.getId())
                     .lessonRecordId(item.getLessonRecordId())
@@ -967,6 +987,8 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                     .amount(item.getAmount())
                     .occurrenceType(occurrence != null ? occurrence.getOccurrenceType() : null)
                     .className(resolveClassName(occurrence))
+                    .studentId(rec != null ? rec.getStudentId() : null)
+                    .studentName(student != null ? student.getStudentName() : null)
                     .build();
         }).toList();
     }

@@ -61,7 +61,7 @@ public class FinanceController {
     // ─── 结算管理 ───────────────────────────────────
 
     @GetMapping("/payments/unpaid-lessons")
-    @Operation(summary = "Query unpaid lessons for a teacher in a period")
+    @Operation(summary = "Query unpaid lessons for all teachers or one teacher in a period")
     @RequireRoles({"ADMIN", "STAFF"})
     public ApiResponse<List<UnpaidLessonVO>> queryUnpaidLessons(@Valid UnpaidLessonQuery query) {
         return ApiResponse.success(paymentService.queryUnpaidLessons(query));
