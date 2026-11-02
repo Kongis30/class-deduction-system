@@ -3,6 +3,7 @@
     <section class="student-calendar">
       <div class="student-calendar__header">
         <span class="student-calendar__title">{{ isStudent ? 'My Schedule' : 'Student Schedule' }}</span>
+        <el-button v-if="canViewDailyPrivateLessons" type="primary" plain @click="openDailyPrivateLessons">Daily 1-on-1</el-button>
       </div>
 
       <div class="student-calendar__body">
@@ -323,6 +324,32 @@
       </div>
     </section>
 
+    <el-dialog v-model="dailyVisible" title="Daily 1-on-1 lessons" width="900px" :fullscreen="appStore.isMobileViewport" destroy-on-close>
+      <div class="daily-lessons__controls">
+        <el-button :icon="ArrowLeft" aria-label="Previous day" @click="stepDailyDate(-1)" />
+        <el-date-picker v-model="dailyDate" type="date" value-format="YYYY-MM-DD" :clearable="false" @change="loadDailyPrivateLessons" />
+        <el-button :icon="ArrowRight" aria-label="Next day" @click="stepDailyDate(1)" />
+        <span v-if="!dailyLoading && !dailyError">{{ dailyLessons.length }} lesson(s) · {{ dailyStudentCount }} student(s)</span>
+      </div>
+      <p class="daily-lessons__note">Times are Eastern Time. The list shows scheduled lessons already generated.</p>
+      <el-alert v-if="dailyError" type="error" :closable="false" title="Could not load lessons. Please try again.">
+        <el-button text type="primary" @click="loadDailyPrivateLessons">Retry</el-button>
+      </el-alert>
+      <el-table v-else v-loading="dailyLoading" :data="dailyLessons" max-height="55vh" empty-text="No 1-on-1 lessons on this date.">
+        <el-table-column label="Time (ET)" min-width="135">
+          <template #default="{ row }">{{ dayjs(row.plannedStartAt).format('h:mm A') }} – {{ dayjs(row.plannedEndAt).format('h:mm A') }}</template>
+        </el-table-column>
+        <el-table-column label="Student" min-width="150">
+          <template #default="{ row }">{{ row.participantNames.join(', ') || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="Lesson" min-width="140">
+          <template #default="{ row }">{{ row.subjectName || row.packageName || '—' }}</template>
+        </el-table-column>
+        <el-table-column prop="plannedTeacherName" label="Teacher" min-width="130" />
+        <el-table-column prop="plannedClassroomName" label="Classroom" min-width="120" />
+      </el-table>
+    </el-dialog>
+
     <!-- Detail dialog -->
     <el-dialog
       v-model="detailDialogVisible"
@@ -406,19 +433,58 @@ import { fetchCoursePackages, fetchMyCoursePackages } from '@/api/enrollment';
 import {
   fetchLessonOccurrence,
   fetchLessonOccurrences,
+  fetchDailyPrivateLessons,
+  type DailyPrivateLesson,
   fetchOneOnOneScheduleStudents,
 } from '@/api/schedule';
 import type { CoursePackageItem, EntityId, LessonOccurrenceItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
 import { useAuthStore } from '@/stores/auth';
-import { isStudentUser } from '@/types/auth';
+import { isStudentUser, isAdminOrStaffUser, isManagerUser } from '@/types/auth';
 import { findScheduleConflictGroups } from '@/utils/schedule-conflicts';
 import { useAppStore } from '@/stores/app';
 
 const authStore = useAuthStore();
 const appStore = useAppStore();
 const isStudent = computed(() => isStudentUser(authStore.currentUser));
+const canViewDailyPrivateLessons = computed(() => isAdminOrStaffUser(authStore.currentUser) || isManagerUser(authStore.currentUser));
+const dailyVisible = ref(false);
+const dailyDate = ref('');
+const dailyLoading = ref(false);
+const dailyError = ref(false);
+const dailyLessons = ref<DailyPrivateLesson[]>([]);
+const dailyStudentCount = ref(0);
+let dailyRequestId = 0;
+
+function openDailyPrivateLessons() {
+  dailyDate.value ||= new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  dailyVisible.value = true;
+  void loadDailyPrivateLessons();
+}
+
+function stepDailyDate(days: number) {
+  dailyDate.value = dayjs(dailyDate.value).add(days, 'day').format('YYYY-MM-DD');
+  void loadDailyPrivateLessons();
+}
+
+// 每次仅请求所选日期，忽略较早返回的请求，避免快速切换日期时显示旧数据。
+async function loadDailyPrivateLessons() {
+  const requestId = ++dailyRequestId;
+  dailyLoading.value = true;
+  dailyError.value = false;
+  dailyLessons.value = [];
+  try {
+    const response = await fetchDailyPrivateLessons(dailyDate.value);
+    if (requestId !== dailyRequestId) return;
+    dailyLessons.value = response.data.data.lessons;
+    dailyStudentCount.value = response.data.data.studentCount;
+  } catch {
+    if (requestId === dailyRequestId) dailyError.value = true;
+  } finally {
+    if (requestId === dailyRequestId) dailyLoading.value = false;
+  }
+}
 
 const loading = ref(false);
 const studentsLoading = ref(false);
@@ -842,6 +908,8 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.daily-lessons__controls { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; color: #475569; font-size: 14px; }
+.daily-lessons__note { margin: 10px 0; color: #718096; font-size: 12px; }
 .student-calendar {
   border: 1px solid #e8edf2;
   border-radius: 8px;

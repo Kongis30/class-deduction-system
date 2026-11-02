@@ -10,6 +10,7 @@ import com.classdeduction.system.modules.schedule.dto.OneOnOneDeductionQuery;
 import com.classdeduction.system.modules.schedule.service.LessonOccurrenceService;
 import com.classdeduction.system.modules.schedule.service.PrivateSignatureHistoryService;
 import com.classdeduction.system.modules.schedule.vo.LessonOccurrenceVO;
+import com.classdeduction.system.modules.schedule.vo.DailyPrivateLessonsVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneTeacherVO;
 import com.classdeduction.system.modules.schedule.vo.PrivateSignatureHistoryVO;
 import com.classdeduction.system.modules.schedule.vo.StudentScheduleSlotVO;
@@ -22,8 +23,10 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestAttribute;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -39,6 +42,13 @@ public class LessonOccurrenceController {
 
     private final LessonOccurrenceService lessonOccurrenceService;
     private final PrivateSignatureHistoryService privateSignatureHistoryService;
+
+    @GetMapping("/daily-private-lessons")
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
+    @Operation(summary = "List private lessons on a date")
+    public ApiResponse<DailyPrivateLessonsVO> dailyPrivateLessons(@RequestParam LocalDate date) {
+        return ApiResponse.success(lessonOccurrenceService.listDailyPrivateLessons(date));
+    }
 
     @GetMapping
     @Operation(summary = "Page lesson occurrences")

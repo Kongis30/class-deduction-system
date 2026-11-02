@@ -8,13 +8,17 @@ import com.classdeduction.system.modules.schedule.dto.OneOnOneDeductionQuery;
 import com.classdeduction.system.modules.schedule.dto.PendingClassroomBackfillRequest;
 import com.classdeduction.system.modules.schedule.vo.ClassroomOccupancyVO;
 import com.classdeduction.system.modules.schedule.vo.LessonOccurrenceVO;
+import com.classdeduction.system.modules.schedule.vo.DailyPrivateLessonsVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneTeacherVO;
 import com.classdeduction.system.modules.schedule.vo.PendingClassroomAssignmentVO;
 import com.classdeduction.system.modules.schedule.vo.StudentScheduleSlotVO;
 
 import java.util.List;
+import java.time.LocalDate;
 
 public interface LessonOccurrenceService {
+
+    DailyPrivateLessonsVO listDailyPrivateLessons(LocalDate date);
 
     PageResponse<LessonOccurrenceVO> pageOccurrences(LessonOccurrencePageQuery query);
 

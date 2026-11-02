@@ -45,6 +45,7 @@ import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMa
 import com.classdeduction.system.modules.schedule.service.LessonOccurrenceService;
 import com.classdeduction.system.modules.schedule.vo.ClassroomOccupancyVO;
 import com.classdeduction.system.modules.schedule.vo.LessonOccurrenceVO;
+import com.classdeduction.system.modules.schedule.vo.DailyPrivateLessonsVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneLessonVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOnePackageVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneScheduleChangeVO;
@@ -67,6 +68,7 @@ import org.springframework.util.StringUtils;
 
 import java.time.DayOfWeek;
 import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.function.Function;
@@ -99,6 +101,53 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
     private final RecurringScheduleSlotMapper recurringScheduleSlotMapper;
     private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
+
+    /** 按美东本地日期读取已生成的有效私教课次，批量组装并按学生 ID 去重。 */
+    @Override
+    public DailyPrivateLessonsVO listDailyPrivateLessons(LocalDate date) {
+        List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .ge(LessonOccurrenceEntity::getPlannedStartAt, date.atStartOfDay())
+                        .lt(LessonOccurrenceEntity::getPlannedStartAt, date.plusDays(1).atStartOfDay())
+                        .isNull(LessonOccurrenceEntity::getClassGroupId)
+                        .isNull(LessonOccurrenceEntity::getCourseHolidayId)
+                        .in(LessonOccurrenceEntity::getPlanningStatus, "SCHEDULED", "ADJUSTED")
+                        .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt));
+        if (occurrences.isEmpty()) return new DailyPrivateLessonsVO(List.of(), 0);
+
+        List<LessonOccurrenceVO> lessonDetails = toOccurrenceVOs(occurrences);
+        Set<Long> groupIds = lessonDetails.stream().map(LessonOccurrenceVO::privateLessonGroupId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, List<PrivateLessonGroupMemberEntity>> members = loadPrivateGroupMembersByIds(groupIds);
+        Set<Long> memberIds = members.values().stream().flatMap(List::stream)
+                .map(PrivateLessonGroupMemberEntity::getStudentId).filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, StudentEntity> memberStudents = listStudentsByIds(memberIds);
+        LatestRecordIndex records = loadLatestRecordIndex(occurrences.stream().map(LessonOccurrenceEntity::getId).collect(Collectors.toSet()));
+        Set<Long> students = new HashSet<>();
+        List<DailyPrivateLessonsVO.Lesson> lessons = new ArrayList<>();
+        for (LessonOccurrenceVO lesson : lessonDetails) {
+            List<PrivateLessonGroupMemberEntity> groupMembers = members.getOrDefault(lesson.privateLessonGroupId(), List.of());
+            List<String> names = new ArrayList<>();
+            if (groupMembers.isEmpty()) {
+                if ("CONFIRMED".equals(lesson.confirmStage()) && "FORMAL_LEAVE".equals(lesson.resultStatus())) continue;
+                if (lesson.studentId() != null) students.add(lesson.studentId());
+                if (StringUtils.hasText(lesson.studentName())) names.add(lesson.studentName());
+            } else {
+                for (PrivateLessonGroupMemberEntity member : groupMembers) {
+                    LessonRecordEntity record = records.byPackage().getOrDefault(member.getPackageId(), Collections.emptyMap()).get(lesson.id());
+                    if (record != null && "CONFIRMED".equals(record.getConfirmStage())
+                            && "FORMAL_LEAVE".equals(record.getResultStatus())) continue;
+                    if (member.getStudentId() != null) students.add(member.getStudentId());
+                    StudentEntity student = memberStudents.get(member.getStudentId());
+                    if (student != null && StringUtils.hasText(student.getStudentName())) names.add(student.getStudentName());
+                }
+                if (names.isEmpty()) continue;
+            }
+            lessons.add(new DailyPrivateLessonsVO.Lesson(lesson.id(), lesson.plannedStartAt(), lesson.plannedEndAt(),
+                    names, lesson.subjectName(), lesson.packageName(), lesson.plannedTeacherName(), lesson.plannedClassroomName()));
+        }
+        return new DailyPrivateLessonsVO(lessons, students.size());
+    }
 
     @Override
     public PageResponse<LessonOccurrenceVO> pageOccurrences(LessonOccurrencePageQuery query) {

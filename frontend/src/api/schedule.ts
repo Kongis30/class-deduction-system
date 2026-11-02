@@ -177,6 +177,23 @@ export function fetchLessonOccurrences(params: LessonOccurrenceQuery = {}) {
   });
 }
 
+export interface DailyPrivateLesson {
+  id: EntityId;
+  plannedStartAt: string;
+  plannedEndAt: string;
+  participantNames: string[];
+  subjectName?: string;
+  packageName?: string;
+  plannedTeacherName?: string;
+  plannedClassroomName?: string;
+}
+
+export function fetchDailyPrivateLessons(date: string) {
+  return http.get<ApiResponse<{ lessons: DailyPrivateLesson[]; studentCount: number }>>(
+    '/v1/schedule/occurrences/daily-private-lessons', { params: { date } },
+  );
+}
+
 export function fetchLessonOccurrence(id: EntityId) {
   return http.get<ApiResponse<LessonOccurrenceItem>>(`/v1/schedule/occurrences/${id}`);
 }
