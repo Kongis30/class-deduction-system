@@ -671,6 +671,7 @@ import { formatUsPhoneDisplay, matchesPhoneSearch } from '@/utils/phone-format';
 import { formatRoundedUsd } from '@/utils/money-display';
 import { countUnclassifiedSaturdayRows, filterSaturdayRosterRows, type SaturdayRosterView } from '@/utils/saturday-roster';
 import { createIsolatedPrinter } from '@/utils/isolated-print';
+import { APP_TIMEZONE } from '@/config/app-config';
 
 type ColumnKey =
   | 'campus'
@@ -829,6 +830,11 @@ const MIN_MOBILE_TABLE_SCALE = 0.3;
 const DEFAULT_MOBILE_TABLE_SCALE = 0.72;
 const MAX_MOBILE_TABLE_SCALE = 1.6;
 const PERIOD_RENEWAL_WARNING_DAYS = 10;
+const newYorkDate = () => new Intl.DateTimeFormat('en-CA', {
+  timeZone: APP_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+}).format(new Date());
+const renewalToday = ref(newYorkDate());
+let renewalDateTimer: number | undefined;
 const CLASS_SORT_ORDER = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'ELT', 'SHSAT', 'PSAT', 'SAT', 'ESL', 'TBD'];
 const ROSTER_ALL_PLANS = '__ALL_PLANS__';
 /** 班级名单必须单页打印：超过目标行数时自动增加学生列数。 */
@@ -1017,6 +1023,19 @@ const isSaturdayProductTab = computed(() => {
 const displayProductRows = computed<DataSummaryDisplayRow[]>(() => isSaturdayProductTab.value
   ? filterSaturdayRosterRows(activeProductRows.value, saturdayRosterView.value)
   : activeProductRows.value);
+
+// 续报可跨订单，但学生与逻辑课程 ID 不变；提醒使用该课程最新有效周期。
+const renewalEndDates = computed(() => {
+  const ends = new Map<string, string>();
+  for (const row of activeProductRows.value) {
+    if (row.discontinued || row.logicalCourseId == null || isPrivateLessonRow(row)) continue;
+    const key = `${row.studentId}:${row.logicalCourseId}`;
+    const period = logicalCoursePeriods.value.get(`${row.orderId}:${row.studentId}:${row.logicalCourseId}`);
+    const end = period ? period.endDate : row.periodEndDate;
+    if (end && (!ends.has(key) || end > ends.get(key)!)) ends.set(key, end);
+  }
+  return ends;
+});
 
 const unclassifiedSaturdayRowCount = computed(() => isSaturdayProductTab.value
   ? countUnclassifiedSaturdayRows([...activeProductRows.value, ...stoppedProductRows.value])
@@ -1852,6 +1871,7 @@ async function persistTabOrder() {
 
 onBeforeUnmount(() => {
   rosterPrinter.detach();
+  window.clearInterval(renewalDateTimer);
   window.clearTimeout(orderSaveTimer);
   window.removeEventListener('keydown', handleStudentContextMenuKeydown);
   const scroll = workbookScrollRef.value;
@@ -2198,17 +2218,14 @@ function formatPeriod(row: DataSummaryRow) {
 }
 
 function isPeriodRenewalDue(row: DataSummaryRow) {
-  if (isPrivateLessonRow(row) || !row.periodEndDate) {
+  if (isPrivateLessonRow(row) || row.discontinued || row.refunded || row.itemStatus === 'STOPPED') {
     return false;
   }
-  // Period 按自然日提醒；到期当天仍算剩余 0 天，已过期不属于续期倒计时。
-  const today = dayjs().startOf('day');
-  const endDate = dayjs(row.periodEndDate).startOf('day');
-  if (!endDate.isValid()) {
-    return false;
-  }
-  const remainingDays = endDate.diff(today, 'day');
-  return remainingDays >= 0 && remainingDays <= PERIOD_RENEWAL_WARNING_DAYS;
+  const end = row.logicalCourseId == null ? row.periodEndDate
+    : renewalEndDates.value.get(`${row.studentId}:${row.logicalCourseId}`) ?? row.periodEndDate;
+  if (!end || !/^\d{4}-\d{2}-\d{2}$/.test(end) || !dayjs(end).isValid()) return false;
+  // 按纽约自然日判断；过期后持续提醒，直到续报或课程终止。
+  return end <= dayjs(renewalToday.value).add(PERIOD_RENEWAL_WARNING_DAYS, 'day').format('YYYY-MM-DD');
 }
 
 function formatMoney(value?: number) {
@@ -2438,6 +2455,7 @@ watch(tabs, () => {
 
 onMounted(() => {
   rosterPrinter.attach();
+  renewalDateTimer = window.setInterval(() => { renewalToday.value = newYorkDate(); }, 60_000);
   void loadPage();
   window.addEventListener('keydown', handleStudentContextMenuKeydown);
   const scroll = workbookScrollRef.value;

@@ -830,8 +830,12 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         LocalDate stoppedEnd = refundState != null && refundState.getStoppedAt() != null
                 ? refundState.getStoppedPeriodEndDate() : item == null ? null : item.getStoppedPeriodEndDate();
         boolean stoppedRecord = "STOPPED".equals(resolveDisplayItemStatus(item, refundState));
-        boolean refundedRecord = "REFUNDED".equalsIgnoreCase(order.getPaymentStatus())
+        boolean hasRefund = "REFUNDED".equalsIgnoreCase(order.getPaymentStatus())
                 || item != null && refundedParticipantCourses.contains(new ParticipantCourseKey(item.getId(), displayStudentId));
+        // 部分退款后仍有效的班课保留在主表；仅终止权益的退款移入退款区。
+        boolean groupEntitlementContinues = v2Enrollment != null && !stoppedRecord
+                && ("ACTIVE".equals(v2Enrollment.getStatus()) || "EXPIRED".equals(v2Enrollment.getStatus()));
+        boolean refundedRecord = hasRefund && !groupEntitlementContinues;
         if (stoppedRecord && item != null) {
             periodStartDate = firstNonNull(stoppedStart, periodStartDate);
             periodEndDate = firstNonNull(stoppedEnd, periodEndDate);

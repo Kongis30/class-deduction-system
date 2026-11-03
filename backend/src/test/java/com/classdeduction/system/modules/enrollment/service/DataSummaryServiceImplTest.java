@@ -360,6 +360,34 @@ class DataSummaryServiceImplTest {
     }
 
     @Test
+    void shouldClassifyRefundByWhetherGroupEntitlementContinues() {
+        EnrollmentOrderEntity order = order(1L, "100.00", "75.00", "25.00");
+        EnrollmentOrderItemEntity item = item(101L, 1, "100.00");
+        item.setEnrollmentOrderId(1L);
+        item.setItemStatus("ACTIVE");
+        item.setGroupRegistrationPlanId(501L);
+        ClassEnrollmentEntity entitlement = new ClassEnrollmentEntity();
+        entitlement.setEnrollmentOrderItemId(101L);
+        entitlement.setStudentId(1L);
+        entitlement.setStatus("ACTIVE");
+        PaymentRecordEntity refund = payment(1L, "-25.00");
+        refund.setId(201L);
+        refund.setPaymentType("REFUND");
+        refund.setParticipantIndex(1);
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(entitlement));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(refund));
+        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of(paymentAllocation(201L, 101L, "-25.00")));
+
+        assertThat(dataSummaryService.getSummary(new DataSummaryQuery()).rows()).singleElement()
+                .satisfies(row -> assertThat(row.refunded()).isFalse());
+        entitlement.setStatus("CANCELLED");
+        assertThat(dataSummaryService.getSummary(new DataSummaryQuery()).rows()).singleElement()
+                .satisfies(row -> assertThat(row.refunded()).isTrue());
+    }
+
+    @Test
     void shouldReturnPaymentReviewCodesWhenPaymentNetDiffersFromOrderSnapshot() {
         EnrollmentOrderEntity order = order(1L, "100.00", "60.00", "40.00");
         when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
