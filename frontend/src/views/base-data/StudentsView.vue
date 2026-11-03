@@ -998,6 +998,7 @@ const openProducts = ref(new Set<string>());
 const openProjects = ref(new Set<string>());
 const openGroups = ref(new Set<string>());
 let lastSearchKeyword = '';
+const studentListCollator = new Intl.Collator('en', { sensitivity: 'base', numeric: true });
 
 // 同一学生可以属于多个实际班级；使用实体 ID 避免同名班级混合。
 const studentProducts = computed(() => {
@@ -1030,11 +1031,17 @@ const studentProducts = computed(() => {
     if (!assigned.has(String(student.id))) add(student, 'unassigned', 'No course', 'unassigned-project', 'No project', 'unassigned-class', 'No class');
   }
   for (const product of products.values()) {
-    product.projects.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
-    for (const project of product.projects) project.classes.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+    product.projects.sort((a, b) => studentListCollator.compare(a.label, b.label));
+    for (const project of product.projects) {
+      project.classes.sort((a, b) => studentListCollator.compare(a.label, b.label));
+      for (const group of project.classes) {
+        group.students.sort((a, b) => studentListCollator.compare(a.studentName.trim(), b.studentName.trim())
+          || studentListCollator.compare(String(a.id), String(b.id)));
+      }
+    }
     product.studentCount = new Set(product.projects.flatMap((project) => project.classes.flatMap((group) => group.students.map((student) => student.id)))).size;
   }
-  return [...products.values()].sort((a, b) => a.key === 'unassigned' ? 1 : b.key === 'unassigned' ? -1 : a.label.localeCompare(b.label, undefined, { numeric: true }));
+  return [...products.values()].sort((a, b) => a.key === 'unassigned' ? 1 : b.key === 'unassigned' ? -1 : studentListCollator.compare(a.label, b.label));
 });
 
 function setOpen(openKeys: Set<string>, key: string, event: Event) {
