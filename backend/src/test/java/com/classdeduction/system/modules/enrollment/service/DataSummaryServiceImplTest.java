@@ -360,7 +360,7 @@ class DataSummaryServiceImplTest {
     }
 
     @Test
-    void shouldClassifyRefundByWhetherGroupEntitlementContinues() {
+    void shouldKeepRefundInRefundSectionRegardlessOfGroupEntitlementStatus() {
         EnrollmentOrderEntity order = order(1L, "100.00", "75.00", "25.00");
         EnrollmentOrderItemEntity item = item(101L, 1, "100.00");
         item.setEnrollmentOrderId(1L);
@@ -381,7 +381,10 @@ class DataSummaryServiceImplTest {
         when(paymentAllocationMapper.selectList(any())).thenReturn(List.of(paymentAllocation(201L, 101L, "-25.00")));
 
         assertThat(dataSummaryService.getSummary(new DataSummaryQuery()).rows()).singleElement()
-                .satisfies(row -> assertThat(row.refunded()).isFalse());
+                .satisfies(row -> {
+                    assertThat(row.refunded()).isTrue();
+                    assertThat(row.balanceAmount()).isEqualByComparingTo("0.00");
+                });
         entitlement.setStatus("CANCELLED");
         assertThat(dataSummaryService.getSummary(new DataSummaryQuery()).rows()).singleElement()
                 .satisfies(row -> assertThat(row.refunded()).isTrue());
