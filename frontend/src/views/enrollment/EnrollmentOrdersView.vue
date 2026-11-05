@@ -1053,7 +1053,8 @@
               ? `${(selectedRefundCourse.consumedLessonCount / 2).toFixed(1)} consumed hour(s)`
               : `${selectedRefundCourse.consumedLessonCount} confirmed chargeable session(s)` }}
           </span>
-          <small>A full refund ends this course. For a partial refund, choose Refund &amp; End Course if the student is leaving.</small>
+          <small v-if="refundCourseOnly">Any refund ends this student's course and stops future classes.</small>
+          <small v-else>A full refund ends this course. For a partial refund, choose Refund &amp; End Course if the student is leaving.</small>
         </div>
         <div v-else-if="refundForm.orderItemId === 'ALL' && refundCourseOptions.length > 1" class="refund-consumption">
           <strong>Per-course refund allocation</strong>
@@ -1100,7 +1101,7 @@
       <template #footer>
         <div class="dialog-footer">
           <el-button @click="refundDialogVisible = false">Cancel</el-button>
-          <el-button type="warning" :loading="refunding" @click="handleRefundSubmit(false)">Confirm Refund</el-button>
+          <el-button v-if="!refundCourseOnly" type="warning" :loading="refunding" @click="handleRefundSubmit(false)">Confirm Refund</el-button>
           <el-button v-if="selectedRefundCourse" type="primary" :loading="refunding" @click="handleRefundSubmit(true)">Refund &amp; End Course</el-button>
         </div>
       </template>
@@ -2746,6 +2747,9 @@ const refundCourseReceivedAmount = computed(() => refundForm.orderItemId === 'AL
   ? refundReceivedAmount.value
   : selectedRefundCourse.value?.paidAmount ?? refundReceivedAmount.value);
 const refundHint = computed(() => {
+  if (refundCourseOnly.value) {
+    return 'Any refund ends the selected course for this student and stops future classes.';
+  }
   if (isSharedParticipantRefund.value) {
     return 'This refund applies to the selected student’s received payments on the shared receipt.';
   }
@@ -2837,6 +2841,7 @@ function handleRefundCourseChange() {
 }
 
 async function handleRefundSubmit(endCourse = false) {
+  endCourse = endCourse || refundCourseOnly.value;
   const valid = await refundFormRef.value?.validate().catch(() => false);
   if (!valid || !refundOrder.value) return;
   if (endCourse && !selectedRefundCourse.value) {
