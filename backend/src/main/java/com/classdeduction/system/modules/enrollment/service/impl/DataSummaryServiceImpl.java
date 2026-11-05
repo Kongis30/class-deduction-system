@@ -938,10 +938,6 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             rowAmountDue = amount(rowStoppedConsumedAmount);
             rowBalanceAmount = rowAmountDue.subtract(rowPaidAmount).setScale(2, RoundingMode.HALF_UP);
         }
-        // 退款报名保留原始课程与付款信息，但退款后的余额不再作为学生欠款展示。
-        if (refundedRecord) {
-            rowBalanceAmount = ZERO_AMOUNT;
-        }
         boolean overdue = positive(rowBalanceAmount);
         boolean lowOneOnOneHours = oneOnOne && coursePackage != null
                 && safeUnits(coursePackage.getRemainingUnits()) <= renewalReminderUnits(coursePackage);

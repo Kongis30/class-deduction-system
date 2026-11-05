@@ -254,7 +254,7 @@ class DataSummaryServiceImplTest {
         assertThat(response.rows()).singleElement().satisfies(row -> {
             assertThat(row.refunded()).isTrue();
             assertThat(row.paidAmount()).isEqualByComparingTo("250.00");
-            assertThat(row.balanceAmount()).isEqualByComparingTo("0.00");
+            assertThat(row.balanceAmount()).isEqualByComparingTo("-150.00");
         });
     }
 
@@ -383,7 +383,7 @@ class DataSummaryServiceImplTest {
         assertThat(dataSummaryService.getSummary(new DataSummaryQuery()).rows()).singleElement()
                 .satisfies(row -> {
                     assertThat(row.refunded()).isTrue();
-                    assertThat(row.balanceAmount()).isEqualByComparingTo("0.00");
+                    assertThat(row.balanceAmount()).isEqualByComparingTo("-25.00");
                 });
         entitlement.setStatus("CANCELLED");
         assertThat(dataSummaryService.getSummary(new DataSummaryQuery()).rows()).singleElement()

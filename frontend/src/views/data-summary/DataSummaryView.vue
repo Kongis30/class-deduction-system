@@ -499,6 +499,7 @@
             v-for="row in visibleRefundRows"
             :key="rowKey(row)"
             class="workbook-data-row workbook-data-row--refund"
+            @contextmenu.prevent.stop="openStudentContextMenu($event, row, true)"
           >
             <td v-for="column in columns" :key="column.key" :class="stoppedCellClass(column.key)">
               <span v-if="column.key === 'period'">{{ formatPeriod(row) }}</span>
@@ -611,7 +612,7 @@
         View receipt
       </button>
       <button
-        v-if="studentContextMenu.row?.discontinued"
+        v-if="!studentContextMenu.refundRow && studentContextMenu.row?.discontinued"
         type="button"
         role="menuitem"
         @click="setStudentDiscontinued(false)"
@@ -619,7 +620,7 @@
         Continue
       </button>
       <button
-        v-else
+        v-if="!studentContextMenu.refundRow && !studentContextMenu.row?.discontinued"
         type="button"
         role="menuitem"
         @click="setStudentDiscontinued(true)"
@@ -627,7 +628,7 @@
         Discontinue student
       </button>
       <button
-        v-if="canPayFromDataSummary(studentContextMenu.row)"
+        v-if="!studentContextMenu.refundRow && canPayFromDataSummary(studentContextMenu.row)"
         type="button"
         role="menuitem"
         @click="openOrderAction('pay')"
@@ -932,11 +933,13 @@ const studentContextMenu = reactive<{
   visible: boolean;
   x: number;
   y: number;
+  refundRow: boolean;
   row: DataSummaryDisplayRow | null;
 }>({
   visible: false,
   x: 0,
   y: 0,
+  refundRow: false,
   row: null,
 });
 const refundPreviewStatus = ref<'checking' | 'available' | 'none' | 'review' | 'error'>('checking');
@@ -1613,12 +1616,13 @@ function setArchiveScope(value: 'CURRENT' | 'ARCHIVED') {
   if (activeTabId.value) restoreState(tabStates.get(activeTabId.value) ?? createDefaultState());
 }
 
-function openStudentContextMenu(event: MouseEvent, row: DataSummaryDisplayRow) {
+function openStudentContextMenu(event: MouseEvent, row: DataSummaryDisplayRow, refundRow = false) {
   const menuWidth = 150;
-  const menuHeight = 190;
+  const menuHeight = refundRow ? 88 : 190;
   studentContextMenu.x = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
   studentContextMenu.y = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
   studentContextMenu.row = row;
+  studentContextMenu.refundRow = refundRow;
   studentContextMenu.visible = true;
   refundPreviewStatus.value = 'checking';
   const requestId = ++refundPreviewRequestId;
@@ -1641,6 +1645,7 @@ function openStudentContextMenu(event: MouseEvent, row: DataSummaryDisplayRow) {
 function closeStudentContextMenu() {
   refundPreviewRequestId += 1;
   studentContextMenu.visible = false;
+  studentContextMenu.refundRow = false;
   studentContextMenu.row = null;
 }
 
