@@ -111,6 +111,9 @@
             </div>
           </template>
         </el-table-column>
+        <el-table-column label="Birthday" :width="appStore.isMobileViewport ? 112 : undefined" :min-width="appStore.isMobileViewport ? undefined : 140">
+          <template #default="{ row }">{{ formatDate(row.birthDate) }}</template>
+        </el-table-column>
         <el-table-column v-if="appStore.isMobileViewport" label="Phone" width="128">
           <template #default="{ row }">{{ formatUsPhoneDisplay(row.guardianPhone || row.phone) || '-' }}</template>
         </el-table-column>
