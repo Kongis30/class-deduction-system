@@ -18,6 +18,9 @@ public class RefundRequest {
     @Schema(description = "退款所对应的课程项；同一收据有多个课程时必填")
     private Long orderItemId;
 
+    @Schema(description = "退款完成后结束所选学生的课程")
+    private boolean endCourse;
+
     @Schema(description = "多人私教订单中的参与学生序号；普通订单为空", example = "2")
     private Integer participantIndex;
 

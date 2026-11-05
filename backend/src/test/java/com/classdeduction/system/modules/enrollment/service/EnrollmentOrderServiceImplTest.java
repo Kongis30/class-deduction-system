@@ -74,9 +74,12 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -809,8 +812,6 @@ class EnrollmentOrderServiceImplTest {
         when(groupCourseProjectMapper.selectById(910L)).thenReturn(project);
         when(groupRegistrationPlanMapper.selectById(920L)).thenReturn(plan);
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(orphan));
-        when(classEnrollmentMapper.selectActiveOverlappingForUpdate(any(), any(), any(), any()))
-                .thenReturn(List.of());
         lenient().when(classHolidayMapper.selectList(any())).thenReturn(List.of());
         lenient().when(receiptRecordMapper.selectList(any())).thenReturn(List.of());
 
@@ -900,8 +901,6 @@ class EnrollmentOrderServiceImplTest {
         when(groupCourseProjectMapper.selectById(910L)).thenReturn(project);
         when(groupRegistrationPlanMapper.selectById(920L)).thenReturn(plan);
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(orphan));
-        when(classEnrollmentMapper.selectActiveOverlappingForUpdate(any(), any(), any(), any()))
-                .thenReturn(List.of(9999L));
         lenient().when(classHolidayMapper.selectList(any())).thenReturn(List.of());
         lenient().when(receiptRecordMapper.selectList(any())).thenReturn(List.of());
 
@@ -1686,6 +1685,133 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
+    void shouldEndOnlySelectedGroupEnrollmentWithoutChangingMoney() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setAmountDue(new BigDecimal("4599.00"));
+        order.setReceivedAmount(new BigDecimal("460.00"));
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(2101L);
+        item.setEnrollmentOrderId(2001L);
+        item.setClassId(3001L);
+        ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
+        enrollment.setId(4001L);
+        enrollment.setEnrollmentOrderItemId(2101L);
+        enrollment.setStudentId(101L);
+        enrollment.setStatus("ACTIVE");
+        ClassEnrollmentEntity otherStudent = new ClassEnrollmentEntity();
+        otherStudent.setId(4002L);
+        otherStudent.setEnrollmentOrderItemId(2101L);
+        otherStudent.setStudentId(102L);
+        otherStudent.setStatus("ACTIVE");
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(enrollmentOrderItemMapper.selectOne(any())).thenReturn(item);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment, otherStudent));
+
+        var request = new com.classdeduction.system.modules.enrollment.dto.EndCourseRequest();
+        request.setOrderItemId(2101L);
+        request.setStudentId(101L);
+        enrollmentOrderService.endCourse(2001L, request);
+
+        assertThat(enrollment.getStatus()).isEqualTo("WITHDRAWN");
+        assertThat(otherStudent.getStatus()).isEqualTo("ACTIVE");
+        verify(enrollmentOrderCourseRefundStateMapper).insert(any(
+                com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderCourseRefundStateEntity.class));
+        verify(enrollmentOrderMapper, never()).updateById(any(EnrollmentOrderEntity.class));
+        verify(enrollmentOrderItemMapper, never()).updateById(any(EnrollmentOrderItemEntity.class));
+        verify(paymentRecordMapper, never()).insert(any(PaymentRecordEntity.class));
+        verify(lessonRecordMapper, never()).delete(any());
+        verify(lessonOccurrenceMapper, never()).update(any());
+    }
+
+    @Test
+    void shouldEndPrivateCourseWithoutChangingHoursOrMoney() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(2101L);
+        item.setEnrollmentOrderId(2001L);
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(4101L);
+        coursePackage.setPackageStatus("ACTIVE");
+        coursePackage.setStudentId(101L);
+        coursePackage.setTotalUnits(120);
+        coursePackage.setRemainingUnits(30);
+        coursePackage.setReceivedAmount(new BigDecimal("460.00"));
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(enrollmentOrderItemMapper.selectOne(any())).thenReturn(item);
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(coursePackageMapper.selectByIdForUpdate(4101L)).thenReturn(coursePackage);
+
+        var request = new com.classdeduction.system.modules.enrollment.dto.EndCourseRequest();
+        request.setOrderItemId(2101L);
+        request.setStudentId(101L);
+        enrollmentOrderService.endCourse(2001L, request);
+
+        assertThat(coursePackage.getPackageStatus()).isEqualTo("CLOSED");
+        assertThat(coursePackage.getTotalUnits()).isEqualTo(120);
+        assertThat(coursePackage.getRemainingUnits()).isEqualTo(30);
+        assertThat(coursePackage.getReceivedAmount()).isEqualByComparingTo("460.00");
+        verify(enrollmentOrderMapper, never()).updateById(any(EnrollmentOrderEntity.class));
+        verify(enrollmentOrderItemMapper, never()).updateById(any(EnrollmentOrderItemEntity.class));
+        verify(lessonOccurrenceMapper).update(any());
+        verify(lessonRecordMapper, never()).delete(any());
+    }
+
+    @Test
+    void shouldKeepSharedPrivateScheduleWhenAnotherStudentRemains() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(2101L);
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(4101L);
+        coursePackage.setPackageStatus("ACTIVE");
+        var member = new com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity();
+        member.setPackageId(4101L);
+        member.setPrivateLessonGroupId(5101L);
+        member.setMemberStatus("ACTIVE");
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(enrollmentOrderItemMapper.selectOne(any())).thenReturn(item);
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(coursePackageMapper.selectByIdForUpdate(4101L)).thenReturn(coursePackage);
+        when(privateLessonGroupMemberMapper.selectOne(any())).thenReturn(member);
+        when(privateLessonGroupMemberMapper.selectCount(any())).thenReturn(1L);
+
+        var request = new com.classdeduction.system.modules.enrollment.dto.EndCourseRequest();
+        request.setOrderItemId(2101L);
+        request.setStudentId(101L);
+        enrollmentOrderService.endCourse(2001L, request);
+
+        assertThat(member.getMemberStatus()).isEqualTo("INACTIVE");
+        verify(lessonOccurrenceMapper, never()).update(any());
+        verify(recurringScheduleRuleMapper, never()).update(any());
+        verify(lessonRecordMapper, never()).delete(any());
+    }
+
+    @Test
+    void shouldNotClosePrivatePackageSharedByMultiplePurchases() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(2101L);
+        item.setLogicalCourseId(7101L);
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(enrollmentOrderItemMapper.selectOne(any())).thenReturn(item);
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(enrollmentOrderItemMapper.selectCount(any())).thenReturn(2L);
+        var request = new com.classdeduction.system.modules.enrollment.dto.EndCourseRequest();
+        request.setOrderItemId(2101L);
+        request.setStudentId(101L);
+
+        assertThatThrownBy(() -> enrollmentOrderService.endCourse(2001L, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("LINKED_COURSE_MANUAL_REFUND_REQUIRED");
+        verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
+        verify(lessonOccurrenceMapper, never()).update(any());
+    }
+
+    @Test
     void shouldRequireCourseForPartialRefundOnMultiCourseReceipt() {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(2001L);
@@ -1787,7 +1913,7 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
-    void shouldStopOnlyTheRefundedPrivateCourseAndCancelItsFutureScheduleAtConsumedThreshold() {
+    void shouldKeepPrivateCourseActiveAfterPartialRefundAtConsumedThreshold() {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(2001L);
         order.setStudentId(101L);
@@ -1867,17 +1993,199 @@ class EnrollmentOrderServiceImplTest {
 
         enrollmentOrderService.refundOrder(order.getId(), request);
 
-        assertThat(item.getItemStatus()).isEqualTo("STOPPED");
-        assertThat(item.getAmountDue()).isEqualByComparingTo("20.00");
-        assertThat(item.getPaidAmount()).isEqualByComparingTo("20.00");
-        assertThat(item.getBalanceAmount()).isEqualByComparingTo(BigDecimal.ZERO);
-        assertThat(order.getAmountDue()).isEqualByComparingTo("20.00");
-        assertThat(order.getBalanceAmount()).isEqualByComparingTo(BigDecimal.ZERO);
-        assertThat(coursePackage.getTotalUnits()).isEqualTo(2);
-        assertThat(coursePackage.getRemainingUnits()).isZero();
+        assertThat(item.getItemStatus()).isEqualTo("ACTIVE");
+        assertThat(item.getAmountDue()).isEqualByComparingTo("100.00");
+        assertThat(order.getAmountDue()).isEqualByComparingTo("100.00");
+        assertThat(order.getBalanceAmount()).isEqualByComparingTo("80.00");
+        assertThat(coursePackage.getTotalUnits()).isEqualTo(10);
+        assertThat(coursePackage.getRemainingUnits()).isEqualTo(8);
+        assertThat(coursePackage.getPackageStatus()).isEqualTo("ACTIVE");
+        verify(lessonOccurrenceMapper, never()).update(any());
+    }
+
+    @Test
+    void shouldEndPrivateCourseWhenFullyRefunded() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setStudentId(101L);
+        order.setStudentNameSnapshot("Student 1");
+        order.setCreatedAt(LocalDateTime.of(2026, 9, 1, 10, 0));
+        order.setOrderStatus("CONFIRMED");
+        order.setPaymentStatus("PAID");
+        order.setReceivedAmount(new BigDecimal("100.00"));
+        order.setAmountDue(new BigDecimal("100.00"));
+        order.setBalanceAmount(BigDecimal.ZERO);
+
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(4401L);
+        item.setEnrollmentOrderId(order.getId());
+        item.setLineNo(1);
+        item.setCourseType("ONE_ON_ONE");
+        item.setPriceAmount(new BigDecimal("100.00"));
+        item.setDiscountAmount(BigDecimal.ZERO);
+        item.setAmountDue(new BigDecimal("100.00"));
+        item.setOneOnOneUnits(10);
+        item.setItemStatus("ACTIVE");
+
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(3001L);
+        coursePackage.setEnrollmentOrderId(order.getId());
+        coursePackage.setEnrollmentOrderItemId(item.getId());
+        coursePackage.setStudentId(order.getStudentId());
+        coursePackage.setPackageStatus("ACTIVE");
+        coursePackage.setTotalUnits(10);
+        coursePackage.setConsumedUnits(2);
+        coursePackage.setRemainingUnits(8);
+        coursePackage.setReceivedAmount(new BigDecimal("100.00"));
+
+        PaymentRecordEntity originalPayment = buildPayment(7001L, new BigDecimal("100.00"), 1);
+        PaymentAllocationEntity originalAllocation = new PaymentAllocationEntity();
+        originalAllocation.setPaymentRecordId(originalPayment.getId());
+        originalAllocation.setEnrollmentOrderId(order.getId());
+        originalAllocation.setEnrollmentOrderItemId(item.getId());
+        originalAllocation.setAmount(new BigDecimal("100.00"));
+
+        LessonRecordEntity usedLesson = new LessonRecordEntity();
+        usedLesson.setPackageId(coursePackage.getId());
+        usedLesson.setConfirmStage("CONFIRMED");
+        usedLesson.setIsDeleted(0);
+        usedLesson.setDeductedUnits(2);
+        usedLesson.setPlannedStartAt(LocalDateTime.of(2026, 9, 10, 18, 0));
+
+        when(enrollmentOrderMapper.selectById(order.getId())).thenReturn(order);
+        when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+        when(enrollmentOrderItemMapper.selectOne(any())).thenReturn(item);
+        when(enrollmentOrderItemMapper.selectById(item.getId())).thenReturn(item);
+        when(enrollmentOrderParticipantMapper.selectCount(any())).thenReturn(null);
+        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of(originalAllocation));
+        when(paymentRecordMapper.selectBatchIds(any())).thenReturn(List.of(originalPayment));
+        when(paymentMethodMapper.selectCount(any())).thenReturn(1L);
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(coursePackageMapper.selectByIdForUpdate(3001L)).thenReturn(coursePackage);
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(usedLesson));
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of());
+        when(jsonHelper.toJson(any())).thenReturn("{\"receiptType\":\"REFUND\"}");
+        doAnswer(invocation -> {
+            PaymentRecordEntity entity = invocation.getArgument(0);
+            entity.setId(8001L);
+            return 1;
+        }).when(paymentRecordMapper).insert(any(PaymentRecordEntity.class));
+        doAnswer(invocation -> {
+            ReceiptRecordEntity entity = invocation.getArgument(0);
+            entity.setId(9002L);
+            return 1;
+        }).when(receiptRecordMapper).insert(any(ReceiptRecordEntity.class));
+
+        com.classdeduction.system.modules.enrollment.dto.RefundRequest request =
+                new com.classdeduction.system.modules.enrollment.dto.RefundRequest();
+        request.setOrderItemId(item.getId());
+        request.setRefundAmount(new BigDecimal("100.00"));
+        request.setPaymentMethod("CASH");
+        request.setHandledByName("Amy");
+
+        enrollmentOrderService.refundOrder(order.getId(), request);
+
+        assertThat(item.getItemStatus()).isEqualTo("ACTIVE");
+        assertThat(item.getAmountDue()).isEqualByComparingTo("100.00");
+        assertThat(order.getAmountDue()).isEqualByComparingTo("100.00");
+        assertThat(order.getBalanceAmount()).isEqualByComparingTo("100.00");
+        assertThat(coursePackage.getTotalUnits()).isEqualTo(10);
+        assertThat(coursePackage.getRemainingUnits()).isEqualTo(8);
         assertThat(coursePackage.getPackageStatus()).isEqualTo("CLOSED");
         verify(lessonOccurrenceMapper).update(any());
-        verify(recurringScheduleRuleMapper).selectList(any());
+    }
+
+    @Test
+    void shouldEndPrivateCourseWithPartialRefundWhenRequested() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setStudentId(101L);
+        order.setStudentNameSnapshot("Student 1");
+        order.setCreatedAt(LocalDateTime.of(2026, 9, 1, 10, 0));
+        order.setOrderStatus("CONFIRMED");
+        order.setPaymentStatus("PAID");
+        order.setReceivedAmount(new BigDecimal("100.00"));
+        order.setAmountDue(new BigDecimal("100.00"));
+        order.setBalanceAmount(BigDecimal.ZERO);
+
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(4401L);
+        item.setEnrollmentOrderId(order.getId());
+        item.setLineNo(1);
+        item.setCourseType("ONE_ON_ONE");
+        item.setPriceAmount(new BigDecimal("100.00"));
+        item.setDiscountAmount(BigDecimal.ZERO);
+        item.setAmountDue(new BigDecimal("100.00"));
+        item.setOneOnOneUnits(10);
+        item.setItemStatus("ACTIVE");
+
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(3001L);
+        coursePackage.setEnrollmentOrderId(order.getId());
+        coursePackage.setEnrollmentOrderItemId(item.getId());
+        coursePackage.setStudentId(order.getStudentId());
+        coursePackage.setPackageStatus("ACTIVE");
+        coursePackage.setTotalUnits(10);
+        coursePackage.setConsumedUnits(2);
+        coursePackage.setRemainingUnits(8);
+        coursePackage.setReceivedAmount(new BigDecimal("100.00"));
+
+        PaymentRecordEntity originalPayment = buildPayment(7001L, new BigDecimal("100.00"), 1);
+        PaymentAllocationEntity originalAllocation = new PaymentAllocationEntity();
+        originalAllocation.setPaymentRecordId(originalPayment.getId());
+        originalAllocation.setEnrollmentOrderId(order.getId());
+        originalAllocation.setEnrollmentOrderItemId(item.getId());
+        originalAllocation.setAmount(new BigDecimal("100.00"));
+
+        LessonRecordEntity usedLesson = new LessonRecordEntity();
+        usedLesson.setPackageId(coursePackage.getId());
+        usedLesson.setConfirmStage("CONFIRMED");
+        usedLesson.setIsDeleted(0);
+        usedLesson.setDeductedUnits(2);
+        usedLesson.setPlannedStartAt(LocalDateTime.of(2026, 9, 10, 18, 0));
+
+        when(enrollmentOrderMapper.selectById(order.getId())).thenReturn(order);
+        when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+        when(enrollmentOrderItemMapper.selectOne(any())).thenReturn(item);
+        when(enrollmentOrderItemMapper.selectById(item.getId())).thenReturn(item);
+        when(enrollmentOrderParticipantMapper.selectCount(any())).thenReturn(null);
+        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of(originalAllocation));
+        when(paymentRecordMapper.selectBatchIds(any())).thenReturn(List.of(originalPayment));
+        when(paymentMethodMapper.selectCount(any())).thenReturn(1L);
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(coursePackageMapper.selectByIdForUpdate(3001L)).thenReturn(coursePackage);
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(usedLesson));
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of());
+        when(jsonHelper.toJson(any())).thenReturn("{\"receiptType\":\"REFUND\"}");
+        doAnswer(invocation -> {
+            PaymentRecordEntity entity = invocation.getArgument(0);
+            entity.setId(8001L);
+            return 1;
+        }).when(paymentRecordMapper).insert(any(PaymentRecordEntity.class));
+        doAnswer(invocation -> {
+            ReceiptRecordEntity entity = invocation.getArgument(0);
+            entity.setId(9002L);
+            return 1;
+        }).when(receiptRecordMapper).insert(any(ReceiptRecordEntity.class));
+
+        com.classdeduction.system.modules.enrollment.dto.RefundRequest request =
+                new com.classdeduction.system.modules.enrollment.dto.RefundRequest();
+        request.setOrderItemId(item.getId());
+        request.setRefundAmount(new BigDecimal("80.00"));
+        request.setEndCourse(true);
+        request.setPaymentMethod("CASH");
+        request.setHandledByName("Amy");
+
+        enrollmentOrderService.refundOrder(order.getId(), request);
+
+        assertThat(item.getItemStatus()).isEqualTo("ACTIVE");
+        assertThat(item.getAmountDue()).isEqualByComparingTo("100.00");
+        assertThat(order.getAmountDue()).isEqualByComparingTo("100.00");
+        assertThat(order.getBalanceAmount()).isEqualByComparingTo("80.00");
+        assertThat(coursePackage.getTotalUnits()).isEqualTo(10);
+        assertThat(coursePackage.getRemainingUnits()).isEqualTo(8);
+        assertThat(coursePackage.getPackageStatus()).isEqualTo("CLOSED");
+        verify(lessonOccurrenceMapper).update(any());
     }
 
     @Test
@@ -1902,7 +2210,7 @@ class EnrollmentOrderServiceImplTest {
                 .extracting("code")
                 .isEqualTo("PAYMENT_METHOD_NOT_AVAILABLE");
 
-        verify(coursePackageMapper, never()).selectList(any());
+        verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
         verify(paymentRecordMapper, never()).insert(any(PaymentRecordEntity.class));
         verify(enrollmentOrderMapper, never()).updateById(any(EnrollmentOrderEntity.class));
     }
@@ -1957,6 +2265,189 @@ class EnrollmentOrderServiceImplTest {
         assertThat(orderCaptor.getValue().getReceivedAmount()).isEqualByComparingTo("100.00");
         assertThat(orderCaptor.getValue().getPaymentStatus()).isEqualTo("PAID");
         assertThat(orderCaptor.getValue().getOrderStatus()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void shouldCompareRefundSnapshotsByMoneyValueButKeepOtherChangesSignificant() throws Exception {
+        ReflectionTestUtils.setField(enrollmentOrderService, "jsonHelper",
+                new com.classdeduction.system.common.util.JsonHelper(new ObjectMapper().findAndRegisterModules()));
+
+        EnrollmentOrderEntity amountWithOneDecimal = new EnrollmentOrderEntity();
+        amountWithOneDecimal.setReceivedAmount(new BigDecimal("600.0"));
+        EnrollmentOrderEntity amountWithTwoDecimals = new EnrollmentOrderEntity();
+        amountWithTwoDecimals.setReceivedAmount(new BigDecimal("600.00"));
+
+        Object expected = createRefundStateSnapshot(amountWithOneDecimal, List.of());
+        Object current = createRefundStateSnapshot(amountWithTwoDecimals, List.of());
+        assertRefundSnapshotsMatch(expected, current, true);
+
+        CoursePackageEntity endedPackage = new CoursePackageEntity();
+        endedPackage.setId(4101L);
+        endedPackage.setPackageStatus("CLOSED");
+        Object laterCourseChange = createRefundStateSnapshot(amountWithTwoDecimals, List.of(endedPackage));
+        assertRefundSnapshotsMatch(expected, laterCourseChange, false);
+    }
+
+    @Test
+    void shouldRestoreCourseAndScheduleWhenUndoingRefundWithDatabaseMoneyScale() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+        ReflectionTestUtils.setField(enrollmentOrderService, "jsonHelper",
+                new com.classdeduction.system.common.util.JsonHelper(objectMapper));
+
+        EnrollmentOrderEntity beforeOrder = new EnrollmentOrderEntity();
+        beforeOrder.setId(2001L);
+        beforeOrder.setReceivedAmount(new BigDecimal("700.00"));
+        EnrollmentOrderEntity afterOrder = new EnrollmentOrderEntity();
+        afterOrder.setId(2001L);
+        afterOrder.setReceivedAmount(new BigDecimal("600.0"));
+        EnrollmentOrderEntity databaseOrder = new EnrollmentOrderEntity();
+        databaseOrder.setId(2001L);
+        databaseOrder.setReceivedAmount(new BigDecimal("600.00"));
+
+        CoursePackageEntity beforePackage = refundUndoPackage("ACTIVE");
+        CoursePackageEntity afterPackage = refundUndoPackage("CLOSED");
+        LessonOccurrenceEntity beforeOccurrence = refundUndoOccurrence("SCHEDULED");
+        LessonOccurrenceEntity afterOccurrence = refundUndoOccurrence("CANCELLED");
+        RecurringScheduleRuleEntity beforeRule = refundUndoRule("ACTIVE");
+        RecurringScheduleRuleEntity afterRule = refundUndoRule("INACTIVE");
+        PaymentRecordEntity originalPayment = new PaymentRecordEntity();
+        originalPayment.setId(8000L);
+        originalPayment.setEnrollmentOrderId(2001L);
+        originalPayment.setPaymentType("PAYMENT");
+        originalPayment.setPaymentStatus("PAID");
+        originalPayment.setAmount(new BigDecimal("700.00"));
+        PaymentRecordEntity refund = new PaymentRecordEntity();
+        refund.setId(8001L);
+        refund.setEnrollmentOrderId(2001L);
+        refund.setPaymentType("REFUND");
+        refund.setPaymentStatus("REFUNDED");
+        refund.setAmount(new BigDecimal("-100.00"));
+
+        Object before = createRefundStateSnapshot(beforeOrder, List.of(beforePackage));
+        Object after = createRefundStateSnapshot(afterOrder, List.of(afterPackage));
+        before = replaceSnapshotRows(before, "occurrences", List.of(beforeOccurrence));
+        before = replaceSnapshotRows(before, "recurringRules", List.of(beforeRule));
+        before = replaceSnapshotRows(before, "payments", List.of(originalPayment));
+        after = replaceSnapshotRows(after, "occurrences", List.of(afterOccurrence));
+        after = replaceSnapshotRows(after, "recurringRules", List.of(afterRule));
+        after = replaceSnapshotRows(after, "payments", List.of(originalPayment, refund));
+        Object undoSnapshot = createRefundUndoSnapshot(before, after);
+
+        ReceiptRecordEntity receipt = new ReceiptRecordEntity();
+        receipt.setId(9002L);
+        receipt.setEnrollmentOrderId(2001L);
+        receipt.setPaymentRecordId(8001L);
+        receipt.setTemplateCode("REFUND_RECEIPT");
+        String undoSnapshotJson = objectMapper.writeValueAsString(undoSnapshot);
+        receipt.setReceiptPayload(objectMapper.writeValueAsString(Map.of("refundUndoSnapshot", undoSnapshotJson)));
+
+        when(receiptRecordMapper.selectById(9002L)).thenReturn(receipt);
+        when(enrollmentOrderMapper.selectByIdForUpdate(2001L)).thenReturn(databaseOrder);
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(databaseOrder);
+        when(paymentRecordMapper.selectById(8001L)).thenReturn(refund);
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of());
+        when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(List.of());
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(afterPackage));
+        when(enrollmentOrderCourseRefundStateMapper.selectList(any())).thenReturn(List.of());
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(originalPayment, refund));
+        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of());
+        when(privateLessonGroupMemberMapper.selectList(any())).thenReturn(List.of());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(afterOccurrence));
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(afterRule));
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of());
+        when(coursePackageMapper.selectById(3001L)).thenReturn(afterPackage);
+        when(lessonOccurrenceMapper.selectById(5001L)).thenReturn(afterOccurrence);
+        when(recurringScheduleRuleMapper.selectById(6001L)).thenReturn(afterRule);
+        when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+        when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
+        when(lessonOccurrenceMapper.updateById(any(LessonOccurrenceEntity.class))).thenReturn(1);
+        when(recurringScheduleRuleMapper.updateById(any(RecurringScheduleRuleEntity.class))).thenReturn(1);
+        when(paymentRecordMapper.updateById(any(PaymentRecordEntity.class))).thenReturn(1);
+        when(paymentRecordMapper.deleteById(8001L)).thenReturn(1);
+        when(receiptRecordMapper.deleteById(9002L)).thenReturn(1);
+
+        enrollmentOrderService.deleteRefundReceipt(9002L,
+                new CurrentUserResponse(9L, "admin", "Admin", "STAFF", null, null, List.of("STAFF")));
+
+        verify(paymentRecordMapper).selectList(any());
+        verify(enrollmentOrderMapper).updateById(orderCaptor.capture());
+        assertThat(orderCaptor.getValue().getReceivedAmount()).isEqualByComparingTo("700.00");
+        assertThat(afterPackage.getPackageStatus()).isEqualTo("ACTIVE");
+        assertThat(afterOccurrence.getPlanningStatus()).isEqualTo("SCHEDULED");
+        assertThat(afterRule.getRuleStatus()).isEqualTo("ACTIVE");
+        verify(coursePackageMapper).updateById(afterPackage);
+        verify(lessonOccurrenceMapper).updateById(afterOccurrence);
+        verify(recurringScheduleRuleMapper).updateById(afterRule);
+        verify(paymentRecordMapper).deleteById(8001L);
+        verify(receiptRecordMapper).deleteById(9002L);
+    }
+
+    private Object createRefundStateSnapshot(EnrollmentOrderEntity order, List<CoursePackageEntity> packages)
+            throws Exception {
+        Class<?> snapshotType = Class.forName(EnrollmentOrderServiceImpl.class.getName() + "$RefundStateSnapshot");
+        Constructor<?> constructor = snapshotType.getDeclaredConstructors()[0];
+        constructor.setAccessible(true);
+        Object[] components = { order, List.of(), List.of(), packages, List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of() };
+        return constructor.newInstance(components);
+    }
+
+    private Object replaceSnapshotRows(Object snapshot, String componentName, List<?> rows) throws Exception {
+        var components = snapshot.getClass().getRecordComponents();
+        Constructor<?> constructor = snapshot.getClass().getDeclaredConstructors()[0];
+        constructor.setAccessible(true);
+        Object[] values = new Object[components.length];
+        boolean found = false;
+        for (int index = 0; index < components.length; index++) {
+            if (components[index].getName().equals(componentName)) {
+                values[index] = rows;
+                found = true;
+            } else {
+                var accessor = components[index].getAccessor();
+                accessor.setAccessible(true);
+                values[index] = accessor.invoke(snapshot);
+            }
+        }
+        if (!found) throw new IllegalArgumentException("Unknown snapshot component: " + componentName);
+        return constructor.newInstance(values);
+    }
+
+    private Object createRefundUndoSnapshot(Object before, Object after) throws Exception {
+        Class<?> undoType = Class.forName(EnrollmentOrderServiceImpl.class.getName() + "$RefundUndoSnapshot");
+        Constructor<?> constructor = undoType.getDeclaredConstructors()[0];
+        constructor.setAccessible(true);
+        return constructor.newInstance(before, after, null, null, false);
+    }
+
+    private CoursePackageEntity refundUndoPackage(String status) {
+        CoursePackageEntity entity = new CoursePackageEntity();
+        entity.setId(3001L);
+        entity.setPackageStatus(status);
+        return entity;
+    }
+
+    private LessonOccurrenceEntity refundUndoOccurrence(String status) {
+        LessonOccurrenceEntity entity = new LessonOccurrenceEntity();
+        entity.setId(5001L);
+        entity.setPackageId(3001L);
+        entity.setPlanningStatus(status);
+        return entity;
+    }
+
+    private RecurringScheduleRuleEntity refundUndoRule(String status) {
+        RecurringScheduleRuleEntity entity = new RecurringScheduleRuleEntity();
+        entity.setId(6001L);
+        entity.setPackageId(3001L);
+        entity.setRuleStatus(status);
+        return entity;
+    }
+
+    private void assertRefundSnapshotsMatch(Object expected, Object current, boolean matches) throws Exception {
+        Class<?> snapshotType = expected.getClass();
+        Method comparator = EnrollmentOrderServiceImpl.class.getDeclaredMethod(
+                "refundSnapshotsMatch", snapshotType, snapshotType);
+        comparator.setAccessible(true);
+        assertThat(comparator.invoke(enrollmentOrderService, expected, current)).isEqualTo(matches);
     }
 
     @Test
@@ -2093,7 +2584,7 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
-    void courseRefundAtConsumedValueStopsOnlyThatClassEnrollment() {
+    void partialCourseRefundAtConsumedValueKeepsClassEnrollmentActive() {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(2001L);
         order.setOrderStatus("CONFIRMED");
@@ -2163,14 +2654,11 @@ class EnrollmentOrderServiceImplTest {
 
         enrollmentOrderService.refundOrder(order.getId(), request);
 
-        verify(classEnrollmentMapper).updateById(classEnrollmentCaptor.capture());
-        assertThat(classEnrollmentCaptor.getValue().getStatus()).isEqualTo("WITHDRAWN");
-        verify(enrollmentOrderItemMapper, atLeastOnce()).updateById(item);
-        assertThat(item.getItemStatus()).isEqualTo("STOPPED");
-        assertThat(item.getAmountDue()).isEqualByComparingTo("143.69");
-        assertThat(item.getPaidAmount()).isEqualByComparingTo("143.69");
-        assertThat(item.getBalanceAmount()).isEqualByComparingTo(BigDecimal.ZERO);
-        verify(enrollmentOrderCourseRefundStateMapper).insert(any(
+        verify(classEnrollmentMapper, never()).updateById(any(ClassEnrollmentEntity.class));
+        assertThat(enrollment.getStatus()).isEqualTo("ACTIVE");
+        assertThat(item.getItemStatus()).isEqualTo("ACTIVE");
+        assertThat(item.getAmountDue()).isEqualByComparingTo("2299.00");
+        verify(enrollmentOrderCourseRefundStateMapper, never()).insert(any(
                 com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderCourseRefundStateEntity.class));
         verify(lessonOccurrenceMapper, never()).update(any());
         verify(paymentAllocationService).recordRefundAllocation(any(PaymentRecordEntity.class),
@@ -2258,7 +2746,7 @@ class EnrollmentOrderServiceImplTest {
         assertThat(orderCaptor.getValue().getPaymentStatus()).isEqualTo("PARTIAL");
         assertThat(orderCaptor.getValue().getReceivedAmount()).isEqualByComparingTo(new BigDecimal("900.00"));
         assertThat(orderCaptor.getValue().getBalanceAmount()).isEqualByComparingTo(new BigDecimal("200.00"));
-        verify(coursePackageMapper, never()).selectList(any());
+        verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
         verify(classEnrollmentMapper, never()).update(any());
         verify(lessonOccurrenceMapper, never()).update(any());
     }

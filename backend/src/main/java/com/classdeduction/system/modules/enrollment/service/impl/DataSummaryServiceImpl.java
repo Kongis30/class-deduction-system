@@ -366,7 +366,8 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             Map<EnrollmentItemStudentKey, List<ClassEnrollmentEntity>> classEnrollmentsByItemStudent,
             LocalDate today) {
         if ("CANCELLED".equalsIgnoreCase(row.orderStatus())
-                || "STOPPED".equalsIgnoreCase(row.itemStatus())) {
+                || "STOPPED".equalsIgnoreCase(row.itemStatus())
+                || "ENDED".equalsIgnoreCase(row.itemStatus())) {
             return false;
         }
 
@@ -830,6 +831,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         LocalDate stoppedEnd = refundState != null && refundState.getStoppedAt() != null
                 ? refundState.getStoppedPeriodEndDate() : item == null ? null : item.getStoppedPeriodEndDate();
         boolean stoppedRecord = "STOPPED".equals(resolveDisplayItemStatus(item, refundState));
+        boolean endedRecord = "ENDED".equals(resolveDisplayItemStatus(item, refundState));
         boolean refundedRecord = "REFUNDED".equalsIgnoreCase(order.getPaymentStatus())
                 || item != null && refundedParticipantCourses.contains(new ParticipantCourseKey(item.getId(), displayStudentId));
         if (stoppedRecord && item != null) {
@@ -937,6 +939,10 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             rowDiscountAmount = ZERO_AMOUNT;
             rowAmountDue = amount(rowStoppedConsumedAmount);
             rowBalanceAmount = rowAmountDue.subtract(rowPaidAmount).setScale(2, RoundingMode.HALF_UP);
+        }
+        // 已退款且已结课的记录不再显示待收余额；只调整报表，不改写财务数据。
+        if (refundedRecord && (stoppedRecord || endedRecord)) {
+            rowBalanceAmount = ZERO_AMOUNT;
         }
         boolean overdue = positive(rowBalanceAmount);
         boolean lowOneOnOneHours = oneOnOne && coursePackage != null
@@ -1128,6 +1134,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
 
     private String resolveDisplayItemStatus(EnrollmentOrderItemEntity item,
                                             EnrollmentOrderCourseRefundStateEntity refundState) {
+        if (refundState != null && "ENDED".equalsIgnoreCase(refundState.getItemStatus())) {
+            return "ENDED";
+        }
         if (item != null && "STOPPED".equalsIgnoreCase(item.getItemStatus())) {
             return "STOPPED";
         }

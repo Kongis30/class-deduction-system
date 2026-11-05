@@ -132,6 +132,11 @@ export interface RefundPayload {
   handledByUserId?: string | number;
   remark?: string;
   disposition?: 'REFUND' | 'CREDIT';
+  endCourse?: boolean;
+}
+
+export function endEnrollmentCourse(id: string | number, orderItemId: string | number, studentId: string | number) {
+  return http.post<ApiResponse<void>>(`/v1/enrollment/orders/${id}/end-course`, { orderItemId, studentId });
 }
 
 export interface RefundCoursePreviewItem {

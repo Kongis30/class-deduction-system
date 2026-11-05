@@ -545,7 +545,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in visibleStoppedRows" :key="rowKey(row)">
+            <tr v-for="row in visibleStoppedRows" :key="rowKey(row)" @contextmenu.prevent.stop="openStudentContextMenu($event, row, true)">
               <td v-for="column in columns" :key="column.key" :class="stoppedCellClass(column.key)">
                 <span v-if="column.key === 'period'">{{ formatPeriod(row) }}</span>
                 <span v-else-if="column.key === 'signupDate'">{{ formatDate(row.signupDate) }}</span>
@@ -612,6 +612,10 @@
         View receipt
       </button>
       <button
+        v-if="!isManager && !['ENDED', 'STOPPED'].includes(studentContextMenu.row?.itemStatus ?? '')"
+        type="button" role="menuitem" @click="endStudentCourse"
+      >End course</button>
+      <button
         v-if="!studentContextMenu.refundRow && studentContextMenu.row?.discontinued"
         type="button"
         role="menuitem"
@@ -655,12 +659,12 @@
 <script setup lang="ts">
 import dayjs from 'dayjs';
 import { ArrowDown, ArrowUp, Close, MoreFilled, Search } from '@element-plus/icons-vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import * as XLSX from 'xlsx';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 import { fetchDataSummary, updateDataSummaryClassification, type DataSummaryRow } from '@/api/data-summary';
-import { fetchRefundPreview } from '@/api/enrollment';
+import { endEnrollmentCourse, fetchRefundPreview } from '@/api/enrollment';
 import { fetchAllCourseProducts, saveCourseProductTabOrder } from '@/api/base-data';
 import { extractErrorMessage } from '@/api/http';
 import { useAppStore } from '@/stores/app';
@@ -993,8 +997,8 @@ const productRows = computed(() => {
 });
 
 const refundedProductRows = computed(() => productRows.value.filter((row) => row.refunded));
-const stoppedProductRows = computed(() => productRows.value.filter((row) => !row.refunded && row.itemStatus === 'STOPPED'));
-const activeProductRows = computed(() => productRows.value.filter((row) => !row.refunded && row.itemStatus !== 'STOPPED'));
+const stoppedProductRows = computed(() => productRows.value.filter((row) => !row.refunded && ['STOPPED', 'ENDED'].includes(row.itemStatus ?? '')));
+const activeProductRows = computed(() => productRows.value.filter((row) => !row.refunded && !['STOPPED', 'ENDED'].includes(row.itemStatus ?? '')));
 const displayStoppedRows = computed(() => isSaturdayProductTab.value
   ? filterSaturdayRosterRows(stoppedProductRows.value, saturdayRosterView.value)
   : stoppedProductRows.value);
@@ -1618,7 +1622,7 @@ function setArchiveScope(value: 'CURRENT' | 'ARCHIVED') {
 
 function openStudentContextMenu(event: MouseEvent, row: DataSummaryDisplayRow, refundRow = false) {
   const menuWidth = 150;
-  const menuHeight = refundRow ? 88 : 190;
+  const menuHeight = refundRow ? 132 : 230;
   studentContextMenu.x = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
   studentContextMenu.y = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
   studentContextMenu.row = row;
@@ -1647,6 +1651,28 @@ function closeStudentContextMenu() {
   studentContextMenu.visible = false;
   studentContextMenu.refundRow = false;
   studentContextMenu.row = null;
+}
+
+async function endStudentCourse() {
+  const row = studentContextMenu.row;
+  closeStudentContextMenu();
+  if (!row?.orderId || !row.orderItemId || !row.studentId || (row.purchaseRows?.length ?? 0) > 1) {
+    ElMessage.warning('Select an individual course purchase before ending a course.');
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(`End this course for ${row.studentName}? Future classes will stop. No refund will be issued.`,
+      'End course', { confirmButtonText: 'End course', cancelButtonText: 'Cancel', type: 'warning' });
+  } catch {
+    return;
+  }
+  try {
+    await endEnrollmentCourse(row.orderId, row.orderItemId, row.studentId);
+    await loadPage();
+    ElMessage.success('Course ended.');
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  }
 }
 
 async function setStudentDiscontinued(discontinued: boolean) {
@@ -1975,6 +2001,7 @@ function columnValue(row: DataSummaryDisplayRow, key: ColumnKey): string | numbe
 }
 
 function stoppedColumnValue(row: DataSummaryDisplayRow, key: ColumnKey): string | number | undefined {
+  if (row.itemStatus === 'ENDED') return columnValue(row, key);
   switch (key) {
     case 'period':
       return formatPeriod(row);
@@ -2223,7 +2250,7 @@ function formatPeriod(row: DataSummaryRow) {
 }
 
 function isPeriodRenewalDue(row: DataSummaryRow) {
-  if (isPrivateLessonRow(row) || row.discontinued || row.refunded || row.itemStatus === 'STOPPED') {
+  if (isPrivateLessonRow(row) || row.discontinued || row.refunded || ['STOPPED', 'ENDED'].includes(row.itemStatus ?? '')) {
     return false;
   }
   const end = row.logicalCourseId == null ? row.periodEndDate

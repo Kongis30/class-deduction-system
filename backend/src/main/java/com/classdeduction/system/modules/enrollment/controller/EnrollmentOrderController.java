@@ -11,6 +11,7 @@ import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderPageQuery
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderCorrectionRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderUpdateRequest;
 import com.classdeduction.system.modules.enrollment.dto.RefundRequest;
+import com.classdeduction.system.modules.enrollment.dto.EndCourseRequest;
 import com.classdeduction.system.modules.enrollment.service.DataSummaryService;
 import com.classdeduction.system.modules.enrollment.service.EnrollmentOrderService;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentCreateResultVO;
@@ -120,6 +121,13 @@ public class EnrollmentOrderController {
             @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
         request.setHandledByUserId(currentUser.userId());
         return ApiResponse.success("Refunded successfully.", enrollmentOrderService.refundOrder(id, request));
+    }
+
+    @PostMapping("/{id}/end-course")
+    @RequireRoles({"ADMIN", "STAFF"})
+    public ApiResponse<Void> endCourse(@PathVariable Long id, @Valid @RequestBody EndCourseRequest request) {
+        enrollmentOrderService.endCourse(id, request);
+        return ApiResponse.success("Course ended.", null);
     }
 
     @GetMapping("/{id}/refund-preview")

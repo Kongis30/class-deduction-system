@@ -385,9 +385,57 @@ class DataSummaryServiceImplTest {
                     assertThat(row.refunded()).isTrue();
                     assertThat(row.balanceAmount()).isEqualByComparingTo("-25.00");
                 });
+        var ended = new com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderCourseRefundStateEntity();
+        ended.setEnrollmentOrderItemId(101L);
+        ended.setStudentId(1L);
+        ended.setItemStatus("ENDED");
+        ended.setStoppedAt(java.time.LocalDateTime.of(2026, 10, 8, 12, 0));
+        when(enrollmentOrderCourseRefundStateMapper.selectList(any())).thenReturn(List.of(ended));
+        assertThat(dataSummaryService.getSummary(new DataSummaryQuery()).rows()).singleElement()
+                .satisfies(row -> {
+                    assertThat(row.itemStatus()).isEqualTo("ENDED");
+                    assertThat(row.refunded()).isTrue();
+                    assertThat(row.balanceAmount()).isEqualByComparingTo("0.00");
+                    assertThat(row.amountDue()).isEqualByComparingTo("100.00");
+                });
+        when(enrollmentOrderCourseRefundStateMapper.selectList(any())).thenReturn(Collections.emptyList());
+        item.setItemStatus("STOPPED");
+        assertThat(dataSummaryService.getSummary(new DataSummaryQuery()).rows()).singleElement()
+                .satisfies(row -> {
+                    assertThat(row.refunded()).isTrue();
+                    assertThat(row.balanceAmount()).isEqualByComparingTo("0.00");
+                });
         entitlement.setStatus("CANCELLED");
         assertThat(dataSummaryService.getSummary(new DataSummaryQuery()).rows()).singleElement()
                 .satisfies(row -> assertThat(row.refunded()).isTrue());
+    }
+
+    @Test
+    void shouldKeepCourseEndSeparateFromRefundAndPreserveOriginalAmounts() {
+        EnrollmentOrderEntity order = order(1L, "100.00", "60.00", "40.00");
+        EnrollmentOrderItemEntity item = item(101L, 1, "100.00");
+        item.setEnrollmentOrderId(1L);
+        item.setAmountDue(new BigDecimal("100.00"));
+        item.setPaidAmount(new BigDecimal("60.00"));
+        item.setBalanceAmount(new BigDecimal("40.00"));
+        item.setItemStatus("ACTIVE");
+        var ended = new com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderCourseRefundStateEntity();
+        ended.setEnrollmentOrderItemId(101L);
+        ended.setStudentId(1L);
+        ended.setItemStatus("ENDED");
+        ended.setStoppedAt(java.time.LocalDateTime.of(2026, 10, 8, 12, 0));
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(enrollmentOrderCourseRefundStateMapper.selectList(any())).thenReturn(List.of(ended));
+
+        assertThat(dataSummaryService.getSummary(new DataSummaryQuery()).rows()).singleElement()
+                .satisfies(row -> {
+                    assertThat(row.itemStatus()).isEqualTo("ENDED");
+                    assertThat(row.refunded()).isFalse();
+                    assertThat(row.amountDue()).isEqualByComparingTo("100.00");
+                    assertThat(row.paidAmount()).isEqualByComparingTo("60.00");
+                    assertThat(row.balanceAmount()).isEqualByComparingTo("-40.00");
+                });
     }
 
     @Test

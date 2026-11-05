@@ -1053,7 +1053,7 @@
               ? `${(selectedRefundCourse.consumedLessonCount / 2).toFixed(1)} consumed hour(s)`
               : `${selectedRefundCourse.consumedLessonCount} confirmed chargeable session(s)` }}
           </span>
-          <small>If the remaining paid amount is at or below this amount after the refund, the student will be withdrawn from this course and future schedule entries will be removed.</small>
+          <small>A full refund ends this course. For a partial refund, choose Refund &amp; End Course if the student is leaving.</small>
         </div>
         <div v-else-if="refundForm.orderItemId === 'ALL' && refundCourseOptions.length > 1" class="refund-consumption">
           <strong>Per-course refund allocation</strong>
@@ -1077,6 +1077,7 @@
             style="width: 100%;"
           />
         </el-form-item>
+        <p v-if="selectedRefundCourse">Amount retained after refund: ${{ Math.max(0, refundCourseReceivedAmount - refundForm.refundAmount).toFixed(2) }}</p>
         <el-form-item label="Refund handling" prop="disposition">
           <el-radio-group v-model="refundForm.disposition">
             <el-radio value="CREDIT">Convert to Student Credit</el-radio>
@@ -1099,7 +1100,8 @@
       <template #footer>
         <div class="dialog-footer">
           <el-button @click="refundDialogVisible = false">Cancel</el-button>
-          <el-button type="warning" :loading="refunding" @click="handleRefundSubmit">Confirm Refund</el-button>
+          <el-button type="warning" :loading="refunding" @click="handleRefundSubmit(false)">Confirm Refund</el-button>
+          <el-button v-if="selectedRefundCourse" type="primary" :loading="refunding" @click="handleRefundSubmit(true)">Refund &amp; End Course</el-button>
         </div>
       </template>
     </el-dialog>
@@ -2834,9 +2836,13 @@ function handleRefundCourseChange() {
     : selectedRefundCourse.value?.paidAmount ?? 0;
 }
 
-async function handleRefundSubmit() {
+async function handleRefundSubmit(endCourse = false) {
   const valid = await refundFormRef.value?.validate().catch(() => false);
   if (!valid || !refundOrder.value) return;
+  if (endCourse && !selectedRefundCourse.value) {
+    ElMessage.warning('Select a course to end.');
+    return;
+  }
   if (refundOrder.value.billingPolicy === 'WHOLE_DOLLAR_V1' && !Number.isInteger(refundForm.refundAmount)) {
     ElMessage.warning('Refund amount must be a whole dollar amount.');
     return;
@@ -2858,6 +2864,17 @@ async function handleRefundSubmit() {
     ElMessage.warning('For a partial refund on a multi-course receipt, select one course.');
     return;
   }
+  if (endCourse) {
+    try {
+      await ElMessageBox.confirm(
+        `Refund $${refundForm.refundAmount.toFixed(2)} and end this course for ${refundStudentName.value}? Future classes will stop.`,
+        'Refund and end course',
+        { confirmButtonText: 'Refund & End Course', cancelButtonText: 'Cancel', type: 'warning' },
+      );
+    } catch {
+      return;
+    }
+  }
   refunding.value = true;
   try {
     await refundEnrollmentOrder(refundOrder.value.id, {
@@ -2869,8 +2886,9 @@ async function handleRefundSubmit() {
       handledByName: refundForm.handledByName,
       remark: refundForm.remark || undefined,
       disposition: refundForm.disposition,
+      endCourse,
     });
-    ElMessage.success('Refund completed.');
+    ElMessage.success(endCourse ? 'Refund completed and course ended.' : 'Refund completed.');
     refundDialogVisible.value = false;
     const order = refundOrder.value;
     if (order.classId) {
