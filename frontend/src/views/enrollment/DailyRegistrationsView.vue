@@ -38,10 +38,6 @@
           </section>
           <div class="workbook-toolbar__stats daily-workbook-toolbar__stats">
             <span class="workbook-toolbar__stat"><em>Registrations</em><strong>{{ historyStats.registrations }}</strong></span>
-            <span class="workbook-toolbar__stat"><em>Transactions</em><strong>{{ cashStats.count }}</strong></span>
-            <span class="workbook-toolbar__stat"><em>Incoming</em><strong>{{ money(cashStats.incoming) }}</strong></span>
-            <span class="workbook-toolbar__stat"><em>Outgoing</em><strong>{{ money(cashStats.outgoing) }}</strong></span>
-            <span class="workbook-toolbar__stat"><em>Net</em><strong>{{ money(cashStats.net) }}</strong></span>
           </div>
         </template>
         <template v-else>
@@ -60,11 +56,6 @@
 
       <div v-if="!appStore.isMobileViewport" class="workbook-toolbar__stats daily-workbook-toolbar__stats">
         <span class="workbook-toolbar__stat"><em>Registrations</em><strong>{{ historyStats.registrations }}</strong></span>
-        <span class="workbook-toolbar__stat"><em>Transactions</em><strong>{{ cashStats.count }}</strong></span>
-        <span class="workbook-toolbar__stat"><em>Incoming</em><strong>{{ money(cashStats.incoming) }}</strong></span>
-        <span class="workbook-toolbar__stat"><em>Outgoing</em><strong>{{ money(cashStats.outgoing) }}</strong></span>
-        <span class="workbook-toolbar__stat"><em>Net</em><strong>{{ money(cashStats.net) }}</strong></span>
-        <span v-if="cashStats.internal > 0" class="workbook-toolbar__stat"><em>Internal Credit</em><strong>{{ money(cashStats.internal) }}</strong></span>
       </div>
 
       <div v-if="!appStore.isMobileViewport" class="workbook-toolbar__export daily-workbook-toolbar__actions">
@@ -112,7 +103,7 @@
       <section class="daily-sheet history-sheet">
         <div class="daily-sheet__caption">
           <strong>Registration history</strong>
-          <span>{{ filteredRows.length }} record(s) on {{ formatDay(selectedDate) }}. Amounts: + incoming, − outgoing; internal credit and voided entries are excluded from cash totals.</span>
+          <span>{{ filteredRows.length }} registration record(s) on {{ formatDay(selectedDate) }}.</span>
         </div>
         <div ref="historyScrollRef" class="workbook-scroll daily-sheet__scroll history-sheet__scroll mobile-pinch-scroll" data-testid="daily-registration-workbook">
           <table class="workbook-table history-table" :style="{ zoom: appStore.isMobileViewport ? historyTableScale : undefined }">
@@ -202,9 +193,8 @@
                     <span>{{ group.rows.length }} record(s)</span>
                   </td>
                 </tr>
-                <tr v-for="row in group.rows" :key="row.key" class="workbook-data-row" :class="{ 'history-row--voided': row.voided, 'history-row--internal': row.internalTransfer }">
+                <tr v-for="row in group.rows" :key="row.key" class="workbook-data-row">
                   <td>{{ dateTime(row.savedAt) }}</td>
-                  <td>{{ row.recordType }}</td>
                   <td>{{ display(row.operatorName, 'Operator not recorded') }}</td>
                   <td>{{ display(row.studentName) }}</td>
                   <td>{{ display(row.courseName) }}</td>
@@ -214,9 +204,8 @@
                     <span :class="['workbook-pill', paymentMethodClass(row.paymentMethod)]">{{ display(row.paymentMethod) }}</span>
                   </td>
                   <td class="workbook-cell--center">{{ display(row.paymentStatus) }}</td>
-                  <td class="workbook-cell--money">{{ row.source === 'registration' ? money(row.amountDue) : '—' }}</td>
-                  <td class="workbook-cell--money" :class="row.cashMovement > 0 ? 'history-amount--incoming' : row.cashMovement < 0 ? 'history-amount--outgoing' : ''">{{ row.cashMovement ? signedAmount(row.cashMovement) : '—' }}</td>
-                  <td>{{ display(row.referenceNo || row.note) }}</td>
+                  <td class="workbook-cell--money">{{ money(row.amountDue) }}</td>
+                  <td>{{ display(row.referenceNo) }}</td>
                 </tr>
               </template>
             </tbody>
@@ -238,35 +227,32 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import * as XLSX from 'xlsx';
 import { Close, MoreFilled, Search } from '@element-plus/icons-vue';
 
-import { fetchDailyCashFlow, fetchDailyRegistrations, type DailyCashFlowReport, type DailyCashFlowRow, type DailyRegistrationOperatorSummary, type DailyRegistrationReport, type DailyRegistrationRow } from '@/api/daily-registrations';
+import { fetchDailyRegistrations, type DailyRegistrationOperatorSummary, type DailyRegistrationReport, type DailyRegistrationRow } from '@/api/daily-registrations';
 import { extractErrorMessage } from '@/api/http';
 import { useAppStore } from '@/stores/app';
 import { useMobileTablePinchZoom } from '@/composables/useMobileTablePinchZoom';
 
-type ColumnKey = 'savedAt' | 'recordType' | 'studentName' | 'courseName' | 'className' | 'grade' | 'operatorName' | 'paymentMethod' | 'paymentStatus' | 'amountDue' | 'cashMovement' | 'referenceNo';
+type ColumnKey = 'savedAt' | 'studentName' | 'courseName' | 'className' | 'grade' | 'operatorName' | 'paymentMethod' | 'paymentStatus' | 'amountDue' | 'referenceNo';
 type FilterType = 'text' | 'select' | 'date' | 'number';
 type Column = { key: ColumnKey; label: string; width: number; filterType: FilterType };
 type ColumnFilter = { text: string; selected: string[]; dateRange: [string, string] | null; min: number | undefined; max: number | undefined };
 type HistoryRow = {
-  key: string; source: 'registration' | 'transaction'; savedAt?: string; recordType: string;
+  key: string; savedAt?: string;
   operatorName?: string; studentName?: string; courseName?: string; className?: string; grade?: string;
-  paymentMethod?: string; paymentStatus?: string; amountDue?: number; cashMovement: number;
-  referenceNo?: string; note?: string; orderId?: string | number; studentId?: string | number;
-  internalTransfer?: boolean; internalAmount?: number; voided?: boolean;
+  paymentMethod?: string; paymentStatus?: string; amountDue?: number;
+  referenceNo?: string; orderId?: string | number; studentId?: string | number;
 };
 
 const columns: Column[] = [
   { key: 'savedAt', label: 'Time (ET)', width: 165, filterType: 'date' },
-  { key: 'recordType', label: 'Record', width: 140, filterType: 'select' },
   { key: 'operatorName', label: 'Handled by', width: 155, filterType: 'select' },
-  { key: 'studentName', label: 'Student / teacher', width: 175, filterType: 'text' },
-  { key: 'courseName', label: 'Course / details', width: 220, filterType: 'text' },
+  { key: 'studentName', label: 'Student', width: 175, filterType: 'text' },
+  { key: 'courseName', label: 'Course', width: 220, filterType: 'text' },
   { key: 'grade', label: 'Grade', width: 90, filterType: 'select' },
   { key: 'className', label: 'Class', width: 180, filterType: 'text' },
   { key: 'paymentMethod', label: 'Pay method', width: 125, filterType: 'select' },
   { key: 'paymentStatus', label: 'Status', width: 130, filterType: 'select' },
   { key: 'amountDue', label: 'Amount due', width: 120, filterType: 'number' },
-  { key: 'cashMovement', label: 'Amount', width: 140, filterType: 'number' },
   { key: 'referenceNo', label: 'Reference / note', width: 230, filterType: 'text' },
 ];
 
@@ -275,7 +261,6 @@ const appStore = useAppStore();
 const mobileFiltersExpanded = ref(false);
 const operatorUserId = ref('');
 const report = ref<DailyRegistrationReport>();
-const cashFlowReport = ref<DailyCashFlowReport>();
 const operatorOptions = ref<DailyRegistrationOperatorSummary[]>([]);
 const loading = ref(false);
 const operatorScrollRef = ref<HTMLElement | null>(null);
@@ -285,35 +270,20 @@ const { scale: historyTableScale } = useMobileTablePinchZoom(historyScrollRef, c
 let latestRequestId = 0;
 const sortState = ref<{ key: ColumnKey; direction: 'asc' | 'desc' }>({ key: 'savedAt', direction: 'desc' });
 const columnFilters = reactive<Record<ColumnKey, ColumnFilter>>({
-  savedAt: emptyFilter(), recordType: emptyFilter(), studentName: emptyFilter(), courseName: emptyFilter(), className: emptyFilter(),
+  savedAt: emptyFilter(), studentName: emptyFilter(), courseName: emptyFilter(), className: emptyFilter(),
   grade: emptyFilter(), operatorName: emptyFilter(), paymentMethod: emptyFilter(), paymentStatus: emptyFilter(),
-  amountDue: emptyFilter(), cashMovement: emptyFilter(), referenceNo: emptyFilter(),
+  amountDue: emptyFilter(), referenceNo: emptyFilter(),
 });
 
-const cashFlowRows = computed(() => cashFlowReport.value?.rows ?? []);
-const sourceRows = computed<HistoryRow[]>(() => [
-  ...(report.value?.rows ?? []).map((row, index): HistoryRow => ({
-    key: `registration:${rowKey(row)}:${index}`, source: 'registration', savedAt: row.savedAt,
-    recordType: 'Registration', operatorName: row.operatorName, studentName: row.studentName,
+const sourceRows = computed<HistoryRow[]>(() => (report.value?.rows ?? []).map((row, index): HistoryRow => ({
+    key: `registration:${rowKey(row)}:${index}`, savedAt: row.savedAt,
+    operatorName: row.operatorName, studentName: row.studentName,
     courseName: row.courseName, className: row.className, grade: row.grade,
     paymentMethod: row.paymentMethod, paymentStatus: row.paymentStatus,
-    amountDue: Number(row.amountDue ?? 0), cashMovement: 0,
+    amountDue: Number(row.amountDue ?? 0),
     referenceNo: row.orderId == null ? undefined : `Order ${row.orderId}`,
     orderId: row.orderId, studentId: row.studentId,
-  })),
-  ...cashFlowRows.value.map((row): HistoryRow => ({
-    key: `transaction:${row.transactionId}`, source: 'transaction', savedAt: row.happenedAt,
-    recordType: cashFlowType(row), operatorName: row.handledByName,
-    studentName: row.counterpartyName,
-    courseName: row.transactionType === 'TEACHER_PAYMENT' ? 'Teacher payroll' : row.note,
-    paymentMethod: row.internalTransfer ? 'Student Credit' : row.paymentMethod,
-    paymentStatus: row.voided ? 'Voided' : row.status || 'Recorded',
-    amountDue: undefined,
-    cashMovement: (row.direction === 'OUT' ? -1 : 1) * Math.abs(Number(row.amount ?? 0)),
-    referenceNo: [row.referenceNo, row.note].filter(Boolean).join(' · ') || undefined,
-    internalTransfer: row.internalTransfer, internalAmount: row.internalTransfer ? Math.abs(Number(row.amount ?? 0)) : 0, voided: row.voided,
-  })),
-].sort((left, right) => (right.savedAt ?? '').localeCompare(left.savedAt ?? '') || left.key.localeCompare(right.key)));
+  })).sort((left, right) => (right.savedAt ?? '').localeCompare(left.savedAt ?? '') || left.key.localeCompare(right.key)));
 const exportDisabled = computed(() => filteredRows.value.length === 0);
 const hasAnyColumnFilter = computed(() => columns.some((column) => hasColumnFilter(column.key)));
 const hasActiveReportFilters = hasAnyColumnFilter;
@@ -343,25 +313,7 @@ const visibleOperators = computed(() => {
   if (!operatorUserId.value) return report.value?.operators ?? [];
   return (report.value?.operators ?? []).filter((operator) => String(operator.operatorUserId ?? '') === operatorUserId.value);
 });
-const historyStats = computed(() => ({ registrations: filteredRows.value.filter((row) => row.source === 'registration').length }));
-const cashStats = computed(() => {
-  let incoming = 0;
-  let outgoing = 0;
-  let internal = 0;
-  let count = 0;
-  for (const row of filteredRows.value.filter((item) => item.source === 'transaction')) {
-    const amount = Math.abs(Number(row.cashMovement ?? 0));
-    if (row.voided) continue;
-    if (row.internalTransfer) {
-      internal += Number(row.internalAmount ?? 0);
-      continue;
-    }
-    count += 1;
-    if (row.cashMovement > 0) incoming += amount;
-    else if (row.cashMovement < 0) outgoing += amount;
-  }
-  return { count, incoming, outgoing, net: incoming - outgoing, internal };
-});
+const historyStats = computed(() => ({ registrations: filteredRows.value.length }));
 
 onMounted(loadReport);
 
@@ -378,24 +330,13 @@ async function loadReport() {
       toDate: selectedDate.value,
       ...(operatorUserId.value ? { operatorUserId: operatorUserId.value } : {}),
     };
-    const [registrationResponse, cashFlowResponse] = await Promise.all([
-      fetchDailyRegistrations(params), fetchDailyCashFlow(params),
-    ]);
+    const registrationResponse = await fetchDailyRegistrations(params);
     if (requestId !== latestRequestId) return;
     report.value = registrationResponse.data.data;
-    cashFlowReport.value = cashFlowResponse.data.data;
     if (!operatorUserId.value) {
       const options = new Map<string, DailyRegistrationOperatorSummary>();
       for (const operator of registrationResponse.data.data.operators) {
         options.set(String(operator.operatorUserId ?? operator.operatorName), operator);
-      }
-      for (const row of cashFlowResponse.data.data.rows) {
-        if (row.handledByUserId == null && !row.handledByName) continue;
-        const key = String(row.handledByUserId ?? row.handledByName);
-        if (!options.has(key)) options.set(key, {
-          operatorUserId: row.handledByUserId, operatorName: row.handledByName,
-          courseRegistrationCount: 0, orderCount: 0, uniqueStudentCount: 0, amountDue: 0, amountCollected: 0,
-        });
       }
       operatorOptions.value = [...options.values()].sort((left, right) => naturalCompare(left.operatorName ?? '', right.operatorName ?? ''));
     }
@@ -493,13 +434,13 @@ function exportExcel() {
   for (const row of filteredSortedRows.value) {
     sheetRows.push(columns.map((column) => {
       const value = row[column.key];
-      return ['amountDue', 'cashMovement'].includes(column.key)
-        ? (column.key === 'amountDue' && row.source !== 'registration' ? '—' : Number(value ?? 0))
+      return column.key === 'amountDue'
+        ? Number(value ?? 0)
         : column.key === 'savedAt' ? dateTime(row.savedAt) : textValue(value) || '—';
     }));
   }
   const sheet = XLSX.utils.aoa_to_sheet(sheetRows);
-  [9, 10].forEach((columnIndex) => {
+  [8].forEach((columnIndex) => {
     for (let rowIndex = 1; rowIndex < sheetRows.length; rowIndex += 1) {
       const cell = sheet[XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex })];
       if (cell) cell.z = '$#,##0.00;-$#,##0.00';
@@ -509,17 +450,6 @@ function exportExcel() {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, 'Registration History');
   XLSX.writeFile(workbook, `Registration_History_${selectedDate.value}.xlsx`);
-}
-
-function cashFlowType(row: DailyCashFlowRow) {
-  if (row.voided) return 'Voided entry';
-  if (row.internalTransfer) return 'Internal Credit';
-  if (row.transactionType === 'TEACHER_PAYMENT') return 'Teacher payroll';
-  return row.transactionType === 'REFUND' ? 'Refund' : 'Receipt';
-}
-
-function signedAmount(value: number) {
-  return `${value < 0 ? '−' : '+'}${money(Math.abs(value))}`;
 }
 
 function handleMobileAction(command: string) {
@@ -610,10 +540,6 @@ function rowKey(row: DailyRegistrationRow) {
 .daily-workbook-page .workbook-sort-indicator { font-size: 10px; }
 .history-sheet { display: flex; min-height: 0; flex: 1; flex-direction: column; }
 .history-sheet__scroll { flex: 1; min-height: 0; }
-.history-amount--incoming { color: #176d47; font-weight: 700; }
-.history-amount--outgoing { color: #b42332; font-weight: 700; }
-.history-row--voided td { background: #f4f4f5 !important; color: #8c8c91; text-decoration: line-through; }
-.history-row--internal td { background: #f5f8fc !important; }
 .daily-date-group td.daily-date-group__cell { height: 28px; padding: 5px 8px; border-right: 0; background: #edf4f1; color: #315b49; font-weight: 700; }
 .daily-date-group span { margin-left: 10px; color: #76857f; font-size: 11px; font-weight: 500; }
 @media (max-width: 900px) {

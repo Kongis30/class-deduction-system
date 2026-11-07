@@ -53,38 +53,6 @@ export interface DailyRegistrationReport {
   rows: DailyRegistrationRow[];
 }
 
-export interface DailyCashFlowRow {
-  transactionId: string;
-  transactionType: 'PAYMENT' | 'REFUND' | 'TEACHER_PAYMENT' | string;
-  direction: 'IN' | 'OUT' | string;
-  happenedAt?: string;
-  handledByUserId?: EntityId;
-  handledByName?: string;
-  counterpartyName?: string;
-  paymentMethod?: string;
-  amount?: number;
-  status?: string;
-  referenceNo?: string;
-  note?: string;
-  internalTransfer: boolean;
-  voided: boolean;
-}
-
-export interface DailyCashFlowReport {
-  fromDate: string;
-  toDate: string;
-  transactionCount: number;
-  incomingAmount: number;
-  outgoingAmount: number;
-  netAmount: number;
-  internalTransferAmount: number;
-  rows: DailyCashFlowRow[];
-}
-
 export function fetchDailyRegistrations(params: DailyRegistrationQuery) {
   return http.get<ApiResponse<DailyRegistrationReport>>('/v1/daily-registrations', { params });
-}
-
-export function fetchDailyCashFlow(params: DailyRegistrationQuery) {
-  return http.get<ApiResponse<DailyCashFlowReport>>('/v1/daily-registrations/cash-flow', { params });
 }
