@@ -387,7 +387,7 @@
         <p v-if="isEditing" class="edit-schedule__hint">
           {{ editMode === 'CURRENT'
             ? 'Change a current slot’s teacher, allocated hours, lesson name, or classroom. Its day, time, and schedule period stay the same.'
-            : 'Change the start date or weekly times. Assign each previous slot’s lesson history to one new slot before saving.' }}
+            : 'Change the start date or weekly times. You can assign multiple previous slots to one new slot; assign each previous slot only once.' }}
         </p>
         <el-alert v-if="isEditing && editMode === 'REPLAN' && pendingStartedLessons.length"
           type="warning" :closable="false" show-icon
@@ -438,9 +438,10 @@
         <el-divider content-position="left">{{ isEditing && editMode === 'CURRENT' ? 'Current time slots' : 'Weekly time slots' }}</el-divider>
         <div v-if="isEditing && editMode === 'REPLAN'" class="edit-schedule__sources">
           <strong>Previous time slots and teachers</strong>
+          <small>Assign several previous slots to one new slot if needed. Each previous slot can be assigned only once.</small>
           <div v-for="source in originalEditSlots" :key="String(source.slotId)">
             {{ scheduleSlotLabel(source) }} · {{ teacherNameForSlot(source.teacherId) }} · {{ source.subjectName || 'Lesson' }}
-            <span>{{ editForm.slots.some(slot => String(slot.slotId) === String(source.slotId)) ? '→ assigned' : '→ choose a successor below' }}</span>
+            <span>{{ editForm.slots.some(slot => slot.inheritedSlotIds?.some(id => String(id) === String(source.slotId))) ? '→ assigned' : '→ choose a successor below' }}</span>
           </div>
         </div>
         <p v-if="!isEditing" class="edit-schedule__hint">
@@ -479,9 +480,16 @@
               <small>First class {{ firstOccurrenceDate(slot) }} · Each lesson {{ formatSlotHours(slot.plannedUnits) }} · {{ slotLessonPlan(slot) }}</small>
               <label v-if="isEditing && editMode === 'REPLAN'" class="slot-teacher-row__field">
                 <span>Inherit previous lesson history</span>
-                <el-select v-model="slot.slotId" clearable placeholder="New slot, no previous history">
+                <el-select
+                  v-model="slot.inheritedSlotIds"
+                  multiple
+                  clearable
+                  collapse-tags
+                  collapse-tags-tooltip
+                  placeholder="New slot, no previous history"
+                >
                   <el-option
-                    v-for="source in originalEditSlots.filter(item => !editForm.slots.some(other => other !== slot && String(other.slotId) === String(item.slotId)))"
+                    v-for="source in originalEditSlots.filter(item => !editForm.slots.some(other => other !== slot && other.inheritedSlotIds?.some(id => String(id) === String(item.slotId))))"
                     :key="String(source.slotId)" :value="source.slotId!"
                     :label="`${scheduleSlotLabel(source)} · ${teacherNameForSlot(source.teacherId)} · ${source.subjectName || 'Lesson'}`"
                   />
@@ -1824,6 +1832,7 @@ const editForm = reactive({
   notes: '',
   slots: [] as Array<SlotDef & {
     slotId?: EntityId;
+    inheritedSlotIds?: EntityId[];
     teacherId?: EntityId;
     classroomSelection?: string;
     subjectName?: string;
@@ -2583,7 +2592,7 @@ async function openEditDialog() {
   // 重排的历史继承必须由用户指定，不能把原课位 ID 自动带入新周期。
   editModeDrafts.REPLAN = {
     startDate: todayInAppTimezone(),
-    slots: editForm.slots.map(slot => ({ ...slot, slotId: undefined })),
+    slots: editForm.slots.map(slot => ({ ...slot, slotId: undefined, inheritedSlotIds: [] })),
   };
   editDialogVisible.value = true;
 }
@@ -2709,7 +2718,7 @@ async function submitEditForm() {
         ElMessage.warning('Review the unconfirmed lessons above, or choose to withdraw them before saving the new timetable.');
         return;
       }
-      const assigned = new Set(editForm.slots.map(slot => String(slot.slotId)).filter(id => id !== 'undefined'));
+      const assigned = new Set(editForm.slots.flatMap(slot => slot.inheritedSlotIds || []).map(String));
       const missing = originalEditSlots.value.find(slot => !assigned.has(String(slot.slotId)));
       if (missing) {
         ElMessage.warning(`Assign the lesson history from ${scheduleSlotLabel(missing)} to one new time slot.`);
@@ -2728,7 +2737,8 @@ async function submitEditForm() {
         expectedPendingLessonSnapshots: editMode.value === 'REPLAN'
           ? pendingStartedLessons.value.map(lesson => lesson.snapshot) : undefined,
         slots: editForm.slots.map((s) => ({
-          slotId: s.slotId,
+          slotId: editMode.value === 'CURRENT' ? s.slotId : undefined,
+          inheritedSlotIds: editMode.value === 'REPLAN' ? s.inheritedSlotIds : undefined,
           teacherId: s.teacherId,
           deliveryMode: s.classroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON',
           classroomId: s.classroomSelection?.startsWith('ROOM:') ? s.classroomSelection.slice(5) : undefined,
@@ -3285,6 +3295,7 @@ function disabledPastDate(date: Date) {
 <style scoped>
 .edit-schedule__mode { margin: 16px 0 4px; }
 .edit-schedule__sources { margin: 12px 0; padding: 12px 16px; border: 1px solid #d9e4ef; border-radius: 8px; background: #f7faff; }
+.edit-schedule__sources > small { display: block; padding-top: 4px; color: #64748b; }
 .edit-schedule__sources > div { display: flex; justify-content: space-between; gap: 12px; padding-top: 8px; }
 .edit-schedule__sources span { color: #64748b; white-space: nowrap; }
 .edit-deduction-prompt__lessons {

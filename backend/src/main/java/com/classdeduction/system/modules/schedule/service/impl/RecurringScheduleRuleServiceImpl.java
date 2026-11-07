@@ -856,7 +856,10 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             if ("REPLAN".equals(request.getEditOperation())) {
                 // 新周期额度由用户逐个填写；继承历史不能隐式覆盖所填额度。
                 for (RecurringScheduleSlotRequest slot : request.getSlots()) {
-                    int retainedUnits = futureHandoffUnitsBySlot.getOrDefault(slot.getSlotId(), 0);
+                    int retainedUnits = 0;
+                    for (Long sourceId : historySourceSlotIds(slot)) {
+                        retainedUnits += futureHandoffUnitsBySlot.getOrDefault(sourceId, 0);
+                    }
                     if (safeUnits(slot.getAllocatedUnits()) < retainedUnits) {
                         throw new BusinessException("SLOT_ALLOCATION_BELOW_HANDOFF",
                                 "The allocation must cover future adjusted lessons being handed off.");
@@ -943,8 +946,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         Map<Long, RecurringScheduleSlotEntity> handoffSourceSlotsByOccurrence = new HashMap<>();
         Map<Long, Long> handoffExpectedTeachersByOccurrence = new HashMap<>();
         if (!futureHandoffOccurrences.isEmpty()) {
-            Map<Long, RecurringScheduleSlotEntity> targetSlotsByLineage = newSlots.stream()
-                    .collect(Collectors.toMap(this::slotLineageId, slot -> slot, (left, right) -> left));
+            Map<Long, RecurringScheduleSlotEntity> targetSlotsByLineage = targetSlotsByInheritedLineage(
+                    request.getSlots(), existingSlotsById, newSlots);
             for (LessonOccurrenceEntity occurrence : futureHandoffOccurrences) {
                 RecurringScheduleSlotEntity source = handoffSlotsById.get(occurrence.getScheduleSlotId());
                 RecurringScheduleSlotEntity target = targetSlotsByLineage.get(slotLineageId(source));
@@ -1015,6 +1018,9 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 throw new BusinessException("LESSON_CHANGED",
                         "A future lesson changed while its teacher was being handed off. Refresh the schedule and try again.");
             }
+        }
+        if ("REPLAN".equals(request.getEditOperation()) && startsNewPeriod) {
+            reassignInheritedLineages(request.getSlots(), existingSlotsById, newSlots);
         }
         newOccurrences.forEach(lessonOccurrenceMapper::insert);
 
@@ -2725,12 +2731,54 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot));
         Map<Long, Long> targets = new HashMap<>();
         for (RecurringScheduleSlotRequest request : requestedSlots) {
-            RecurringScheduleSlotEntity existing = request.getSlotId() == null
-                    ? null : existingById.get(request.getSlotId());
-            if (existing == null || Objects.equals(existing.getTeacherId(), request.getTeacherId())) continue;
-            targets.put(slotLineageId(existing), request.getTeacherId());
+            for (Long sourceId : historySourceSlotIds(request)) {
+                RecurringScheduleSlotEntity existing = existingById.get(sourceId);
+                if (existing == null || Objects.equals(existing.getTeacherId(), request.getTeacherId())) continue;
+                targets.put(slotLineageId(existing), request.getTeacherId());
+            }
         }
         return targets;
+    }
+
+    /** 把每个来源 lineage 映射到用户指定的新课位，供未来例外课次交接使用。 */
+    private Map<Long, RecurringScheduleSlotEntity> targetSlotsByInheritedLineage(
+            List<RecurringScheduleSlotRequest> requestedSlots,
+            Map<Long, RecurringScheduleSlotEntity> previousSlotsById,
+            List<RecurringScheduleSlotEntity> newSlots) {
+        Map<Long, RecurringScheduleSlotEntity> targets = new HashMap<>();
+        for (int index = 0; index < requestedSlots.size(); index++) {
+            RecurringScheduleSlotEntity target = newSlots.get(index);
+            for (Long sourceId : historySourceSlotIds(requestedSlots.get(index))) {
+                RecurringScheduleSlotEntity source = previousSlotsById.get(sourceId);
+                if (source != null) targets.put(slotLineageId(source), target);
+            }
+        }
+        return targets;
+    }
+
+    /** 将合并来源的旧 slot 与历史归属统一到新课位 lineage，保留 occurrence 和 lesson record 原始内容。 */
+    private void reassignInheritedLineages(
+            List<RecurringScheduleSlotRequest> requestedSlots,
+            Map<Long, RecurringScheduleSlotEntity> previousSlotsById,
+            List<RecurringScheduleSlotEntity> newSlots) {
+        Map<Long, Long> successorBySourceLineage = new LinkedHashMap<>();
+        for (int index = 0; index < requestedSlots.size(); index++) {
+            Long targetLineage = slotLineageId(newSlots.get(index));
+            for (Long sourceId : historySourceSlotIds(requestedSlots.get(index))) {
+                RecurringScheduleSlotEntity source = previousSlotsById.get(sourceId);
+                if (source != null) successorBySourceLineage.put(slotLineageId(source), targetLineage);
+            }
+        }
+        for (Map.Entry<Long, Long> entry : successorBySourceLineage.entrySet()) {
+            Long sourceLineage = entry.getKey();
+            Long targetLineage = entry.getValue();
+            if (Objects.equals(sourceLineage, targetLineage)) continue;
+            if (recurringScheduleSlotMapper.reassignSlotLineage(sourceLineage, targetLineage) < 1) {
+                throw new BusinessException("HISTORY_CHANGED",
+                        "A previous time slot changed. Refresh the schedule and assign its lesson history again.");
+            }
+            lessonOccurrenceMapper.reassignHistoryOwnerLineage(sourceLineage, targetLineage);
+        }
     }
 
     /** 合并当前周期将保留的课次和旧周期保留课次，按课次 ID 去重。 */
@@ -2835,12 +2883,14 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         }
         Map<Long, RecurringScheduleSlotEntity> existingById = existingSlots.stream()
                 .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot));
-        List<Long> requestedIds = request.getSlots().stream()
-                .map(RecurringScheduleSlotRequest::getSlotId).filter(Objects::nonNull).toList();
+        List<Long> requestedIds = "REPLAN".equals(operation)
+                ? request.getSlots().stream().flatMap(slot -> historySourceSlotIds(slot).stream()).toList()
+                : request.getSlots().stream().map(RecurringScheduleSlotRequest::getSlotId)
+                        .filter(Objects::nonNull).toList();
         if (requestedIds.size() != new HashSet<>(requestedIds).size()
                 || requestedIds.stream().anyMatch(slotId -> !existingById.containsKey(slotId))) {
             throw new BusinessException("INVALID_SLOT_INHERITANCE",
-                    "Each previous time slot can be assigned to only one new time slot. Refresh and review the history mapping.");
+                    "Assign each previous time slot to only one new time slot. Refresh and review the history mapping.");
         }
         if ("CURRENT".equals(operation)) {
             if (!Objects.equals(rule.getStartDate(), request.getStartDate())
@@ -2860,6 +2910,17 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 }
             }
             return;
+        }
+        Map<Long, Integer> successorByLineage = new HashMap<>();
+        for (int targetIndex = 0; targetIndex < request.getSlots().size(); targetIndex++) {
+            for (Long sourceId : historySourceSlotIds(request.getSlots().get(targetIndex))) {
+                Long lineageId = slotLineageId(existingById.get(sourceId));
+                Integer previousTarget = successorByLineage.putIfAbsent(lineageId, targetIndex);
+                if (previousTarget != null && previousTarget != targetIndex) {
+                    throw new BusinessException("INVALID_SLOT_INHERITANCE",
+                            "Lesson history that was previously combined must stay together in one new time slot.");
+                }
+            }
         }
         Set<Long> historicalSourceIds = occurrences.stream()
                 .filter(occurrence -> !"CANCELLED".equals(occurrence.getPlanningStatus()))
@@ -2893,6 +2954,14 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             throw new BusinessException("REPLAN_WITHOUT_TIMETABLE_CHANGE",
                     "Change the start date or weekly lesson times to create a new schedule period.");
         }
+    }
+
+    /** 重排新课位可指定多个来源；旧版调用方的 slotId 按单个来源兼容处理。 */
+    private List<Long> historySourceSlotIds(RecurringScheduleSlotRequest request) {
+        if (request.getInheritedSlotIds() != null && !request.getInheritedSlotIds().isEmpty()) {
+            return request.getInheritedSlotIds();
+        }
+        return request.getSlotId() == null ? List.of() : List.of(request.getSlotId());
     }
 
     /** 编辑请求丢失 slotId 时，仅对唯一对应的历史课位延续 lineage；歧义时阻止历史课次脱链。 */
@@ -2945,8 +3014,9 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot));
         boolean teacherChanged = false;
         for (RecurringScheduleSlotRequest requested : requestedSlots) {
-            RecurringScheduleSlotEntity previous = requested.getSlotId() == null
-                    ? null : previousSlotsById.get(requested.getSlotId());
+            List<Long> sources = historySourceSlotIds(requested);
+            if (sources.size() != 1) return false;
+            RecurringScheduleSlotEntity previous = previousSlotsById.get(sources.get(0));
             if (previous == null
                     || !Objects.equals(previous.getWeekday(), requested.getWeekday())
                     || !Objects.equals(previous.getStartTime(), requested.getStartTime())
@@ -3080,8 +3150,13 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                                                      Map<Long, RecurringScheduleSlotEntity> previousSlotsById) {
         RecurringScheduleSlotEntity entity = new RecurringScheduleSlotEntity();
         entity.setRuleId(ruleId);
-        RecurringScheduleSlotEntity previousSlot = request.getSlotId() == null
-                ? null : previousSlotsById.get(request.getSlotId());
+        Long sourceSlotId = request.getSlotId();
+        if (request.getInheritedSlotIds() != null && !request.getInheritedSlotIds().isEmpty()) {
+            // 首个来源作为新课位的稳定 lineage；其余来源由 reassignInheritedLineages 合并到此 lineage。
+            sourceSlotId = request.getInheritedSlotIds().get(0);
+        }
+        RecurringScheduleSlotEntity previousSlot = sourceSlotId == null
+                ? null : previousSlotsById.get(sourceSlotId);
         entity.setSlotLineageId(previousSlot == null
                 ? IdWorker.getId()
                 : previousSlot.getSlotLineageId() == null ? previousSlot.getId() : previousSlot.getSlotLineageId());

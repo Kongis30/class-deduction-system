@@ -20,6 +20,9 @@ public class RecurringScheduleSlotRequest {
     @Schema(description = "Existing weekly slot ID when editing a schedule")
     private Long slotId;
 
+    @Schema(description = "Previous weekly slot IDs whose lesson history is inherited by this slot during rescheduling")
+    private List<Long> inheritedSlotIds;
+
     @Schema(description = "Unlinked confirmed historical lessons explicitly assigned to this current slot")
     private List<Long> inheritedOccurrenceIds;
 

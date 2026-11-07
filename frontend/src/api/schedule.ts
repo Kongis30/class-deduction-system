@@ -94,6 +94,8 @@ export function fetchSchedulePrintHistory(packageId: EntityId) {
 
 export interface RecurringScheduleSlotPayload {
   slotId?: EntityId;
+  /** REPLAN 时可将多个旧课位的历史交给同一个新课位。 */
+  inheritedSlotIds?: EntityId[];
   inheritedOccurrenceIds?: EntityId[];
   teacherId?: EntityId;
   deliveryMode?: 'IN_PERSON' | 'ONLINE';

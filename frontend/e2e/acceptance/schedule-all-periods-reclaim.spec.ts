@@ -39,7 +39,7 @@ test('rescheduling displays and submits unconfirmed lessons from all periods', a
       expect(payload.editOperation).toBe('REPLAN');
       expect(payload.reclaimEndedUnconfirmedLessons).toBe(true);
       expect(payload.expectedPendingLessonSnapshots).toEqual(['older-period', 'current-period']);
-      expect(payload.slots[0].slotId).toBe('6001');
+      expect(payload.slots[0].inheritedSlotIds).toEqual(['6001']);
       saved = true;
       return ok({ ruleId: '5002', newSlotCount: 1, preservedOccurrenceCount: 0, deletedOccurrenceCount: 0,
         generatedOccurrenceCount: 1, confirmedOccurrenceCount: 0, reclaimedOccurrenceCount: 2 });

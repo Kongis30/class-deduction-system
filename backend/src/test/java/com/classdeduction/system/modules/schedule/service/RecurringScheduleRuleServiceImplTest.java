@@ -64,6 +64,7 @@ import java.util.Map;
 import java.util.Objects;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
@@ -1488,6 +1489,94 @@ class RecurringScheduleRuleServiceImplTest {
                 "validateEditOperation", request, rule, List.of(source), List.of(history)))
                 .isInstanceOfSatisfying(BusinessException.class,
                         error -> assertThat(error.getCode()).isEqualTo("INVALID_SLOT_INHERITANCE"));
+    }
+
+    @Test
+    void replanAllowsSeveralPreviousSlotsToShareOneSuccessor() {
+        RecurringScheduleRuleEntity rule = buildExistingRule();
+        RecurringScheduleSlotEntity firstSource = buildHistorySourceSlot(6001L, 7001L, 1, 13);
+        RecurringScheduleSlotEntity secondSource = buildHistorySourceSlot(6002L, 7002L, 2, 13);
+        RecurringScheduleSlotEntity thirdSource = buildHistorySourceSlot(6003L, 7003L, 3, 13);
+        List<LessonOccurrenceEntity> history = List.of(
+                buildHistoryOccurrenceForSlot(9301L, firstSource.getId()),
+                buildHistoryOccurrenceForSlot(9302L, secondSource.getId()),
+                buildHistoryOccurrenceForSlot(9303L, thirdSource.getId()));
+        RecurringScheduleSlotRequest merged = buildSlot(1, LocalTime.of(16, 0), 4, 8);
+        merged.setInheritedSlotIds(List.of(firstSource.getId(), secondSource.getId()));
+        RecurringScheduleSlotRequest separate = buildSlot(3, LocalTime.of(18, 0), 4, 8);
+        separate.setInheritedSlotIds(List.of(thirdSource.getId()));
+        RecurringScheduleRuleUpdateRequest request = replanRequest(rule, List.of(merged, separate));
+
+        assertThatCode(() -> ReflectionTestUtils.invokeMethod(recurringScheduleRuleService,
+                "validateEditOperation", request, rule,
+                List.of(firstSource, secondSource, thirdSource), history)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void mergedSuccessorKeepsEverySourceLineageConnectedToTheNewSlot() {
+        RecurringScheduleSlotEntity firstSource = buildHistorySourceSlot(6001L, 7001L, 1, 13);
+        RecurringScheduleSlotEntity secondSource = buildHistorySourceSlot(6002L, 7002L, 2, 13);
+        RecurringScheduleSlotEntity mergedTarget = buildHistorySourceSlot(8001L, 7001L, 1, 16);
+        RecurringScheduleSlotRequest mergedRequest = buildSlot(1, LocalTime.of(16, 0), 4, 8);
+        mergedRequest.setInheritedSlotIds(List.of(firstSource.getId(), secondSource.getId()));
+        when(recurringScheduleSlotMapper.reassignSlotLineage(7002L, 7001L)).thenReturn(1);
+
+        Map<Long, RecurringScheduleSlotEntity> targets = ReflectionTestUtils.invokeMethod(
+                recurringScheduleRuleService, "targetSlotsByInheritedLineage",
+                List.of(mergedRequest), Map.of(firstSource.getId(), firstSource, secondSource.getId(), secondSource),
+                List.of(mergedTarget));
+        ReflectionTestUtils.invokeMethod(recurringScheduleRuleService, "reassignInheritedLineages",
+                List.of(mergedRequest), Map.of(firstSource.getId(), firstSource, secondSource.getId(), secondSource),
+                List.of(mergedTarget));
+
+        assertThat(targets).containsEntry(7001L, mergedTarget).containsEntry(7002L, mergedTarget);
+        verify(recurringScheduleSlotMapper).reassignSlotLineage(7002L, 7001L);
+        verify(lessonOccurrenceMapper).reassignHistoryOwnerLineage(7002L, 7001L);
+    }
+
+    @Test
+    void replanCannotSplitLineageThatWasPreviouslyMerged() {
+        RecurringScheduleRuleEntity rule = buildExistingRule();
+        RecurringScheduleSlotEntity firstSource = buildHistorySourceSlot(6001L, 7001L, 1, 13);
+        RecurringScheduleSlotEntity secondSource = buildHistorySourceSlot(6002L, 7001L, 2, 13);
+        RecurringScheduleSlotRequest firstTarget = buildSlot(1, LocalTime.of(16, 0), 4, 8);
+        firstTarget.setInheritedSlotIds(List.of(firstSource.getId()));
+        RecurringScheduleSlotRequest secondTarget = buildSlot(2, LocalTime.of(18, 0), 4, 8);
+        secondTarget.setInheritedSlotIds(List.of(secondSource.getId()));
+        RecurringScheduleRuleUpdateRequest request = replanRequest(rule, List.of(firstTarget, secondTarget));
+
+        assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(recurringScheduleRuleService,
+                "validateEditOperation", request, rule, List.of(firstSource, secondSource), List.of()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        error -> assertThat(error.getCode()).isEqualTo("INVALID_SLOT_INHERITANCE"));
+    }
+
+    private RecurringScheduleSlotEntity buildHistorySourceSlot(Long id, Long lineageId, int weekday, int hour) {
+        RecurringScheduleSlotEntity slot = new RecurringScheduleSlotEntity();
+        slot.setId(id);
+        slot.setSlotLineageId(lineageId);
+        slot.setWeekday(weekday);
+        slot.setStartTime(LocalTime.of(hour, 0));
+        slot.setEndTime(LocalTime.of(hour + 1, 0));
+        slot.setPlannedUnits(2);
+        slot.setSlotStatus("ACTIVE");
+        return slot;
+    }
+
+    private LessonOccurrenceEntity buildHistoryOccurrenceForSlot(Long id, Long slotId) {
+        LessonOccurrenceEntity occurrence = buildRuleOccurrence(id,
+                AppTime.nowLocalDateTime().toLocalDate().minusDays(7), 2, "SCHEDULED");
+        occurrence.setScheduleSlotId(slotId);
+        return occurrence;
+    }
+
+    private RecurringScheduleRuleUpdateRequest replanRequest(RecurringScheduleRuleEntity rule,
+                                                              List<RecurringScheduleSlotRequest> slots) {
+        RecurringScheduleRuleUpdateRequest request = new RecurringScheduleRuleUpdateRequest();
+        request.setEditOperation("REPLAN");
+        request.setStartDate(rule.getStartDate());
+        request.setSlots(slots);
+        return request;
     }
 
     @Test

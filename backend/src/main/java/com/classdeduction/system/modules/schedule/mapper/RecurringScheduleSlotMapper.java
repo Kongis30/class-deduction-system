@@ -45,6 +45,12 @@ public interface RecurringScheduleSlotMapper extends BaseMapper<RecurringSchedul
     int updateAllocatedUnits(@Param("slotId") Long slotId, @Param("ruleId") Long ruleId,
                              @Param("expectedUnits") int expectedUnits, @Param("units") int units);
 
+    /** 重排合并历史课位时，将旧 lineage 指向新周期的唯一继承 lineage。 */
+    @Update("UPDATE recurring_schedule_slot SET slot_lineage_id = #{targetLineageId}, "
+            + "updated_at = CURRENT_TIMESTAMP WHERE slot_lineage_id = #{sourceLineageId}")
+    int reassignSlotLineage(@Param("sourceLineageId") Long sourceLineageId,
+                            @Param("targetLineageId") Long targetLineageId);
+
     /** 读取已软删除的旧时段，供保留课次继续匹配原周期配置。 */
     @Select("""
             <script>

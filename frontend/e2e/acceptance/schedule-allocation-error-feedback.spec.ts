@@ -63,7 +63,7 @@ test('Edit Schedule shows the exact allocation shortfall and clears it after cor
         expect(payload.expectedPendingLessonSnapshots).toEqual(['old-period-snapshot', 'current-period-snapshot']);
         expect(payload.reclaimEndedUnconfirmedLessons).toBe(true);
         expect(payload.startDate).toBe(futureStart);
-        expect(payload.slots[0].slotId).toBe('6001');
+        expect(payload.slots[0].inheritedSlotIds).toEqual(['6001']);
         expect(payload.slots[0].allocatedUnits).toBe(80);
         await ok({ ruleId: '5002', newSlotCount: 1, preservedOccurrenceCount: 1,
           deletedOccurrenceCount: 0, generatedOccurrenceCount: 1, confirmedOccurrenceCount: 1 });
@@ -71,7 +71,7 @@ test('Edit Schedule shows the exact allocation shortfall and clears it after cor
       }
       updateCount += 1;
       if (updateCount === 1) {
-        expect(payload.slots[0].inheritedOccurrenceIds).toEqual(['2104217509483360257']);
+        expect(payload.editOperation).toBe('CURRENT');
         expect(payload.slots[0].teacherId).toBe('9002');
         expect(payload.slots[0].allocatedUnits).toBe(60);
         await route.fulfill({
@@ -145,9 +145,6 @@ test('Edit Schedule shows the exact allocation shortfall and clears it after cor
   await expect(dialog).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
 
-  await dialog.locator('.slot-teacher-row > label').filter({ hasText: 'Inherit previous lesson history' }).locator('.el-select').click();
-  await page.getByRole('option', { name: /2026-09-27 20:00 · Vocabulary · Ms. Lau/ }).click();
-  await page.keyboard.press('Escape');
   await dialog.locator('.slot-teacher-row__fields .slot-teacher-row__field').nth(0).locator('.el-select').click();
   await page.getByRole('option', { name: 'Ms. Beatrice' }).click();
   const allocationInput = dialog.locator('.slot-teacher-row__field--hours input');

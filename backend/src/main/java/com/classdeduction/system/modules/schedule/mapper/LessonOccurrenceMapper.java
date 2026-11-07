@@ -40,6 +40,12 @@ public interface LessonOccurrenceMapper extends BaseMapper<LessonOccurrenceEntit
     int preserveLegacyHistoryOwner(@Param("id") Long id, @Param("sourceSlotId") Long sourceSlotId,
                                    @Param("lineageId") Long lineageId);
 
+    /** 重排合并课位时只迁移历史归属标识，不修改课程或消课记录本身。 */
+    @Update("UPDATE lesson_occurrence SET history_owner_lineage_id = #{targetLineageId}, "
+            + "updated_at = CURRENT_TIMESTAMP WHERE history_owner_lineage_id = #{sourceLineageId} AND is_deleted = 0")
+    int reassignHistoryOwnerLineage(@Param("sourceLineageId") Long sourceLineageId,
+                                    @Param("targetLineageId") Long targetLineageId);
+
     /** 改排课只能撤销尚未开始且未进入消课流程的普通课次；条件在写入时再次校验。 */
     @Update({"<script>",
             "UPDATE lesson_occurrence lo SET lo.is_deleted = 1, lo.deleted_at = #{effectiveAt},",
