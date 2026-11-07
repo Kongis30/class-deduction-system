@@ -1054,7 +1054,7 @@
               : `${selectedRefundCourse.consumedLessonCount} confirmed chargeable session(s)` }}
           </span>
           <small v-if="refundCourseOnly">Any refund ends this student's course and stops future classes.</small>
-          <small v-else>A full refund ends this course. For a partial refund, choose Refund &amp; End Course if the student is leaving.</small>
+          <small v-else>Any refund ends this course and stops future classes.</small>
         </div>
         <div v-else-if="refundForm.orderItemId === 'ALL' && refundCourseOptions.length > 1" class="refund-consumption">
           <strong>Per-course refund allocation</strong>
@@ -1101,8 +1101,7 @@
       <template #footer>
         <div class="dialog-footer">
           <el-button @click="refundDialogVisible = false">Cancel</el-button>
-          <el-button v-if="!refundCourseOnly" type="warning" :loading="refunding" @click="handleRefundSubmit(false)">Confirm Refund</el-button>
-          <el-button v-if="selectedRefundCourse" type="primary" :loading="refunding" @click="handleRefundSubmit(true)">Refund &amp; End Course</el-button>
+          <el-button v-if="selectedRefundCourse || refundForm.orderItemId === 'ALL'" type="warning" :loading="refunding" @click="handleRefundSubmit">Refund</el-button>
         </div>
       </template>
     </el-dialog>
@@ -2751,12 +2750,12 @@ const refundHint = computed(() => {
     return 'Any refund ends the selected course for this student and stops future classes.';
   }
   if (isSharedParticipantRefund.value) {
-    return 'This refund applies to the selected student’s received payments on the shared receipt.';
+    return 'This refund applies to the selected student. Any refunded course ends and stops future classes.';
   }
   if (refundForm.orderItemId === 'ALL') {
-    return 'This refund is allocated across the courses on this receipt; each course is evaluated independently.';
+    return 'This refunds the full amount across this receipt and ends the affected courses.';
   }
-  return 'Refunds apply to the selected course on this receipt. Other courses keep their own payment and schedule status.';
+  return 'Any refund ends the selected course and stops future classes. Other courses on this receipt remain active.';
 });
 const refundStudentName = computed(() => refundParticipant.value?.studentName ?? refundOrder.value?.studentName ?? '—');
 
@@ -2840,12 +2839,12 @@ function handleRefundCourseChange() {
     : selectedRefundCourse.value?.paidAmount ?? 0;
 }
 
-async function handleRefundSubmit(endCourse = false) {
-  endCourse = endCourse || refundCourseOnly.value;
+async function handleRefundSubmit() {
+  const endCourse = refundCourseOnly.value || refundForm.orderItemId !== 'ALL';
   const valid = await refundFormRef.value?.validate().catch(() => false);
   if (!valid || !refundOrder.value) return;
   if (endCourse && !selectedRefundCourse.value) {
-    ElMessage.warning('Select a course to end.');
+    ElMessage.warning('Select a course to refund.');
     return;
   }
   if (refundOrder.value.billingPolicy === 'WHOLE_DOLLAR_V1' && !Number.isInteger(refundForm.refundAmount)) {
@@ -2873,8 +2872,8 @@ async function handleRefundSubmit(endCourse = false) {
     try {
       await ElMessageBox.confirm(
         `Refund $${refundForm.refundAmount.toFixed(2)} and end this course for ${refundStudentName.value}? Future classes will stop.`,
-        'Refund and end course',
-        { confirmButtonText: 'Refund & End Course', cancelButtonText: 'Cancel', type: 'warning' },
+        'Confirm refund',
+        { confirmButtonText: 'Refund', cancelButtonText: 'Cancel', type: 'warning' },
       );
     } catch {
       return;

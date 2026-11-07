@@ -320,7 +320,7 @@ const guideCopy: Record<GuideLang, GuideCopy> = {
         summary: 'Refunds are handled from Enrollment History and kept as separate payment records.',
         steps: [
           { order: '1', title: 'Review the order', detail: 'Check received amount, whether lessons have already been deducted, and whether future lessons should be cancelled. Only orders with received payment need refund action.' },
-          { order: '2', title: 'Submit Refund', detail: 'Choose Refund from Actions, then enter refund amount, method, handler, and reason. A partial refund updates finance only; refunding the full currently received amount cancels enrollment eligibility and future lessons.' },
+          { order: '2', title: 'Submit Refund', detail: 'Choose Refund from Actions, then enter refund amount, method, handler, and reason. Any refund ends the selected course and stops future classes; a full receipt refund ends all affected courses.' },
           { order: '3', title: 'Verify the result', detail: 'Review Payment records and Receipt/statement. Confirm received, balance, order status, and the student schedule are correct. Complex refunds after deducted lessons need manual review.' },
         ],
       },
