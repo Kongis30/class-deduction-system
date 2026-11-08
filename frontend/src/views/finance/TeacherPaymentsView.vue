@@ -4,7 +4,7 @@
       <div>
         <span class="table-page-header__eyebrow">Finance</span>
         <h2>Teacher payroll</h2>
-        <p class="tp-page-description">Choose a period once to review confirmed unpaid lessons across all teachers.</p>
+        <p class="tp-page-description">Choose a default period for unpaid lessons. Set a separate period for an individual teacher when needed.</p>
       </div>
     </section>
 
@@ -90,6 +90,32 @@
           </div>
         </div>
 
+        <section v-if="selectedTeacher" class="tp-section tp-section--teacher-period">
+          <div class="tp-teacher-period">
+            <div class="tp-filters__group">
+              <label class="tp-filters__label">Teacher period</label>
+              <el-date-picker
+                v-model="selectedTeacherPeriodRange"
+                type="daterange"
+                range-separator="–"
+                start-placeholder="Start"
+                end-placeholder="End"
+                value-format="YYYY-MM-DD"
+                class="tp-period-picker"
+                style="width: 260px;"
+                @change="handleSelectedTeacherPeriodChange"
+              />
+            </div>
+            <el-button
+              type="primary"
+              :loading="teacherPeriodLoading"
+              @click="loadSelectedTeacherUnpaidLessons"
+            >
+              Load this teacher's lessons
+            </el-button>
+          </div>
+        </section>
+
         <el-alert
           v-if="missingRateCount > 0"
           type="warning"
@@ -111,7 +137,7 @@
           :closable="false"
           class="tp-rate-alert"
         >
-          All teachers’ lessons are loaded. Choose one teacher from the left list to select lessons and create that teacher’s payment.
+          All teachers' lessons are loaded. Choose one teacher from the left list to select lessons and create that teacher's payment.
         </el-alert>
 
         <!-- ─── 2. Unpaid 1:1 Lessons ────────────────── -->
@@ -527,14 +553,16 @@ function toggleGroup(key: string) {
   try {
     localStorage.setItem(productExpansionStorageKey, JSON.stringify([...expanded]));
   } catch {
-    // 浏览器禁用本地存储时仍允许在当前页面展开和折叠。
+    // Keep groups usable in the current page if browser storage is unavailable.
   }
 }
 const mobileSearchExpanded = ref(false);
 const mobileTeacherListVisible = ref(true);
 const selectedTeacherId = ref<EntityId | null>(null);
 const teacherSwitchLoading = ref(false);
+const teacherPeriodLoading = ref(false);
 let teacherSwitchRequest = 0;
+let teacherPeriodRequest = 0;
 
 const selectedTeacher = computed(() =>
   allTeachers.value.find(t => String(t.id) === String(selectedTeacherId.value)),
@@ -601,7 +629,11 @@ function isTeacherSelected(teacherId: EntityId) {
 
 async function selectTeacher(teacherId: EntityId) {
   const request = ++teacherSwitchRequest;
+  teacherPeriodRequest += 1;
+  teacherPeriodLoading.value = false;
+  unpaidLoading.value = false;
   teacherSwitchLoading.value = true;
+  const period = ensureTeacherPeriod(teacherId);
   try {
     const [history, unpaid] = await Promise.all([
       fetchPayments({
@@ -610,8 +642,8 @@ async function selectTeacher(teacherId: EntityId) {
         pageNum: 1,
         pageSize: pagination.size,
       }),
-      searched.value && dateRange.value?.[0] && dateRange.value?.[1]
-        ? fetchUnpaidLessons({ teacherId, startDate: dateRange.value[0], endDate: dateRange.value[1] })
+      searched.value
+        ? fetchUnpaidLessons({ teacherId, startDate: period[0], endDate: period[1] })
         : Promise.resolve(null),
     ]);
     if (request !== teacherSwitchRequest) return;
@@ -620,7 +652,13 @@ async function selectTeacher(teacherId: EntityId) {
     historyData.value = history.data.data.records;
     pagination.page = 1;
     pagination.total = history.data.data.total;
-    if (unpaid) unpaidLessons.value = unpaid.data.data;
+    if (unpaid) {
+      unpaidLessons.value = unpaid.data.data;
+      selectedTeacherLoadedPeriod.value = { teacherId: String(teacherId), range: [...period] };
+    } else {
+      unpaidLessons.value = [];
+      selectedTeacherLoadedPeriod.value = null;
+    }
     mobileTeacherListVisible.value = false;
     mobileSearchExpanded.value = false;
   } catch {
@@ -633,6 +671,25 @@ async function selectTeacher(teacherId: EntityId) {
 
 
 const dateRange = ref<[string, string] | null>(null);
+const teacherPeriodRanges = reactive<Record<string, [string, string]>>({});
+const selectedTeacherPeriodRange = computed<[string, string] | null>({
+  get() {
+    if (selectedTeacherId.value == null) return dateRange.value;
+    return teacherPeriodRanges[String(selectedTeacherId.value)] ?? dateRange.value;
+  },
+  set(range) {
+    if (selectedTeacherId.value == null || !range) return;
+    teacherPeriodRanges[String(selectedTeacherId.value)] = [...range];
+  },
+});
+
+function ensureTeacherPeriod(teacherId: EntityId): [string, string] {
+  const key = String(teacherId);
+  if (!teacherPeriodRanges[key]) {
+    teacherPeriodRanges[key] = dateRange.value ? [...dateRange.value] : currentMonthRange();
+  }
+  return teacherPeriodRanges[key];
+}
 
 function currentMonthRange(): [string, string] {
   const now = new Date();
@@ -647,6 +704,7 @@ function currentMonthRange(): [string, string] {
 const unpaidLoading = ref(false);
 const searched = ref(false);
 const unpaidLessons = ref<UnpaidLessonItem[]>([]);
+const selectedTeacherLoadedPeriod = ref<{ teacherId: string; range: [string, string] } | null>(null);
 const individualLessonTable = ref<{ clearSelection: () => void }>();
 const groupLessonTable = ref<{ clearSelection: () => void }>();
 const individualSelections = ref<UnpaidLessonItem[]>([]);
@@ -679,7 +737,7 @@ function canSelectLesson(row: UnpaidLessonItem) {
     && String(row.teacherId) === String(selectedTeacherId.value);
 }
 
-// 移动端卡片与桌面表格共用同一组选中状态，确保付款提交的课次集合一致。
+// Mobile cards and desktop tables share selections so payment submits the same lesson set.
 function isLessonSelected(row: UnpaidLessonItem) {
   return selectedIds.value.some((id) => String(id) === String(row.lessonRecordId));
 }
@@ -736,19 +794,79 @@ async function loadUnpaidLessons() {
     return;
   }
   unpaidLoading.value = true;
+  teacherPeriodRequest += 1;
+  teacherPeriodLoading.value = false;
   searched.value = true;
+  const requestedRange: [string, string] = [...dateRange.value];
+  if (selectedTeacherId.value != null) {
+    teacherPeriodRanges[String(selectedTeacherId.value)] = [...requestedRange];
+  }
+  clearUnpaidSelections();
+  unpaidLessons.value = [];
+  selectedTeacherLoadedPeriod.value = null;
   try {
     const res = await fetchUnpaidLessons({
       teacherId: selectedTeacherId.value ?? undefined,
-      startDate: dateRange.value?.[0],
-      endDate: dateRange.value?.[1],
+      startDate: requestedRange[0],
+      endDate: requestedRange[1],
     });
-    clearUnpaidSelections();
     unpaidLessons.value = res.data.data;
+    selectedTeacherLoadedPeriod.value = selectedTeacherId.value == null
+      ? null
+      : { teacherId: String(selectedTeacherId.value), range: requestedRange };
   } catch {
     ElMessage.error('Failed to load unpaid lessons.');
   } finally {
     unpaidLoading.value = false;
+  }
+}
+
+function handleSelectedTeacherPeriodChange() {
+  teacherPeriodRequest += 1;
+  teacherPeriodLoading.value = false;
+  unpaidLoading.value = false;
+  clearUnpaidSelections();
+  unpaidLessons.value = [];
+  selectedTeacherLoadedPeriod.value = null;
+}
+
+async function loadSelectedTeacherUnpaidLessons() {
+  const teacherId = selectedTeacherId.value;
+  const period = selectedTeacherPeriodRange.value;
+  if (teacherId == null) return;
+  if (!period?.[0] || !period[1]) {
+    ElMessage.warning('Select a teacher period before loading lessons.');
+    return;
+  }
+
+  const request = ++teacherPeriodRequest;
+  const requestedRange: [string, string] = [...period];
+  teacherPeriodLoading.value = true;
+  unpaidLoading.value = true;
+  searched.value = true;
+  clearUnpaidSelections();
+  unpaidLessons.value = [];
+  selectedTeacherLoadedPeriod.value = null;
+  try {
+    const res = await fetchUnpaidLessons({
+      teacherId,
+      startDate: requestedRange[0],
+      endDate: requestedRange[1],
+    });
+    if (request !== teacherPeriodRequest || String(selectedTeacherId.value) !== String(teacherId)) return;
+    unpaidLessons.value = res.data.data;
+    selectedTeacherLoadedPeriod.value = { teacherId: String(teacherId), range: requestedRange };
+  } catch {
+    if (request === teacherPeriodRequest) {
+      unpaidLessons.value = [];
+      selectedTeacherLoadedPeriod.value = null;
+    ElMessage.error("Failed to load this teacher's unpaid lessons.");
+    }
+  } finally {
+    if (request === teacherPeriodRequest) {
+      teacherPeriodLoading.value = false;
+      unpaidLoading.value = false;
+    }
   }
 }
 
@@ -761,6 +879,12 @@ async function handleCreatePayment() {
 
   const allSelected = [...individualSelections.value, ...groupSelections.value];
   if (allSelected.some(row => !hasPayRate(row))) return;
+  const paymentPeriod = selectedTeacherLoadedPeriod.value?.teacherId === String(selectedTeacherId.value)
+    ? selectedTeacherLoadedPeriod.value.range : selectedTeacherPeriodRange.value;
+  if (!paymentPeriod?.[0] || !paymentPeriod[1]) {
+    ElMessage.warning('Load lessons for a teacher period before creating a payment.');
+    return;
+  }
 
   try {
     await ElMessageBox.confirm(
@@ -776,12 +900,12 @@ async function handleCreatePayment() {
   try {
     await createPayment({
       teacherId: selectedTeacherId.value,
-      periodStart: dateRange.value?.[0] || '',
-      periodEnd: dateRange.value?.[1] || '',
+      periodStart: paymentPeriod[0],
+      periodEnd: paymentPeriod[1],
       lessonRecordIds: selectedIds.value,
     });
     ElMessage.success('Payment created.');
-    await Promise.all([loadUnpaidLessons(), loadHistory(1)]);
+    await Promise.all([loadSelectedTeacherUnpaidLessons(), loadHistory(1)]);
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Failed to create payment.');
   } finally {
@@ -878,7 +1002,7 @@ function formatDateTime(dateStr: string) {
 
 type LessonTime = { year: number; month: number; day: number; hour: number; minute: number };
 
-// 后端返回无时区的课次本地时间，按字段解析可避免浏览器时区改变上课时段。
+// Parse local lesson times without a timezone suffix to avoid shifting them in the browser.
 function parseLessonTime(value: string | null): LessonTime | null {
   const parts = value?.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
   if (!parts) return null;
@@ -940,7 +1064,7 @@ onMounted(async () => {
   min-width: 0;
 }
 
-/* 按当前有效排课关联老师与产品；同一老师可在多个产品组中出现。 */
+/* Group teachers by their active schedules; a teacher may appear under multiple products. */
 .tp-sidebar {
   display: flex;
   flex: 0 0 240px;
@@ -1089,6 +1213,17 @@ onMounted(async () => {
 
 .tp-section--filters {
   padding: 12px 16px;
+}
+
+.tp-section--teacher-period {
+  padding: 10px 14px;
+}
+
+.tp-teacher-period {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .tp-section--card {
@@ -1332,7 +1467,7 @@ onMounted(async () => {
   .tp-mobile-selection small { color: #8b95a5; }
   .tp-content__header { display:none; }
   .tp-content { gap: 8px; padding-bottom: 72px; }
-  .tp-section, .tp-section--card, .tp-section--filters { padding: 10px; border-radius: 9px; }
+  .tp-section, .tp-section--card, .tp-section--filters, .tp-section--teacher-period { padding: 10px; border-radius: 9px; }
   .tp-section--filters { padding: 10px; }
   .tp-filters { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .tp-filters__group { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; }
@@ -1341,6 +1476,11 @@ onMounted(async () => {
   .tp-filters__group .tp-period-picker :deep(.el-range-editor) { width: 100%; }
   .tp-filters__actions { display: block; }
   .tp-filters__actions .el-button { width: 100%; min-height: 36px; margin: 0; }
+  .tp-teacher-period { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .tp-teacher-period .tp-filters__group { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; }
+  .tp-teacher-period .tp-filters__group .tp-period-picker { width: 100% !important; }
+  .tp-teacher-period .tp-filters__group .tp-period-picker :deep(.el-range-editor) { width: 100%; }
+  .tp-teacher-period > .el-button { width: 100%; min-height: 36px; margin: 0; }
   .tp-section__header { align-items: center; flex-direction: row; justify-content: space-between; gap: 8px; }
   .tp-section__title { font-size: 14px; }
   .tp-section__subtitle { color: #748397; font-size: 11px; text-align: right; }
