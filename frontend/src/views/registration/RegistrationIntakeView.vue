@@ -609,6 +609,9 @@
                             @input="(value) => handleGroupMonthInput(line, value)"
                             @change="() => handleGroupMonthCountChange(line)"
                           />
+                          <small v-if="groupMonthlyRate(line) != null" class="renewal-plan-hint">
+                            Plan rate: {{ formatMoney(groupMonthlyRate(line)) }}/month. Select months up to the class period limit.
+                          </small>
                           <small v-if="isSameRenewalGroupCourse(line)" class="renewal-plan-hint">
                             {{ renewalSourceQuantityForLine(line) }} previous + {{ line.groupPurchasedMonths || 0 }} new =
                             {{ numeric(renewalSourceQuantityForLine(line)) + numeric(line.groupPurchasedMonths) }} months total
@@ -1449,6 +1452,8 @@ import MoneyAmountInput from '@/components/MoneyAmountInput.vue';
 import { sumPaymentAllocations } from './payment-draft';
 
 type ReuseStatus = 'idle' | 'loading' | 'existing' | 'new';
+
+const MAX_ROLLING_MONTHS = 36;
 
 interface CampusChoice {
   key: string;
@@ -4609,11 +4614,20 @@ function maxGroupMonthsForLine(line: RegistrationCourseLine) {
   const monthsUntilClassEnd = startMonth && endMonth
     ? (Number(endMonth.slice(0, 4)) - Number(startMonth.slice(0, 4))) * 12
       + Number(endMonth.slice(5, 7)) - Number(startMonth.slice(5, 7)) + 1
-    : 36;
+    : MAX_ROLLING_MONTHS;
   const previousQuantity = editingCorrection.value && String(original?.groupRegistrationPlanId) === String(plan.id)
     ? numeric(original?.purchasedMonths ?? original?.packageQuantity) : 0;
   return Math.max(1, groupPlanQuantity(line), lineQuantity, previousQuantity,
-    Math.min(36, monthsUntilClassEnd));
+    Math.min(MAX_ROLLING_MONTHS, monthsUntilClassEnd));
+}
+
+function groupMonthlyRate(line: RegistrationCourseLine) {
+  const plan = selectedGroupPlan(line);
+  const configuredMonths = numeric(plan?.packageQuantity);
+  if (plan?.packageUnit !== 'MONTH' || plan.coverageType !== 'ROLLING_MONTHS' || configuredMonths < 1) {
+    return undefined;
+  }
+  return groupPlanDisplayPrice(plan, line.attendanceOption) / configuredMonths;
 }
 
 function availableGroupPlanQuantities(line: RegistrationCourseLine) {

@@ -161,6 +161,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private static final String DEFAULT_CURRENCY = "USD";
     private static final String DEFAULT_RECEIPT_TEMPLATE = "DEFAULT_RECEIPT";
     private static final String REFUND_RECEIPT_TEMPLATE = "REFUND_RECEIPT";
+    private static final int MAX_ROLLING_MONTHS = 36;
     private static final BigDecimal ZERO_AMOUNT = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
 
     private final EnrollmentOrderMapper enrollmentOrderMapper;
@@ -2339,13 +2340,15 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 && !Objects.equals(selectedCount, previousSelectedCount);
         BigDecimal quantityToValidate = selectedCount == null
                 ? payload.getPackageQuantity() : BigDecimal.valueOf(selectedCount);
-        // 滚动月方案数量用于计算月单价；购买月份可超过方案默认月数。
-        boolean extendingOriginalMonthlyPlan = !projectOrPlanChanged
-                && "MONTH".equalsIgnoreCase(previous.packageUnit())
-                && "MONTH".equalsIgnoreCase(payload.getPackageUnit())
-                && "ROLLING_MONTHS".equalsIgnoreCase(plan.getCoverageType())
-                && quantityToValidate != null
-                && quantityToValidate.compareTo(BigDecimal.valueOf(36)) <= 0;
+        // Rolling months 方案数量只作为月单价基准；购买月数不再受方案标称月数限制。
+        boolean monthlyRatePlan = "MONTH".equalsIgnoreCase(payload.getPackageUnit())
+                && "ROLLING_MONTHS".equalsIgnoreCase(plan.getCoverageType());
+        boolean exceedsRollingMonthsLimit = monthlyRatePlan && quantityToValidate != null
+                && quantityToValidate.compareTo(BigDecimal.valueOf(MAX_ROLLING_MONTHS)) > 0;
+        if (exceedsRollingMonthsLimit) {
+            throw new BusinessException("GROUP_PLAN_QUANTITY_INVALID",
+                    "Purchased months must be between 1 and 36.");
+        }
         boolean fixedPrice = "FIXED_PRICE".equalsIgnoreCase(plan.getCoverageType());
         boolean exceedsPlanQuantity = !fixedPrice && quantityToValidate != null && plan.getPackageQuantity() != null
                 && quantityToValidate.compareTo(plan.getPackageQuantity()) > 0;
@@ -2355,7 +2358,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 && (!Objects.equals(plan.getPackageUnit(), payload.getPackageUnit())
                 || plan.getPackageQuantity() == null || quantityToValidate == null
                 || quantityToValidate.signum() <= 0
-                || exceedsPlanQuantity && !extendingOriginalMonthlyPlan)) {
+                || exceedsPlanQuantity && !monthlyRatePlan)) {
             throw new BusinessException("GROUP_V2_PLAN_MISMATCH",
                     "The purchased quantity must fit within the selected registration plan.");
         }
@@ -2733,7 +2736,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         }
         String coverage = plan.getCoverageType() == null ? "" : plan.getCoverageType().toUpperCase(java.util.Locale.ROOT);
         int maximumQuantity = "MONTH".equals(unit) && "ROLLING_MONTHS".equals(coverage)
-                ? 36 : configuredQuantity;
+                ? MAX_ROLLING_MONTHS : configuredQuantity;
         boolean fixedPrice = "FIXED_PRICE".equals(coverage);
         if (configuredQuantity < 1 || quantity < 1 || (!fixedPrice && quantity > maximumQuantity)
                 || !("SESSION".equals(unit) || "MONTH".equals(unit))) {
@@ -2771,10 +2774,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         } else {
             end = classEnd == null ? start.plusYears(3) : classEnd;
         }
-        if ("MONTH".equals(unit) && quantity > configuredQuantity && classEnd != null
+        if ("MONTH".equals(unit) && classEnd != null
                 && java.time.YearMonth.from(end).isAfter(java.time.YearMonth.from(classEnd))) {
             throw new BusinessException("GROUP_PLAN_DATES_INVALID",
-                    "The added months extend beyond the actual class end date.");
+                    "The selected months extend beyond the actual class end date.");
         }
         if (end == null || end.isBefore(start)) {
             throw new BusinessException("GROUP_PLAN_DATES_INVALID", "The selected registration plan has an invalid date range.");
