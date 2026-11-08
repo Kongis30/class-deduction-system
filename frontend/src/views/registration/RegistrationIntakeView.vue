@@ -458,11 +458,13 @@
                     </el-select>
                     <small v-if="renewClassEnrollmentId && renewalSourceItem" class="renewal-new-course-label">New course · billed separately</small>
                     <button
-                      v-if="receiptEditingEnabled && !isPrivateAllReceiptView && (editingCorrection ? !line.orderItemId : !isRenewalMode && (line.courseProductId || courseLines.length > 1))"
+                      v-if="receiptEditingEnabled && !isPrivateAllReceiptView"
                       type="button"
                       class="remove-row no-print"
-                      aria-label="Clear course"
-                      @click="clearOrRemoveCourseLine(index)"
+                      :aria-label="`Remove course row ${index + 1}`"
+                      :title="editingCorrection && line.orderItemId ? 'Delete saved course' : 'Remove course row'"
+                      :disabled="deletingCourseRowKey === line.rowKey"
+                      @click="handleCourseRowRemove(index)"
                     >×</button>
                   </div>
                   <strong class="print-only print-course-value">{{ printCourseProductLabel(line) }}</strong>
@@ -1433,7 +1435,7 @@ import { useRoute, useRouter } from 'vue-router';
 
 import { fetchActiveCoursePriceOptions, fetchAllStudents, fetchAllTeachers, fetchCampuses, fetchCourseCategories, fetchCourseProducts, fetchDiscountPresets, fetchProductGradeConfigs, fetchReusableStudent, fetchStudent } from '@/api/base-data';
 import { extractErrorMessage, preprocessLargeIds } from '@/api/http';
-import { fetchActivePaymentMethods, fetchCoursePackage, fetchCoursePackages, fetchEnrollmentOrder, fetchGroupClassStudentProgress, submitRegistrationIntake, correctEnrollmentOrder, type EnrollmentOrderCorrectionPayload, type RegistrationIntakePayload, type RegistrationIntakeResult, type RegistrationParticipantBillingPayload, type RegistrationPaymentPayload } from '@/api/enrollment';
+import { fetchActivePaymentMethods, fetchCoursePackage, fetchCoursePackages, fetchEnrollmentOrder, fetchGroupClassStudentProgress, submitRegistrationIntake, correctEnrollmentOrder, deleteEnrollmentOrderItem, type EnrollmentOrderCorrectionPayload, type RegistrationIntakePayload, type RegistrationIntakeResult, type RegistrationParticipantBillingPayload, type RegistrationPaymentPayload } from '@/api/enrollment';
 import { fetchGroupClassScheduledDates, fetchGroupCourseProductSetup } from '@/api/group-course-model';
 import type { GroupCourseProductSetup, GroupCourseProject, GroupRegistrationPlan } from '@/api/group-course-model';
 import { fetchStudentCreditBalance } from '@/api/student-credit';
@@ -1784,6 +1786,7 @@ const renewalSourceMonthlyRate = computed(() => {
 });
 const editingCorrection = ref(false);
 const savingCorrection = ref(false);
+const deletingCourseRowKey = ref<string | null>(null);
 const correctionBaseline = ref<EnrollmentOrderCorrectionPayload | null>(null);
 const correctionSetupLoading = ref(false);
 const lastAttendanceSelection = new WeakMap<RegistrationCourseLine, RegistrationCourseLine['attendanceOption']>();
@@ -3683,10 +3686,11 @@ function addCourseLine() {
   courseLines.value.push(createCourseLine());
 }
 
-function clearOrRemoveCourseLine(index: number) {
+async function handleCourseRowRemove(index: number) {
   const line = courseLines.value[index];
-  if (editingCorrection.value && line?.orderItemId) {
-    ElMessage.warning('Existing course rows cannot be removed from Edit Receipt.');
+  if (!line) return;
+  if (editingCorrection.value && line.orderItemId) {
+    await deleteSavedCourseLine(line);
     return;
   }
   if (courseLines.value.length > 1) {
@@ -3745,16 +3749,51 @@ function clearOrRemoveCourseLine(index: number) {
   });
 }
 
+// 已保存的课程行通过订单课程删除接口处理；接口会保护未退款款项与关联排课。
+async function deleteSavedCourseLine(line: RegistrationCourseLine) {
+  const orderId = Array.isArray(route.query.orderId) ? route.query.orderId[0] : route.query.orderId;
+  if (!orderId || !line.orderItemId || deletingCourseRowKey.value) return;
+
+  const removesWholeReceipt = (historicalOrder.value?.items.length ?? courseLines.value.length) <= 1;
+  const hasUnsavedEdits = Boolean(changedCorrectionPayload(buildCurrentCorrectionPayload()));
+  const confirmation = [
+    `Delete “${courseLineOptionLabel(line, courseLines.value.indexOf(line))}” from this saved receipt?`,
+    'The course is removed immediately. The system will block deletion if it still has payments that need to be refunded.',
+    removesWholeReceipt ? 'This is the only course, so deleting it will remove the entire unpaid receipt.' : '',
+    hasUnsavedEdits ? 'Other unsaved receipt changes will be discarded.' : '',
+  ].filter(Boolean).join('\n\n');
+
+  try {
+    await ElMessageBox.confirm(h('div', { style: 'white-space: pre-line' }, confirmation), 'Delete course row', {
+      confirmButtonText: 'Delete course',
+      cancelButtonText: 'Keep course',
+      type: 'warning',
+      distinguishCancelAndClose: true,
+    });
+    deletingCourseRowKey.value = line.rowKey;
+    await deleteEnrollmentOrderItem(orderId, line.orderItemId);
+    editingCorrection.value = false;
+    correctionBaseline.value = null;
+    if (removesWholeReceipt) {
+      ElMessage.success('The receipt was deleted.');
+      await router.replace({ name: 'registration' });
+      return;
+    }
+    await loadHistoricalOrder();
+    ElMessage.success('Course removed. The receipt has been refreshed.');
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(extractErrorMessage(error));
+  } finally {
+    deletingCourseRowKey.value = null;
+  }
+}
+
 function removeCourseLine(index: number) {
   if (courseLines.value.length <= 1) {
     return;
   }
   const line = courseLines.value[index];
   if (!line) return;
-  if (editingCorrection.value && line.orderItemId) {
-    ElMessage.warning('Existing course rows cannot be removed from Edit Receipt.');
-    return;
-  }
   const hasDiscount = discounts.value.some((discount) =>
     discount.courseRowKey === line.rowKey && numeric(discount.amount) > 0);
   const hasPayment = payments.value.some((payment) =>
@@ -7844,7 +7883,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 .course-picker-control .remove-row {
-  flex: 0 0 18px;
+  flex: 0 0 24px;
 }
 
 .print-only {
@@ -8071,12 +8110,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 .remove-row {
-  width: 18px;
-  height: 18px;
-  border: none;
-  background: transparent;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid #fecaca;
+  border-radius: 50%;
+  background: #fff7f7;
   color: #b91c1c;
+  font-size: 18px;
+  line-height: 1;
   cursor: pointer;
+}
+
+.remove-row:hover:not(:disabled) {
+  border-color: #ef4444;
+  background: #fee2e2;
+}
+
+.remove-row:disabled {
+  cursor: wait;
+  opacity: 0.55;
 }
 
 .paper-actions {
