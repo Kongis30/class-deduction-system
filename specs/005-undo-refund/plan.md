@@ -46,6 +46,12 @@
 - Playwright 验收、浏览器实际交互和真实数据（含旧快照）验证均未执行；`npm run typecheck` 已通过。
 - 工作区含其他会话的未提交改动，本次改动未提交，不得从该工作区部署。
 
+## 集成与部署记录（2026-11-09）
+
+- 本地提交 `codex/undo-refund-line-level` `f068e97`；在基于 `main_v2` `0f14653` 的干净 worktree 合并为 `codex/undo-refund-integration` `d75f407`（第一父提交为 `main_v2` 头，可直接快进）。冲突文件 6 个，均为“本功能新增”与 `main_v2` 后续提交的重叠；删除了 `main_v2` 中重复的 `refundSnapshotsMatch` 实现，保留本功能的快照比较。
+- 两条旧版撤销测试（无快照自动撤销、非行级快照恢复）与“快照缺失/跨行必须拒绝”的契约冲突，已删除；金额精度用例改为走行级撤销路径。合并后 `EnrollmentOrderServiceImplTest` 68 个用例、`DataSummaryServiceImplTest` 39 个用例通过（`shouldCorrectV2ReceiptWhenProjectGradeDiffersFromActualClass` 在 `main_v2` `0f14653` 基线同样失败，与本次改动无关）。
+- 已从 `d75f407` 构建并部署 V2 生产环境，详见 `doc/deployment-records/2026-11-09-d75f407-undo-refund.md`。部署不影响数据库结构；`main_v2` 快进待另一会话清理 `.worktrees/mainv2` 工作区后执行。
+
 ## 代码结构及现状
 
 - `backend/.../enrollment/service/impl/EnrollmentOrderServiceImpl.java`：退款、before/after 快照、`refundOrder`、行级撤销服务与 `evaluateRefundUndo`；legacy 财务-only 回退已移除。

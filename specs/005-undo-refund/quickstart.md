@@ -25,7 +25,7 @@
 - 测试 MANAGER 及其他角色拒绝、快照不暴露；验证旧收据入口遵守同一规则。
 - 使用真实 MySQL 的并发集成测试：并发重复撤销最多一个成功；撤销与排课新增/调整、课时确认、Credit 使用、订单更正交错，在冲突检查与提交之间插入竞争，确认共同锁协议阻止幻读/覆盖或安全拒绝。仅 mock 不可作为并发安全证据。
 
-参考运行：`cd backend && mvn test -Dtest=EnrollmentOrderServiceImplTest,DataSummaryServiceImplTest`；按实际项目配置运行数据库集成套件并记录结果。该命令本阶段未执行。
+参考运行：`cd backend && mvn test -Dtest=EnrollmentOrderServiceImplTest,DataSummaryServiceImplTest`。2026-11-09 在基于 `main_v2` 的集成 worktree（`d75f407`）执行：`EnrollmentOrderServiceImplTest` 68 个用例、`DataSummaryServiceImplTest` 39 个用例全部通过；`shouldCorrectV2ReceiptWhenProjectGradeDiffersFromActualClass` 在 `main_v2` `0f14653` 基线同样失败，与本次改动无关。真实 MySQL 并发集成套件仍未执行。
 
 ## 前端验收
 
