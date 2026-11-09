@@ -27,6 +27,7 @@ import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignm
 import com.classdeduction.system.modules.enrollment.mapper.PaymentAllocationMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
+import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.impl.DataSummaryServiceImpl;
 import com.classdeduction.system.modules.enrollment.service.ClassBillingService;
 import com.classdeduction.system.modules.enrollment.vo.DataSummaryResponseVO;
@@ -90,6 +91,9 @@ class DataSummaryServiceImplTest {
     private PaymentAllocationMapper paymentAllocationMapper;
 
     @Mock
+    private ReceiptRecordMapper receiptRecordMapper;
+
+    @Mock
     private ClassGroupMapper classGroupMapper;
 
     @Mock
@@ -122,6 +126,9 @@ class DataSummaryServiceImplTest {
     @Mock
     private CampusMapper campusMapper;
 
+    @Mock
+    private com.classdeduction.system.modules.enrollment.service.EnrollmentOrderService enrollmentOrderService;
+
     private DataSummaryServiceImpl dataSummaryService;
 
     @BeforeAll
@@ -146,6 +153,7 @@ class DataSummaryServiceImplTest {
                 packageTeacherAssignmentMapper,
                 paymentRecordMapper,
                 paymentAllocationMapper,
+                receiptRecordMapper,
                 classGroupMapper,
                 enrollmentOrderCourseRefundStateMapper,
                 classBillingService,
@@ -157,7 +165,8 @@ class DataSummaryServiceImplTest {
                 hourLedgerMapper,
                 studentMapper,
                 campusMapper,
-                new JsonHelper(new ObjectMapper())
+                new JsonHelper(new ObjectMapper()),
+                enrollmentOrderService
         );
         lenient().when(enrollmentOrderItemMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(Collections.emptyList());

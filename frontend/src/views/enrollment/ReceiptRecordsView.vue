@@ -159,7 +159,7 @@
                 <div v-if="!appStore.isMobileViewport" class="row-actions">
                   <el-button link type="primary" @click="openReceipt(row)">View</el-button>
                   <el-button v-if="canDeleteRefund(row)" link type="danger" @click="confirmDeleteRefund(row)">
-                    Delete refund
+                    Undo refund
                   </el-button>
                   <el-button
                     v-if="canDeleteCourse(row)"
@@ -192,7 +192,7 @@
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item @click="openReceipt(row)">View receipt</el-dropdown-item>
-                      <el-dropdown-item v-if="canDeleteRefund(row)" divided @click="confirmDeleteRefund(row)">Delete refund</el-dropdown-item>
+                      <el-dropdown-item v-if="canDeleteRefund(row)" divided @click="confirmDeleteRefund(row)">Undo refund</el-dropdown-item>
                       <el-dropdown-item v-if="canDeleteCourse(row)" divided @click="openDeleteCourseDialog(row)">Delete course</el-dropdown-item>
                       <el-dropdown-item v-if="canDeleteCreditTopUp(row)" divided @click="openDeleteCreditTopUpDialog(row)">Delete top-up</el-dropdown-item>
                       <el-dropdown-item v-if="receiptType === 'registration' && !canDeleteCourse(row) && !canDeleteCreditTopUp(row) && hasReceiptCourses(row)" disabled>View only</el-dropdown-item>
@@ -663,11 +663,11 @@ function canDeleteRefund(row: ReceiptRecordItem) {
 async function confirmDeleteRefund(row: ReceiptRecordItem) {
   try {
     await ElMessageBox.confirm(
-      'Delete this refund and its receipt? The original payment stays unchanged. Review related Credit or schedule records afterward if needed.',
-      `Delete refund receipt ${row.receiptNo}?`,
+      'Undo this refund? The course, package, and future lessons will return to their state before the refund, and the related student Credit will be reversed. The undo is rejected if lessons or schedule changes were recorded after the refund. Money already sent back outside the system is not recovered.',
+      `Undo refund receipt ${row.receiptNo}?`,
       {
         type: 'warning',
-        confirmButtonText: 'Delete refund',
+        confirmButtonText: 'Undo refund',
         cancelButtonText: 'Cancel',
         distinguishCancelAndClose: true,
       },
@@ -679,7 +679,7 @@ async function confirmDeleteRefund(row: ReceiptRecordItem) {
   receiptLoading.value = true;
   try {
     const response = await deleteRefundReceipt(row.id);
-    ElMessage.success(response.data.message || 'Refund receipt deleted.');
+    ElMessage.success(response.data.message || 'Refund undone.');
     await loadStudents();
     await loadSelectedStudentRecords();
     if (receipts.value.length === 0 && orderQuery.pageNum > 1) {

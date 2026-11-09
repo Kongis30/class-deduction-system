@@ -127,6 +127,32 @@ export interface DataSummaryResponse {
   }>;
 }
 
+export interface RefundUndoCandidate {
+  receiptId?: EntityId;
+  receiptNo?: string;
+  paymentId: EntityId;
+  paymentNo?: string;
+  refundedAt?: string;
+  amount: number;
+  paymentMethod?: string;
+  eligible: boolean;
+  ineligibleReason?: string;
+}
+
+export interface RefundUndoCandidates {
+  candidates: RefundUndoCandidate[];
+  unavailableReason?: string;
+}
+
+export function fetchRefundUndoCandidates(params: {
+  orderId: EntityId;
+  orderItemId: EntityId;
+  studentId: EntityId;
+  participantIndex: number;
+}) {
+  return http.get<ApiResponse<RefundUndoCandidates>>('/v1/data-summary/refund-candidates', { params });
+}
+
 export function fetchDataSummary(params: DataSummaryQuery = {}) {
   return http.get<ApiResponse<DataSummaryResponse>>('/v1/data-summary', { params });
 }
