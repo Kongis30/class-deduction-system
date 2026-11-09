@@ -18,6 +18,7 @@ import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.DataSummaryQuery;
 import com.classdeduction.system.modules.enrollment.dto.DataSummaryClassificationRequest;
+import com.classdeduction.system.modules.enrollment.dto.RefundUndoCandidatesQuery;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
 import com.classdeduction.system.modules.enrollment.util.WholeDollarBilling;
@@ -28,6 +29,7 @@ import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignm
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentAllocationEntity;
 import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupEntity;
+import com.classdeduction.system.modules.enrollment.entity.ReceiptRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
@@ -37,10 +39,13 @@ import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignm
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentAllocationMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
+import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.ClassBillingService;
 import com.classdeduction.system.modules.enrollment.service.DataSummaryService;
+import com.classdeduction.system.modules.enrollment.service.EnrollmentOrderService;
 import com.classdeduction.system.modules.enrollment.vo.ParticipantCourseAmountVO;
 import com.classdeduction.system.modules.enrollment.vo.DataSummaryResponseVO;
+import com.classdeduction.system.modules.enrollment.vo.RefundUndoCandidatesVO;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
@@ -87,6 +92,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
     private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final PaymentRecordMapper paymentRecordMapper;
     private final PaymentAllocationMapper paymentAllocationMapper;
+    private final ReceiptRecordMapper receiptRecordMapper;
     private final ClassGroupMapper classGroupMapper;
     private final EnrollmentOrderCourseRefundStateMapper enrollmentOrderCourseRefundStateMapper;
     private final ClassBillingService classBillingService;
@@ -99,6 +105,8 @@ public class DataSummaryServiceImpl implements DataSummaryService {
     private final StudentMapper studentMapper;
     private final CampusMapper campusMapper;
     private final JsonHelper jsonHelper;
+    /** 候选列表复用撤销服务的完整校验，避免预览与执行出现两套判定标准。 */
+    private final EnrollmentOrderService enrollmentOrderService;
 
     /** 复用 Data Summary 的逐学生、逐课程分摊口径，避免收款页另算一套金额。 */
     @Override
@@ -111,6 +119,62 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 .map(row -> new ParticipantCourseAmountVO(row.orderItemId(), row.linePriceAmount(),
                         row.amountDue(), row.paidAmount(), row.balanceAmount().negate().max(ZERO_AMOUNT)))
                 .toList();
+    }
+
+    @Override
+    public RefundUndoCandidatesVO getRefundUndoCandidates(RefundUndoCandidatesQuery query) {
+        EnrollmentOrderEntity order = enrollmentOrderMapper.selectById(query.getOrderId());
+        EnrollmentOrderItemEntity item = enrollmentOrderItemMapper.selectOne(new LambdaQueryWrapper<EnrollmentOrderItemEntity>()
+                .eq(EnrollmentOrderItemEntity::getId, query.getOrderItemId())
+                .eq(EnrollmentOrderItemEntity::getEnrollmentOrderId, query.getOrderId())
+                .eq(EnrollmentOrderItemEntity::getIsDeleted, 0));
+        EnrollmentOrderParticipantEntity participant = enrollmentOrderParticipantMapper.selectOne(new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
+                .eq(EnrollmentOrderParticipantEntity::getEnrollmentOrderId, query.getOrderId())
+                .eq(EnrollmentOrderParticipantEntity::getParticipantIndex, query.getParticipantIndex())
+                .eq(EnrollmentOrderParticipantEntity::getIsDeleted, 0));
+        if (order == null || item == null || participant == null || !Objects.equals(participant.getStudentId(), query.getStudentId())) {
+            return new RefundUndoCandidatesVO(List.of(), "The selected student and course purchase could not be verified.");
+        }
+        List<PaymentRecordEntity> refunds = paymentRecordMapper.selectList(new LambdaQueryWrapper<PaymentRecordEntity>()
+                .eq(PaymentRecordEntity::getEnrollmentOrderId, query.getOrderId())
+                .eq(PaymentRecordEntity::getParticipantIndex, query.getParticipantIndex())
+                .eq(PaymentRecordEntity::getPaymentType, "REFUND")
+                .ne(PaymentRecordEntity::getPaymentStatus, "VOIDED")
+                .lt(PaymentRecordEntity::getAmount, ZERO_AMOUNT)
+                .orderByDesc(PaymentRecordEntity::getPaidAt)
+                .orderByDesc(PaymentRecordEntity::getId));
+        if (refunds.isEmpty()) return new RefundUndoCandidatesVO(List.of(), null);
+        List<Long> refundIds = refunds.stream().map(PaymentRecordEntity::getId).filter(Objects::nonNull).toList();
+        List<PaymentAllocationEntity> allocations = paymentAllocationMapper.selectList(new LambdaQueryWrapper<PaymentAllocationEntity>()
+                .in(PaymentAllocationEntity::getPaymentRecordId, refundIds));
+        Map<Long, List<PaymentAllocationEntity>> allocationsByPayment = allocations.stream().collect(Collectors.groupingBy(PaymentAllocationEntity::getPaymentRecordId));
+        List<ReceiptRecordEntity> receipts = receiptRecordMapper.selectList(new LambdaQueryWrapper<ReceiptRecordEntity>()
+                .in(ReceiptRecordEntity::getPaymentRecordId, refundIds).eq(ReceiptRecordEntity::getTemplateCode, "REFUND_RECEIPT"));
+        Map<Long, List<ReceiptRecordEntity>> receiptsByPayment = receipts.stream().collect(Collectors.groupingBy(ReceiptRecordEntity::getPaymentRecordId));
+        List<RefundUndoCandidatesVO.Candidate> candidates = new ArrayList<>();
+        for (PaymentRecordEntity refund : refunds) {
+            List<PaymentAllocationEntity> paymentAllocations = allocationsByPayment.getOrDefault(refund.getId(), List.of());
+            List<ReceiptRecordEntity> paymentReceipts = receiptsByPayment.getOrDefault(refund.getId(), List.of());
+            long targetAllocations = paymentAllocations.stream().filter(allocation -> Objects.equals(allocation.getEnrollmentOrderItemId(), query.getOrderItemId())).count();
+            if (targetAllocations == 0) continue;
+            String reason = null;
+            if (paymentReceipts.size() != 1) reason = "The refund receipt link is missing or ambiguous.";
+            else if (!Objects.equals(paymentReceipts.get(0).getStudentId(), query.getStudentId())
+                    || !Objects.equals(paymentReceipts.get(0).getEnrollmentOrderId(), query.getOrderId())) {
+                reason = "The refund receipt does not match this student and order.";
+            } else if (paymentAllocations.size() != 1 || targetAllocations != 1
+                    || paymentAllocations.get(0).getAmount() == null
+                    || paymentAllocations.get(0).getAmount().compareTo(refund.getAmount()) != 0
+                    || !Objects.equals(paymentAllocations.get(0).getEnrollmentOrderId(), query.getOrderId())) {
+                reason = "The refund course allocation is missing or ambiguous.";
+            } else {
+                // 结构校验通过后再做完整预览：快照完整性、后续变更、课时活动、排课冲突和 Credit 可逆性。
+                reason = enrollmentOrderService.evaluateRefundUndo(paymentReceipts.get(0).getId());
+            }
+            ReceiptRecordEntity receipt = paymentReceipts.size() == 1 ? paymentReceipts.get(0) : null;
+            candidates.add(new RefundUndoCandidatesVO.Candidate(receipt == null ? null : receipt.getId(), receipt == null ? null : receipt.getReceiptNo(), refund.getId(), refund.getPaymentNo(), refund.getPaidAt(), refund.getAmount().abs(), refund.getPaymentMethod(), reason == null, reason));
+        }
+        return new RefundUndoCandidatesVO(candidates, null);
     }
 
     @Override

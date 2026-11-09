@@ -76,6 +76,13 @@ public interface EnrollmentOrderService {
     void deleteRefundReceipt(Long receiptId, CurrentUserResponse operator);
 
     /**
+     * 预览某张退款收据是否可以自动撤销。
+     *
+     * @return null 表示可自动撤销；否则返回可直接展示给工作人员的不可撤销原因
+     */
+    String evaluateRefundUndo(Long receiptId);
+
+    /**
      * 管理员强制作废报名订单（软删除）：用于清理系统改造前遗留、已付款或已消课而无法走常规删除的历史脏数据。
      * 会关闭关联课包、取消未来课次、停用排课，但保留历史流水与消课记录以供审计。
      */

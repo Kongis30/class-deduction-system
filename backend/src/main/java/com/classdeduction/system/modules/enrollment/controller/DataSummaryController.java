@@ -6,8 +6,10 @@ import com.classdeduction.system.modules.auth.annotation.RequireRoles;
 import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.enrollment.dto.DataSummaryQuery;
 import com.classdeduction.system.modules.enrollment.dto.DataSummaryClassificationRequest;
+import com.classdeduction.system.modules.enrollment.dto.RefundUndoCandidatesQuery;
 import com.classdeduction.system.modules.enrollment.service.DataSummaryService;
 import com.classdeduction.system.modules.enrollment.vo.DataSummaryResponseVO;
+import com.classdeduction.system.modules.enrollment.vo.RefundUndoCandidatesVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -48,5 +50,13 @@ public class DataSummaryController {
     public ApiResponse<Void> classifyRecord(@Valid @RequestBody DataSummaryClassificationRequest request) {
         dataSummaryService.classifyRecord(request);
         return ApiResponse.success(null);
+    }
+
+    @GetMapping("/refund-candidates")
+    @RequireRoles({"ADMIN", "STAFF"})
+    @Operation(summary = "Query refund undo candidates for one student course purchase")
+    public ApiResponse<RefundUndoCandidatesVO> getRefundUndoCandidates(
+            @ParameterObject @Valid RefundUndoCandidatesQuery query) {
+        return ApiResponse.success(dataSummaryService.getRefundUndoCandidates(query));
     }
 }

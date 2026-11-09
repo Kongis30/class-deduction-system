@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.core.toolkit.support.SFunction;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
@@ -66,6 +67,7 @@ import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import com.classdeduction.system.modules.enrollment.service.EnrollmentOrderService;
 import com.classdeduction.system.modules.enrollment.service.RegistrationIntakeService;
 import com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService;
+import com.classdeduction.system.modules.enrollment.service.support.RefundUndoAuditService;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.enrollment.util.GroupRegistrationCoverage;
 import com.classdeduction.system.modules.enrollment.util.GroupClassEntitlementRules;
@@ -114,7 +116,7 @@ import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMa
 import com.classdeduction.system.modules.systemconfig.entity.NotificationLogEntity;
 import com.classdeduction.system.modules.systemconfig.mapper.NotificationLogMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.BeanUtils;
@@ -137,8 +139,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -163,6 +165,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private static final String REFUND_RECEIPT_TEMPLATE = "REFUND_RECEIPT";
     private static final int MAX_ROLLING_MONTHS = 36;
     private static final BigDecimal ZERO_AMOUNT = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    /** 仅用于快照字段的规范化比较，不参与业务序列化。 */
+    private static final ObjectMapper SNAPSHOT_MAPPER = new ObjectMapper().findAndRegisterModules();
 
     private final EnrollmentOrderMapper enrollmentOrderMapper;
     private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
@@ -189,6 +193,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private final JsonHelper jsonHelper;
     @Autowired
     private StudentCreditService studentCreditService;
+    @Autowired(required = false)
+    private RefundUndoAuditService refundUndoAuditService;
     private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
     private final RecurringScheduleStartingBalanceMapper recurringScheduleStartingBalanceMapper;
     private final RecurringScheduleSlotMapper recurringScheduleSlotMapper;
@@ -995,6 +1001,76 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         order.setExtraFeeAmount(extra);
         order.setAmountDue(amountDue);
         order.setBalanceAmount(amountDue.subtract(receivedAmount));
+    }
+
+    private Long jsonLong(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return value instanceof Number number ? number.longValue() : Long.valueOf(value.toString());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private Integer jsonInteger(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return value instanceof Number number ? number.intValue() : Integer.valueOf(value.toString());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    /**
+     * 退款快照保存在收据 JSON 中，读回时需要与数据库行比较。
+     *
+     * <p>Jackson 的数值节点按 {@code BigDecimal.compareTo} 比较，可消除
+     * {@code 100} 与 {@code 100.00} 这类 scale 差异；时间值按同一格式序列化，
+     * 因此比较结果不受字段顺序、类型精度和 null 表示的干扰。</p>
+     */
+    private boolean snapshotValueEquals(Object expected, Object actual) {
+        if (expected == null || actual == null) {
+            return expected == actual;
+        }
+        return SNAPSHOT_MAPPER.valueToTree(expected).equals(SNAPSHOT_MAPPER.valueToTree(actual));
+    }
+
+    private boolean snapshotRowsMatch(List<?> expected, List<?> actual) {
+        if (expected == null || actual == null) {
+            return expected == actual;
+        }
+        if (expected.size() != actual.size()) {
+            return false;
+        }
+        for (int index = 0; index < expected.size(); index++) {
+            if (!snapshotValueEquals(expected.get(index), actual.get(index))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean refundSnapshotsMatch(RefundStateSnapshot expected, RefundStateSnapshot actual) {
+        if (expected == null || actual == null) {
+            return expected == actual;
+        }
+        return snapshotValueEquals(expected.order(), actual.order())
+                && snapshotRowsMatch(expected.items(), actual.items())
+                && snapshotRowsMatch(expected.participants(), actual.participants())
+                && snapshotRowsMatch(expected.packages(), actual.packages())
+                && snapshotRowsMatch(expected.courseRefundStates(), actual.courseRefundStates())
+                && snapshotRowsMatch(expected.payments(), actual.payments())
+                && snapshotRowsMatch(expected.allocations(), actual.allocations())
+                && snapshotRowsMatch(expected.groupMembers(), actual.groupMembers())
+                && snapshotRowsMatch(expected.classEnrollments(), actual.classEnrollments())
+                && snapshotRowsMatch(expected.occurrences(), actual.occurrences())
+                && snapshotRowsMatch(expected.recurringRules(), actual.recurringRules())
+                && snapshotRowsMatch(expected.recurringSlots(), actual.recurringSlots())
+                && snapshotRowsMatch(expected.creditLedger(), actual.creditLedger());
     }
 
     private BigDecimal defaultAmount(BigDecimal amount) {
@@ -3743,6 +3819,12 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         EnrollmentOrderItemEntity targetItem = null;
         BigDecimal targetItemPaidBeforeRefund = ZERO_AMOUNT;
         ClassUsage targetUsage = ClassUsage.empty();
+        Map<Long, BigDecimal> coursePaidBeforeRefund = Collections.emptyMap();
+        Long preReplayCreditStudentId = "CREDIT".equalsIgnoreCase(request.getDisposition())
+                ? targetParticipant == null ? order.getStudentId() : targetParticipant.getStudentId()
+                : null;
+        RefundStateSnapshot refundStateBefore = null;
+        BigDecimal creditBalanceBefore = ZERO_AMOUNT;
         if (orderItemId != null) {
             targetItem = enrollmentOrderItemMapper.selectOne(new LambdaQueryWrapper<EnrollmentOrderItemEntity>()
                     .eq(EnrollmentOrderItemEntity::getId, orderItemId)
@@ -3751,6 +3833,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             if (targetItem == null) {
                 throw new BusinessException("REFUND_COURSE_NOT_FOUND", "The selected course is not on this receipt.");
             }
+            // 必须在历史分摊重放前捕获退款前状态，避免把 replay 的写入误记为退款副作用。
+            refundStateBefore = captureRefundState(order.getId(), preReplayCreditStudentId);
+            creditBalanceBefore = preReplayCreditStudentId == null
+                    ? ZERO_AMOUNT : studentCreditService.getBalance(preReplayCreditStudentId);
             // 多人收据不能重放未明确归属学生的历史分摊；这类金额必须先人工核对。
             if (singleParticipantOrder || targetParticipant == null) {
                 paymentAllocationService.replayAllocations(order);
@@ -3850,9 +3936,11 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         Long creditStudentId = convertToCredit
                 ? targetParticipant == null ? order.getStudentId() : targetParticipant.getStudentId()
                 : null;
-        RefundStateSnapshot refundStateBefore = captureRefundState(order.getId(), creditStudentId);
-        BigDecimal creditBalanceBefore = creditStudentId == null
-                ? ZERO_AMOUNT : studentCreditService.getBalance(creditStudentId);
+        if (refundStateBefore == null) {
+            refundStateBefore = captureRefundState(order.getId(), creditStudentId);
+            creditBalanceBefore = creditStudentId == null
+                    ? ZERO_AMOUNT : studentCreditService.getBalance(creditStudentId);
+        }
 
         // 退款只取消 1-on-1 排课；班课课次属于共享排课，不随单个学生退款而撤销。
         if (fullOrderRefund && !"CANCELLED".equals(order.getOrderStatus())) {
@@ -4854,52 +4942,6 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 allocations, groupMembers, classEnrollments, occurrences, rules, slots, creditLedger);
     }
 
-    /** 比较撤销退款前后快照；金额按数值比较，其他业务状态仍要求精确匹配。 */
-    private boolean refundSnapshotsMatch(RefundStateSnapshot expected, RefundStateSnapshot current) {
-        if (expected == null || current == null) {
-            return false;
-        }
-        JsonNode expectedJson = jsonHelper.fromJson(jsonHelper.toJson(expected), new TypeReference<JsonNode>() {});
-        JsonNode currentJson = jsonHelper.fromJson(jsonHelper.toJson(current), new TypeReference<JsonNode>() {});
-        return equivalentSnapshotValues(expectedJson, currentJson);
-    }
-
-    /** 递归比较快照 JSON，避免 BigDecimal 小数位格式差异造成误判。 */
-    private boolean equivalentSnapshotValues(JsonNode expected, JsonNode current) {
-        if (expected == null || current == null) {
-            return expected == current;
-        }
-        if (expected.isNumber() || current.isNumber()) {
-            return expected.isNumber() && current.isNumber()
-                    && expected.decimalValue().compareTo(current.decimalValue()) == 0;
-        }
-        if (expected.isObject() || current.isObject()) {
-            if (!expected.isObject() || !current.isObject() || expected.size() != current.size()) {
-                return false;
-            }
-            Iterator<String> fields = expected.fieldNames();
-            while (fields.hasNext()) {
-                String field = fields.next();
-                if (!current.has(field) || !equivalentSnapshotValues(expected.get(field), current.get(field))) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        if (expected.isArray() || current.isArray()) {
-            if (!expected.isArray() || !current.isArray() || expected.size() != current.size()) {
-                return false;
-            }
-            for (int index = 0; index < expected.size(); index++) {
-                if (!equivalentSnapshotValues(expected.get(index), current.get(index))) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        return expected.equals(current);
-    }
-
     private <T> List<T> selectRefundScopeRows(List<Long> packageIds, List<Long> groupIds,
                                               java.util.function.Supplier<List<T>> query) {
         return packageIds.isEmpty() && groupIds.isEmpty() ? Collections.emptyList() : query.get();
@@ -4921,6 +4963,24 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void deleteRefundReceipt(Long receiptId, CurrentUserResponse operator) {
+        try {
+            undoRefundReceipt(receiptId, operator);
+        } catch (RuntimeException exception) {
+            // 撤销失败时业务事务会整体回滚，失败审计必须在独立事务中留下痕迹。
+            if (refundUndoAuditService != null) {
+                refundUndoAuditService.recordFailure(receiptId, operator, exception);
+            }
+            throw exception;
+        }
+    }
+
+    /**
+     * 行级退款撤销：只逆转所选学生、所选课程购买记录以及这一次退款造成的副作用。
+     *
+     * <p>锁顺序与 {@link #refundOrder} 保持一致：订单 → 订单项 → 班级 → 课包 → 规则/时段 → 课次。
+     * 锁内重新采集退款后的完整状态并与收据中的快照比较，任何后续变更都会拒绝撤销。</p>
+     */
+    private void undoRefundReceipt(Long receiptId, CurrentUserResponse operator) {
         ReceiptRecordEntity receipt = receiptRecordMapper.selectById(receiptId);
         if (receipt == null || !REFUND_RECEIPT_TEMPLATE.equalsIgnoreCase(receipt.getTemplateCode())
                 || receipt.getPaymentRecordId() == null || receipt.getEnrollmentOrderId() == null) {
@@ -4928,65 +4988,24 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         }
 
         EnrollmentOrderEntity order = requireOrderForUpdate(receipt.getEnrollmentOrderId());
-        PaymentRecordEntity refund = paymentRecordMapper.selectById(receipt.getPaymentRecordId());
-        if (refund == null || !Objects.equals(refund.getEnrollmentOrderId(), order.getId())
-                || !"REFUND".equalsIgnoreCase(refund.getPaymentType())
-                || !"REFUNDED".equalsIgnoreCase(refund.getPaymentStatus())
-                || defaultAmount(refund.getAmount()).compareTo(ZERO_AMOUNT) >= 0) {
-            throw new BusinessException("REFUND_TRANSACTION_REQUIRED", "The refund transaction is missing or has already been changed.");
-        }
+        lockOrderClassGroupsForUpdate(order);
 
-        Map<String, Object> receiptPayload = jsonHelper.fromJson(receipt.getReceiptPayload(),
-                new TypeReference<LinkedHashMap<String, Object>>() {});
-        Object rawSnapshot = receiptPayload == null ? null : receiptPayload.get("refundUndoSnapshot");
-        if (!(rawSnapshot instanceof String snapshotJson) || !StringUtils.hasText(snapshotJson)) {
-            deleteLegacyRefundReceipt(receipt, order, refund, operator);
-            return;
-        }
-        RefundUndoSnapshot undoSnapshot = jsonHelper.fromJson(snapshotJson,
-                new TypeReference<RefundUndoSnapshot>() {});
-        if (undoSnapshot == null || undoSnapshot.after() == null || undoSnapshot.before() == null) {
-            deleteLegacyRefundReceipt(receipt, order, refund, operator);
-            return;
-        }
+        PaymentRecordEntity refund = requireUndoableRefund(receipt, order);
+        RefundUndoPlan plan = buildRefundUndoPlan(receipt, order, refund);
+        // 先锁住即将恢复的课程包、规则、时段和课次，再读取当前状态，避免检查与写入之间出现幻读。
+        lockRefundUndoScope(plan.undoSnapshot());
 
-        RefundStateSnapshot current = captureRefundState(order.getId(), undoSnapshot.creditStudentId());
-        if (!refundSnapshotsMatch(undoSnapshot.after(), current)) {
-            deleteLegacyRefundReceipt(receipt, order, refund, operator);
-            return;
+        RefundStateSnapshot current = captureRefundState(order.getId(), plan.undoSnapshot().creditStudentId());
+        if (!refundSnapshotsMatch(plan.undoSnapshot().after(), current)) {
+            throw new BusinessException("REFUND_UNDO_STATE_CHANGED",
+                    "The course or payment state changed after this refund. Refresh and review it manually.");
         }
-        if (undoSnapshot.creditRefund()) {
-            BigDecimal expectedBalance = defaultAmount(undoSnapshot.creditBalanceBefore())
-                    .add(defaultAmount(refund.getAmount()).abs());
-            studentCreditService.reverseRefundCredit(undoSnapshot.creditStudentId(),
-                    defaultAmount(refund.getAmount()).abs(), expectedBalance,
-                    order.getId(), refund.getId(), operator == null ? null : operator.userId(),
-                    operator == null ? "System Admin" : operator.displayName(),
-                    "Undo test refund receipt " + receipt.getReceiptNo());
-        }
+        ensureNoLessonsAfterRefund(plan);
+        List<LessonOccurrenceEntity> occurrencesToRestore = resolveOccurrencesToRestore(plan.undoSnapshot());
+        ensureNoRestoreScheduleConflicts(occurrencesToRestore, true);
+        reverseRefundCreditIfNeeded(plan, operator);
 
-        RefundStateSnapshot before = undoSnapshot.before();
-        RefundStateSnapshot after = undoSnapshot.after();
-        restoreEntity(before.order(), after.order(), enrollmentOrderMapper, "enrollment order");
-        restoreRows(before.items(), after.items(), EnrollmentOrderItemEntity::getId, enrollmentOrderItemMapper::selectById,
-                enrollmentOrderItemMapper, "enrollment order item");
-        restoreRows(before.participants(), after.participants(), EnrollmentOrderParticipantEntity::getId, enrollmentOrderParticipantMapper::selectById,
-                enrollmentOrderParticipantMapper, "enrollment participant");
-        restoreRows(before.packages(), after.packages(), CoursePackageEntity::getId, coursePackageMapper::selectById,
-                coursePackageMapper, "course package");
-        restoreRows(before.courseRefundStates(), after.courseRefundStates(), EnrollmentOrderCourseRefundStateEntity::getId, enrollmentOrderCourseRefundStateMapper::selectById,
-                enrollmentOrderCourseRefundStateMapper, "course refund state");
-        restoreRows(before.groupMembers(), after.groupMembers(), PrivateLessonGroupMemberEntity::getId, privateLessonGroupMemberMapper::selectById,
-                privateLessonGroupMemberMapper, "private lesson group member");
-        restoreRows(before.occurrences(), after.occurrences(), LessonOccurrenceEntity::getId, lessonOccurrenceMapper::selectById,
-                lessonOccurrenceMapper, "lesson occurrence");
-        restoreRows(before.recurringRules(), after.recurringRules(), RecurringScheduleRuleEntity::getId, recurringScheduleRuleMapper::selectById,
-                recurringScheduleRuleMapper, "recurring schedule rule");
-        restoreRows(before.recurringSlots(), after.recurringSlots(), RecurringScheduleSlotEntity::getId, recurringScheduleSlotMapper::selectById,
-                recurringScheduleSlotMapper, "recurring schedule slot");
-        restoreRows(before.allocations(), after.allocations(), PaymentAllocationEntity::getId, paymentAllocationMapper::selectById,
-                paymentAllocationMapper, "payment allocation");
-        restoreClassEnrollments(before.classEnrollments(), after.classEnrollments(), operator);
+        applyRefundUndo(plan, order, occurrencesToRestore, operator);
 
         refund.setPaymentStatus("VOIDED");
         refund.setUpdatedBy(operator == null ? null : operator.userId());
@@ -5003,61 +5022,399 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (receiptRecordMapper.deleteById(receiptId) != 1) {
             throw new BusinessException("REFUND_RECEIPT_CONCURRENT_UPDATE", "The refund receipt changed while being deleted. Please retry.");
         }
+        writeRefundUndoAudit(plan, occurrencesToRestore, operator);
+    }
+
+    /** Data Summary 在执行前预览某笔退款是否可自动撤销；返回 null 表示可以执行。 */
+    @Override
+    public String evaluateRefundUndo(Long receiptId) {
+        try {
+            ReceiptRecordEntity receipt = receiptRecordMapper.selectById(receiptId);
+            if (receipt == null || !REFUND_RECEIPT_TEMPLATE.equalsIgnoreCase(receipt.getTemplateCode())
+                    || receipt.getPaymentRecordId() == null || receipt.getEnrollmentOrderId() == null) {
+                return "The refund receipt link is missing or ambiguous.";
+            }
+            EnrollmentOrderEntity order = enrollmentOrderMapper.selectById(receipt.getEnrollmentOrderId());
+            if (order == null) {
+                return "The enrollment order no longer exists.";
+            }
+            PaymentRecordEntity refund;
+            RefundUndoPlan plan;
+            try {
+                refund = requireUndoableRefund(receipt, order);
+                plan = buildRefundUndoPlan(receipt, order, refund);
+            } catch (BusinessException exception) {
+                return exception.getMessage();
+            }
+            RefundStateSnapshot current = captureRefundState(order.getId(), plan.undoSnapshot().creditStudentId());
+            if (!refundSnapshotsMatch(plan.undoSnapshot().after(), current)) {
+                return "The course or payment state changed after this refund. Review it manually.";
+            }
+            ensureNoLessonsAfterRefund(plan);
+            ensureNoRestoreScheduleConflicts(resolveOccurrencesToRestore(plan.undoSnapshot()), false);
+            verifyRefundCreditReversible(plan);
+            return null;
+        } catch (BusinessException exception) {
+            return exception.getMessage();
+        }
+    }
+
+    private PaymentRecordEntity requireUndoableRefund(ReceiptRecordEntity receipt, EnrollmentOrderEntity order) {
+        PaymentRecordEntity refund = paymentRecordMapper.selectById(receipt.getPaymentRecordId());
+        if (refund == null || !Objects.equals(refund.getEnrollmentOrderId(), order.getId())
+                || !"REFUND".equalsIgnoreCase(refund.getPaymentType())
+                || !"REFUNDED".equalsIgnoreCase(refund.getPaymentStatus())
+                || defaultAmount(refund.getAmount()).compareTo(ZERO_AMOUNT) >= 0) {
+            throw new BusinessException("REFUND_TRANSACTION_REQUIRED", "The refund transaction is missing or has already been changed.");
+        }
+        return refund;
+    }
+
+    /** 校验收据、退款流水、负向分摊与课程购买记录的归属，并读出退款前后的完整快照。 */
+    private RefundUndoPlan buildRefundUndoPlan(ReceiptRecordEntity receipt,
+                                               EnrollmentOrderEntity order,
+                                               PaymentRecordEntity refund) {
+        Map<String, Object> receiptPayload = jsonHelper.fromJson(receipt.getReceiptPayload(),
+                new TypeReference<LinkedHashMap<String, Object>>() {});
+        Long targetItemId = jsonLong(receiptPayload == null ? null : receiptPayload.get("orderItemId"));
+        Integer targetParticipantIndex = jsonInteger(receiptPayload == null ? null : receiptPayload.get("participantIndex"));
+        if (targetItemId == null || targetParticipantIndex == null) {
+            throw new BusinessException("REFUND_UNDO_LINE_REQUIRED",
+                    "Only refunds linked to one student and one course purchase can be undone automatically.");
+        }
+        EnrollmentOrderItemEntity targetItem = enrollmentOrderItemMapper.selectOne(
+                new LambdaQueryWrapper<EnrollmentOrderItemEntity>()
+                        .eq(EnrollmentOrderItemEntity::getId, targetItemId)
+                        .eq(EnrollmentOrderItemEntity::getEnrollmentOrderId, order.getId()));
+        EnrollmentOrderParticipantEntity targetParticipant = findOrderParticipant(order.getId(), targetParticipantIndex);
+        if (targetItem == null || targetParticipant == null || receipt.getStudentId() == null
+                || !Objects.equals(receipt.getStudentId(), targetParticipant.getStudentId())) {
+            throw new BusinessException("REFUND_UNDO_LINE_AMBIGUOUS",
+                    "The refund cannot be matched to one student and course purchase.");
+        }
+        List<PaymentAllocationEntity> refundAllocations = paymentAllocationMapper.selectList(
+                new LambdaQueryWrapper<PaymentAllocationEntity>()
+                        .eq(PaymentAllocationEntity::getPaymentRecordId, refund.getId()));
+        if (refundAllocations.size() != 1
+                || !Objects.equals(refundAllocations.get(0).getEnrollmentOrderItemId(), targetItemId)
+                || !Objects.equals(refundAllocations.get(0).getEnrollmentOrderId(), order.getId())
+                || refundAllocations.get(0).getAmount() == null
+                || refundAllocations.get(0).getAmount().compareTo(refund.getAmount()) != 0
+                || !Objects.equals(refund.getParticipantIndex(), targetParticipantIndex)) {
+            throw new BusinessException("REFUND_UNDO_LINE_AMBIGUOUS",
+                    "This refund is not a single course-line refund and cannot be undone from Data Summary.");
+        }
+        Object rawSnapshot = receiptPayload == null ? null : receiptPayload.get("refundUndoSnapshot");
+        if (!(rawSnapshot instanceof String snapshotJson) || !StringUtils.hasText(snapshotJson)) {
+            throw new BusinessException("REFUND_UNDO_SNAPSHOT_REQUIRED",
+                    "This refund has no complete recovery snapshot and requires manual review.");
+        }
+        RefundUndoSnapshot undoSnapshot = jsonHelper.fromJson(snapshotJson,
+                new TypeReference<RefundUndoSnapshot>() {});
+        if (undoSnapshot == null || undoSnapshot.after() == null || undoSnapshot.before() == null) {
+            throw new BusinessException("REFUND_UNDO_SNAPSHOT_INVALID",
+                    "The refund recovery snapshot is incomplete.");
+        }
+        return new RefundUndoPlan(receipt, order, refund, targetItem, targetParticipant, undoSnapshot);
+    }
+
+    /** 按主键升序锁定快照内所有会被恢复的记录，降低与排课/课时写入的死锁概率。 */
+    private void lockRefundUndoScope(RefundUndoSnapshot snapshot) {
+        for (Long packageId : sortedIds(snapshot.after().packages(), CoursePackageEntity::getId)) {
+            coursePackageMapper.selectByIdForUpdate(packageId);
+        }
+        List<Long> ruleIds = sortedIds(snapshot.after().recurringRules(), RecurringScheduleRuleEntity::getId);
+        if (!ruleIds.isEmpty()) {
+            recurringScheduleRuleMapper.selectList(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                    .in(RecurringScheduleRuleEntity::getId, ruleIds)
+                    .orderByAsc(RecurringScheduleRuleEntity::getId)
+                    .last("FOR UPDATE"));
+        }
+        List<Long> slotIds = sortedIds(snapshot.after().recurringSlots(), RecurringScheduleSlotEntity::getId);
+        if (!slotIds.isEmpty()) {
+            recurringScheduleSlotMapper.selectList(new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                    .in(RecurringScheduleSlotEntity::getId, slotIds)
+                    .orderByAsc(RecurringScheduleSlotEntity::getId)
+                    .last("FOR UPDATE"));
+        }
+        for (Long occurrenceId : sortedIds(snapshot.after().occurrences(), LessonOccurrenceEntity::getId)) {
+            lessonOccurrenceMapper.selectByIdForUpdate(occurrenceId);
+        }
     }
 
     /**
-     * 旧退款没有可用快照时，按用户确认执行删除并重算支付账面值；保留后续课程和排课状态，避免覆盖后续操作。
-     * 该路径由收据删除入口调用，删除负向流水后同步订单和课程级付款快照。
+     * 退款之后如果已经产生课时确认或课时流水，说明课包状态已被后续事实改变。
+     *
+     * <p>快照只保存报名域状态，课时历史不在比较范围内，因此这里用时间边界单独拦截。</p>
      */
-    private void deleteLegacyRefundReceipt(ReceiptRecordEntity receipt,
-                                           EnrollmentOrderEntity order,
-                                           PaymentRecordEntity refund,
-                                           CurrentUserResponse operator) {
-        paymentAllocationMapper.delete(new LambdaQueryWrapper<PaymentAllocationEntity>()
-                .eq(PaymentAllocationEntity::getPaymentRecordId, refund.getId()));
-
-        refund.setPaymentStatus("VOIDED");
-        refund.setUpdatedBy(operator == null ? null : operator.userId());
-        paymentRecordMapper.updateById(refund);
-        if (paymentRecordMapper.deleteById(refund.getId()) != 1) {
-            throw new BusinessException("REFUND_TRANSACTION_CONCURRENT_UPDATE", "The refund changed while being deleted. Please retry.");
+    private void ensureNoLessonsAfterRefund(RefundUndoPlan plan) {
+        LocalDateTime refundedAt = plan.refund().getPaidAt();
+        if (refundedAt == null) {
+            return;
         }
-
-        List<PaymentRecordEntity> remainingPayments = paymentRecordMapper.selectList(
-                new LambdaQueryWrapper<PaymentRecordEntity>()
-                        .eq(PaymentRecordEntity::getEnrollmentOrderId, order.getId()));
-        BigDecimal receivedAmount = remainingPayments.stream()
-                .filter(payment -> !"VOIDED".equalsIgnoreCase(payment.getPaymentStatus()))
-                .map(payment -> defaultAmount(payment.getAmount()))
-                .reduce(ZERO_AMOUNT, BigDecimal::add)
-                .max(ZERO_AMOUNT);
-        BigDecimal amountDue = defaultAmount(order.getAmountDue());
-        boolean wasFullyRefunded = "REFUNDED".equalsIgnoreCase(order.getPaymentStatus());
-        order.setReceivedAmount(receivedAmount);
-        order.setBalanceAmount(amountDue.subtract(receivedAmount).setScale(2, RoundingMode.HALF_UP));
-        order.setPaymentStatus(resolvePaymentStatus(defaultAmount(order.getOriginalAmount()),
-                defaultAmount(order.getDiscountAmount()), receivedAmount));
-        if ("CANCELLED".equalsIgnoreCase(order.getOrderStatus())
-                && wasFullyRefunded
-                && receivedAmount.compareTo(ZERO_AMOUNT) > 0) {
-            order.setOrderStatus("ACTIVE");
+        Set<Long> packageIds = new LinkedHashSet<>();
+        packageIds.addAll(sortedIds(plan.undoSnapshot().before().packages(), CoursePackageEntity::getId));
+        packageIds.addAll(sortedIds(plan.undoSnapshot().after().packages(), CoursePackageEntity::getId));
+        List<Long> scopedPackageIds = packageIds.stream().sorted().toList();
+        if (scopedPackageIds.isEmpty()) {
+            return;
         }
-        order.setUpdatedBy(operator == null ? null : operator.userId());
-        if (enrollmentOrderMapper.updateById(order) != 1) {
-            throw new BusinessException("ORDER_CONCURRENT_UPDATE", "The order changed while the refund was being deleted. Please retry.");
-        }
-
-        paymentAllocationService.replayAllocations(order);
-        syncParticipantPaymentSnapshots(order.getId());
-        receiptRecordMapper.update(null, new LambdaUpdateWrapper<ReceiptRecordEntity>()
-                .eq(ReceiptRecordEntity::getId, receipt.getId())
-                .eq(ReceiptRecordEntity::getIsDeleted, 0)
-                .set(ReceiptRecordEntity::getDeletedAt, AppTime.nowLocalDateTime())
-                .set(ReceiptRecordEntity::getDeletedBy, operator == null ? null : operator.userId()));
-        if (receiptRecordMapper.deleteById(receipt.getId()) != 1) {
-            throw new BusinessException("REFUND_RECEIPT_CONCURRENT_UPDATE", "The refund receipt changed while being deleted. Please retry.");
+        Long lessonCount = lessonRecordMapper.selectCount(new LambdaQueryWrapper<LessonRecordEntity>()
+                .in(LessonRecordEntity::getPackageId, scopedPackageIds)
+                .ge(LessonRecordEntity::getCreatedAt, refundedAt));
+        Long ledgerCount = hourLedgerMapper.selectCount(new LambdaQueryWrapper<HourLedgerEntity>()
+                .in(HourLedgerEntity::getPackageId, scopedPackageIds)
+                .ge(HourLedgerEntity::getOperatedAt, refundedAt));
+        if ((lessonCount != null && lessonCount > 0) || (ledgerCount != null && ledgerCount > 0)) {
+            throw new BusinessException("REFUND_UNDO_ACTIVITY",
+                    "Lessons were confirmed after this refund. Please review the course and hours manually.");
         }
     }
+
+    /**
+     * 计算需要复活的课次：只恢复退款取消、且在提交时仍属于未来的课次。
+     * 已经过去的课次保持取消状态，避免把历史课次重新变成待上。
+     */
+    private List<LessonOccurrenceEntity> resolveOccurrencesToRestore(RefundUndoSnapshot snapshot) {
+        Map<Long, LessonOccurrenceEntity> beforeById = rowsById(snapshot.before().occurrences(),
+                LessonOccurrenceEntity::getId);
+        List<LessonOccurrenceEntity> afterRows = snapshot.after().occurrences() == null
+                ? Collections.emptyList() : snapshot.after().occurrences();
+        if (!rowsById(afterRows, LessonOccurrenceEntity::getId).keySet().containsAll(beforeById.keySet())) {
+            throw new BusinessException("REFUND_UNDO_SNAPSHOT_INVALID", "The lesson occurrence snapshot is incomplete.");
+        }
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        List<LessonOccurrenceEntity> restorable = new ArrayList<>();
+        for (LessonOccurrenceEntity afterRow : afterRows) {
+            LessonOccurrenceEntity beforeRow = beforeById.get(afterRow.getId());
+            if (beforeRow == null) {
+                throw new BusinessException("REFUND_UNDO_SNAPSHOT_INVALID",
+                        "The refund created an unexpected lesson occurrence.");
+            }
+            if (snapshotValueEquals(beforeRow, afterRow)) {
+                continue;
+            }
+            boolean refundCancelled = "CANCELLED".equalsIgnoreCase(afterRow.getPlanningStatus())
+                    && beforeRow.getPlanningStatus() != null
+                    && !"CANCELLED".equalsIgnoreCase(beforeRow.getPlanningStatus());
+            if (!refundCancelled) {
+                throw new BusinessException("REFUND_UNDO_SNAPSHOT_INVALID",
+                        "The refund changed a lesson occurrence in an unsupported way.");
+            }
+            if (beforeRow.getPlannedStartAt() == null || !beforeRow.getPlannedStartAt().isAfter(now)) {
+                continue;
+            }
+            restorable.add(beforeRow);
+        }
+        return restorable;
+    }
+
+    /** 恢复课次前检查教师、学生和教室的时间重叠；任一处冲突都整笔拒绝。 */
+    private void ensureNoRestoreScheduleConflicts(List<LessonOccurrenceEntity> occurrences, boolean lockRows) {
+        if (occurrences == null || occurrences.isEmpty()) {
+            return;
+        }
+        Set<Long> restoringIds = occurrences.stream().map(LessonOccurrenceEntity::getId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        for (LessonOccurrenceEntity occurrence : occurrences) {
+            requireNoOccurrenceOverlap(occurrence, restoringIds, lockRows,
+                    LessonOccurrenceEntity::getPlannedTeacherId, occurrence.getPlannedTeacherId(), "teacher");
+            requireNoOccurrenceOverlap(occurrence, restoringIds, lockRows,
+                    LessonOccurrenceEntity::getStudentId, occurrence.getStudentId(), "student");
+            if (occurrence.getPlannedClassroomId() != null) {
+                requireNoOccurrenceOverlap(occurrence, restoringIds, lockRows,
+                        LessonOccurrenceEntity::getPlannedClassroomId, occurrence.getPlannedClassroomId(), "classroom");
+            }
+        }
+    }
+
+    private void requireNoOccurrenceOverlap(LessonOccurrenceEntity candidate,
+                                            Set<Long> restoringIds,
+                                            boolean lockRows,
+                                            SFunction<LessonOccurrenceEntity, Long> resourceColumn,
+                                            Long resourceId,
+                                            String resourceLabel) {
+        if (resourceId == null || candidate.getPlannedStartAt() == null || candidate.getPlannedEndAt() == null) {
+            return;
+        }
+        List<LessonOccurrenceEntity> conflicts = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .eq(resourceColumn, resourceId)
+                        .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                        .lt(LessonOccurrenceEntity::getPlannedStartAt, candidate.getPlannedEndAt())
+                        .gt(LessonOccurrenceEntity::getPlannedEndAt, candidate.getPlannedStartAt())
+                        .ne(LessonOccurrenceEntity::getId, candidate.getId())
+                        .notIn(!restoringIds.isEmpty(), LessonOccurrenceEntity::getId, restoringIds)
+                        .last(lockRows ? "LIMIT 1 FOR UPDATE" : "LIMIT 1"));
+        if (conflicts != null && !conflicts.isEmpty()) {
+            throw new BusinessException("REFUND_UNDO_SCHEDULE_CONFLICT",
+                    "Restoring this refund would create a " + resourceLabel + " scheduling conflict.");
+        }
+    }
+
+    private void reverseRefundCreditIfNeeded(RefundUndoPlan plan, CurrentUserResponse operator) {
+        verifyRefundCreditReversible(plan);
+        RefundUndoSnapshot snapshot = plan.undoSnapshot();
+        if (!snapshot.creditRefund()) {
+            return;
+        }
+        BigDecimal amount = defaultAmount(plan.refund().getAmount()).abs();
+        BigDecimal expectedBalance = defaultAmount(snapshot.creditBalanceBefore()).add(amount);
+        studentCreditService.reverseRefundCredit(snapshot.creditStudentId(), amount, expectedBalance,
+                plan.order().getId(), plan.refund().getId(),
+                operator == null ? null : operator.userId(),
+                operator == null ? "System Admin" : operator.displayName(),
+                "Undo refund receipt " + plan.receipt().getReceiptNo());
+    }
+
+    /** Credit 退款必须能对应到唯一一条原入账流水，且尚未被冲正。 */
+    private void verifyRefundCreditReversible(RefundUndoPlan plan) {
+        RefundUndoSnapshot snapshot = plan.undoSnapshot();
+        if (!snapshot.creditRefund()) {
+            return;
+        }
+        if (snapshot.creditStudentId() == null) {
+            throw new BusinessException("REFUND_UNDO_CREDIT_MISMATCH", "The refund Credit student is missing.");
+        }
+        List<StudentCreditLedgerEntity> entries = studentCreditLedgerMapper.selectList(
+                new LambdaQueryWrapper<StudentCreditLedgerEntity>()
+                        .eq(StudentCreditLedgerEntity::getStudentId, snapshot.creditStudentId())
+                        .eq(StudentCreditLedgerEntity::getSourcePaymentRecordId, plan.refund().getId())
+                        .eq(StudentCreditLedgerEntity::getEntryType, "REFUND_TO_CREDIT"));
+        BigDecimal amount = defaultAmount(plan.refund().getAmount()).abs();
+        if (entries.size() != 1 || defaultAmount(entries.get(0).getAmount()).compareTo(amount) != 0) {
+            throw new BusinessException("REFUND_UNDO_CREDIT_MISMATCH",
+                    "The refund Credit ledger entry is missing or has changed.");
+        }
+        Long reversals = studentCreditLedgerMapper.selectCount(new LambdaQueryWrapper<StudentCreditLedgerEntity>()
+                .eq(StudentCreditLedgerEntity::getStudentId, snapshot.creditStudentId())
+                .eq(StudentCreditLedgerEntity::getSourcePaymentRecordId, plan.refund().getId())
+                .eq(StudentCreditLedgerEntity::getEntryType, "REFUND_VOID_REVERSAL"));
+        if (reversals != null && reversals > 0) {
+            throw new BusinessException("REFUND_UNDO_CREDIT_MISMATCH",
+                    "This refund Credit has already been reversed.");
+        }
+    }
+
+    private void applyRefundUndo(RefundUndoPlan plan,
+                                 EnrollmentOrderEntity order,
+                                 List<LessonOccurrenceEntity> occurrencesToRestore,
+                                 CurrentUserResponse operator) {
+        RefundStateSnapshot before = plan.undoSnapshot().before();
+        RefundStateSnapshot after = plan.undoSnapshot().after();
+        restoreEntity(before.order(), order, enrollmentOrderMapper, "enrollment order");
+        restoreRows(before.items(), after.items(), EnrollmentOrderItemEntity::getId,
+                enrollmentOrderItemMapper::selectById, enrollmentOrderItemMapper, "enrollment order item");
+        restoreRows(before.participants(), after.participants(), EnrollmentOrderParticipantEntity::getId,
+                enrollmentOrderParticipantMapper::selectById, enrollmentOrderParticipantMapper, "enrollment participant");
+        restoreRows(before.packages(), after.packages(), CoursePackageEntity::getId,
+                coursePackageMapper::selectById, coursePackageMapper, "course package");
+        restoreRows(before.courseRefundStates(), after.courseRefundStates(),
+                EnrollmentOrderCourseRefundStateEntity::getId, enrollmentOrderCourseRefundStateMapper::selectById,
+                enrollmentOrderCourseRefundStateMapper, "course refund state");
+        restoreRows(before.groupMembers(), after.groupMembers(), PrivateLessonGroupMemberEntity::getId,
+                privateLessonGroupMemberMapper::selectById, privateLessonGroupMemberMapper, "private lesson group member");
+        restoreRows(before.recurringRules(), after.recurringRules(), RecurringScheduleRuleEntity::getId,
+                recurringScheduleRuleMapper::selectById, recurringScheduleRuleMapper, "recurring schedule rule");
+        restoreRows(before.recurringSlots(), after.recurringSlots(), RecurringScheduleSlotEntity::getId,
+                recurringScheduleSlotMapper::selectById, recurringScheduleSlotMapper, "recurring schedule slot");
+        restoreRows(before.allocations(), after.allocations(), PaymentAllocationEntity::getId,
+                paymentAllocationMapper::selectById, paymentAllocationMapper, "payment allocation");
+        restoreOccurrences(before.occurrences(), after.occurrences(), occurrencesToRestore);
+        restoreClassEnrollments(before.classEnrollments(), after.classEnrollments(), operator);
+    }
+
+    private void restoreOccurrences(List<LessonOccurrenceEntity> before,
+                                    List<LessonOccurrenceEntity> after,
+                                    List<LessonOccurrenceEntity> occurrencesToRestore) {
+        Set<Long> restorableIds = (occurrencesToRestore == null ? Collections.<LessonOccurrenceEntity>emptyList()
+                : occurrencesToRestore).stream()
+                .map(LessonOccurrenceEntity::getId).filter(Objects::nonNull).collect(Collectors.toSet());
+        for (LessonOccurrenceEntity afterRow : after) {
+            Long id = afterRow.getId();
+            LessonOccurrenceEntity beforeRow = before.stream()
+                    .filter(row -> Objects.equals(row.getId(), id)).findFirst().orElse(null);
+            if (beforeRow == null) {
+                throw new BusinessException("REFUND_UNDO_SNAPSHOT_INVALID", "The lesson occurrence snapshot is incomplete.");
+            }
+            if (snapshotValueEquals(beforeRow, afterRow)) {
+                continue;
+            }
+            if (!restorableIds.contains(id)) {
+                // 已经过去的取消课次保持取消状态，不复活为待上。
+                continue;
+            }
+            LessonOccurrenceEntity currentRow = lessonOccurrenceMapper.selectById(id);
+            if (currentRow == null) {
+                throw new BusinessException("REFUND_UNDO_STATE_CHANGED", "A lesson occurrence is no longer active.");
+            }
+            restoreEntity(beforeRow, currentRow, lessonOccurrenceMapper, "lesson occurrence");
+        }
+    }
+
+    private void writeRefundUndoAudit(RefundUndoPlan plan,
+                                      List<LessonOccurrenceEntity> occurrencesToRestore,
+                                      CurrentUserResponse operator) {
+        if (correctionLogMapper == null) {
+            return;
+        }
+        EnrollmentCorrectionLogEntity log = new EnrollmentCorrectionLogEntity();
+        log.setOperatorUserId(operator == null ? null : operator.userId());
+        log.setOperatorNameSnapshot(operator == null ? "System" : operator.displayName());
+        log.setBizType(REFUND_RECEIPT_TEMPLATE);
+        log.setBizId(plan.receipt().getId());
+        log.setOperationCode("UNDO_REFUND_RECEIPT");
+        log.setOperationDesc("Undo refund receipt " + plan.receipt().getReceiptNo());
+        Map<String, Object> requestSnapshot = new LinkedHashMap<>();
+        requestSnapshot.put("receiptNo", plan.receipt().getReceiptNo());
+        requestSnapshot.put("paymentId", plan.refund().getId());
+        requestSnapshot.put("paymentNo", plan.refund().getPaymentNo());
+        requestSnapshot.put("enrollmentOrderId", plan.order().getId());
+        requestSnapshot.put("orderItemId", plan.targetItem().getId());
+        requestSnapshot.put("participantIndex", plan.targetParticipant().getParticipantIndex());
+        requestSnapshot.put("studentId", plan.targetParticipant().getStudentId());
+        requestSnapshot.put("amount", defaultAmount(plan.refund().getAmount()).abs());
+        requestSnapshot.put("creditRefund", plan.undoSnapshot().creditRefund());
+        requestSnapshot.put("restoredOccurrenceIds", occurrencesToRestore.stream()
+                .map(LessonOccurrenceEntity::getId).toList());
+        log.setRequestSnapshot(jsonHelper.toJson(requestSnapshot));
+        Map<String, Object> responseSnapshot = new LinkedHashMap<>();
+        responseSnapshot.put("orderStatus", plan.order().getOrderStatus());
+        responseSnapshot.put("paymentStatus", plan.order().getPaymentStatus());
+        responseSnapshot.put("receivedAmount", plan.order().getReceivedAmount());
+        log.setResponseSnapshot(jsonHelper.toJson(responseSnapshot));
+        log.setOperateAt(AppTime.nowLocalDateTime());
+        correctionLogMapper.insert(log);
+    }
+
+    private <T> List<Long> sortedIds(List<T> rows, Function<T, Long> idExtractor) {
+        if (rows == null || rows.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return rows.stream().map(idExtractor).filter(Objects::nonNull).distinct().sorted().toList();
+    }
+
+    private <T> Map<Long, T> rowsById(List<T> rows, Function<T, Long> idExtractor) {
+        if (rows == null || rows.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<Long, T> result = new LinkedHashMap<>();
+        for (T row : rows) {
+            Long id = idExtractor.apply(row);
+            if (id != null) {
+                result.put(id, row);
+            }
+        }
+        return result;
+    }
+
+    /** 撤销所需的、已完成归属校验的上下文。 */
+    private record RefundUndoPlan(ReceiptRecordEntity receipt,
+                                  EnrollmentOrderEntity order,
+                                  PaymentRecordEntity refund,
+                                  EnrollmentOrderItemEntity targetItem,
+                                  EnrollmentOrderParticipantEntity targetParticipant,
+                                  RefundUndoSnapshot undoSnapshot) {}
 
     private <T extends BaseEntity> void restoreRows(List<T> before,
                                                    List<T> after,
@@ -5065,10 +5422,12 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                                                    java.util.function.Function<Long, T> currentLoader,
                                                    BaseMapper<T> mapper,
                                                    String label) {
-        Map<Long, T> beforeById = before.stream().filter(row -> idExtractor.apply(row) != null)
+        List<T> beforeRows = before == null ? Collections.emptyList() : before;
+        List<T> afterRows = after == null ? Collections.emptyList() : after;
+        Map<Long, T> beforeById = beforeRows.stream().filter(row -> idExtractor.apply(row) != null)
                 .collect(Collectors.toMap(idExtractor, Function.identity()));
-        Set<Long> afterIds = after.stream().map(idExtractor).filter(Objects::nonNull).collect(Collectors.toSet());
-        for (T afterRow : after) {
+        Set<Long> afterIds = afterRows.stream().map(idExtractor).filter(Objects::nonNull).collect(Collectors.toSet());
+        for (T afterRow : afterRows) {
             Long id = idExtractor.apply(afterRow);
             T beforeRow = beforeById.get(id);
             T currentRow = currentLoader.apply(id);
@@ -5089,7 +5448,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     }
 
     private <T extends BaseEntity> void restoreEntity(T before, T current, BaseMapper<T> mapper, String label) {
-        if (Objects.equals(before, current)) {
+        if (snapshotValueEquals(before, current)) {
             return;
         }
         Integer currentVersion = current.getVersion();
@@ -5103,15 +5462,17 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private void restoreClassEnrollments(List<ClassEnrollmentEntity> before,
                                          List<ClassEnrollmentEntity> after,
                                          CurrentUserResponse operator) {
-        Map<Long, ClassEnrollmentEntity> beforeById = before.stream().filter(row -> row.getId() != null)
+        List<ClassEnrollmentEntity> beforeRows = before == null ? Collections.emptyList() : before;
+        List<ClassEnrollmentEntity> afterRows = after == null ? Collections.emptyList() : after;
+        Map<Long, ClassEnrollmentEntity> beforeById = beforeRows.stream().filter(row -> row.getId() != null)
                 .collect(Collectors.toMap(ClassEnrollmentEntity::getId, Function.identity()));
-        Set<Long> afterIds = after.stream().map(ClassEnrollmentEntity::getId).filter(Objects::nonNull).collect(Collectors.toSet());
-        for (ClassEnrollmentEntity afterRow : after) {
+        Set<Long> afterIds = afterRows.stream().map(ClassEnrollmentEntity::getId).filter(Objects::nonNull).collect(Collectors.toSet());
+        for (ClassEnrollmentEntity afterRow : afterRows) {
             ClassEnrollmentEntity beforeRow = beforeById.get(afterRow.getId());
             if (beforeRow == null) {
                 throw new BusinessException("REFUND_UNDO_SNAPSHOT_INVALID", "The class enrollment snapshot is incomplete.");
             }
-            if (Objects.equals(beforeRow, afterRow)) {
+            if (snapshotValueEquals(beforeRow, afterRow)) {
                 continue;
             }
             int restored = classEnrollmentMapper.restoreRefundSnapshot(beforeRow.getId(), beforeRow.getStatus(),

@@ -475,7 +475,11 @@
             @contextmenu.prevent.stop="openStudentContextMenu($event, row)"
           >
             <td v-for="column in columns" :key="column.key" :class="stoppedCellClass(column.key)">
-              <span v-if="column.key === 'period'">{{ formatPeriod(row) }}</span>
+              <span v-if="column.key === 'studentName'">
+                {{ displayText(row.studentName) }}
+                <el-button v-if="!isManager" link type="primary" @click.stop="openRefundUndo(row)">Undo refund</el-button>
+              </span>
+              <span v-else-if="column.key === 'period'">{{ formatPeriod(row) }}</span>
               <span v-else-if="column.key === 'signupDate'">{{ formatDate(row.signupDate) }}</span>
               <span v-else-if="column.key === 'phone'">{{ formatUsPhoneDisplay(row.phone) || '—' }}</span>
               <span v-else-if="column.key === 'phone2'">{{ formatUsPhoneDisplay(row.phone2) || '—' }}</span>
@@ -601,6 +605,25 @@
       </button>
     </nav>
 
+    <el-dialog v-model="refundUndoVisible" title="Undo refund" width="min(640px, calc(100vw - 32px))" append-to-body>
+      <p>Student: {{ displayText(refundUndoRow?.studentName) }} · Course: {{ displayText(refundUndoRow?.detail) }}</p>
+      <p>Undo restores the course, package, and future lessons to their state before this refund, and reverses the related student Credit. It is rejected if lessons or schedule changes were recorded after the refund. Money already sent externally is not recovered.</p>
+      <div v-loading="refundUndoLoading">
+        <el-alert v-if="refundUndoError" :title="refundUndoError" type="warning" :closable="false" />
+        <el-radio-group v-else v-model="selectedRefundPaymentId" class="refund-undo-candidates">
+          <el-radio v-for="candidate in refundUndoCandidates" :key="String(candidate.paymentId)"
+                    :value="String(candidate.paymentId)" :disabled="!candidate.eligible">
+            {{ candidate.receiptNo || candidate.paymentNo }} · {{ formatDate(candidate.refundedAt) }} · {{ formatMoney(candidate.amount) }}
+            <small v-if="candidate.ineligibleReason"> — {{ candidate.ineligibleReason }}</small>
+          </el-radio>
+        </el-radio-group>
+        <p v-if="!refundUndoLoading && !refundUndoError && !refundUndoCandidates.length">No linked refund found. Please request manual review.</p>
+      </div>
+      <template #footer>
+        <el-button @click="refundUndoVisible = false">Cancel</el-button>
+        <el-button type="danger" :loading="refundUndoSubmitting" :disabled="!selectedRefundCandidate?.eligible" @click="confirmRefundUndo">Undo selected refund</el-button>
+      </template>
+    </el-dialog>
     <div
       v-if="studentContextMenu.visible"
       class="student-context-menu"
@@ -655,12 +678,12 @@
 <script setup lang="ts">
 import dayjs from 'dayjs';
 import { ArrowDown, ArrowUp, Close, MoreFilled, Search } from '@element-plus/icons-vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import * as XLSX from 'xlsx';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
-import { fetchDataSummary, updateDataSummaryClassification, type DataSummaryRow } from '@/api/data-summary';
-import { fetchRefundPreview } from '@/api/enrollment';
+import { fetchDataSummary, fetchRefundUndoCandidates, updateDataSummaryClassification, type DataSummaryRow, type RefundUndoCandidate } from '@/api/data-summary';
+import { deleteRefundReceipt, fetchRefundPreview } from '@/api/enrollment';
 import { fetchAllCourseProducts, saveCourseProductTabOrder } from '@/api/base-data';
 import { extractErrorMessage } from '@/api/http';
 import { useAppStore } from '@/stores/app';
@@ -928,6 +951,17 @@ const dragState = reactive<{ fromId: string | null; overId: string | null }>({
   fromId: null,
   overId: null,
 });
+
+const refundUndoVisible = ref(false);
+const refundUndoLoading = ref(false);
+const refundUndoSubmitting = ref(false);
+const refundUndoError = ref('');
+const refundUndoRow = ref<DataSummaryRow | null>(null);
+const refundUndoCandidates = ref<RefundUndoCandidate[]>([]);
+const selectedRefundPaymentId = ref('');
+const selectedRefundCandidate = computed(() => refundUndoCandidates.value.find(
+  (candidate) => String(candidate.paymentId) === selectedRefundPaymentId.value,
+));
 
 const studentContextMenu = reactive<{
   visible: boolean;
@@ -1614,6 +1648,56 @@ function setArchiveScope(value: 'CURRENT' | 'ARCHIVED') {
     : products.value.find((product) => !product.archivedAt);
   activeTabId.value = nextTab ? String(nextTab.id) : '';
   if (activeTabId.value) restoreState(tabStates.get(activeTabId.value) ?? createDefaultState());
+}
+
+async function openRefundUndo(row: DataSummaryRow) {
+  refundUndoRow.value = row;
+  refundUndoCandidates.value = [];
+  selectedRefundPaymentId.value = '';
+  refundUndoError.value = '';
+  refundUndoVisible.value = true;
+  if (row.orderItemId == null || row.participantIndex == null || row.studentId == null) {
+    refundUndoError.value = 'This student and course purchase cannot be verified. Please request manual review.';
+    return;
+  }
+  refundUndoLoading.value = true;
+  try {
+    const { data } = await fetchRefundUndoCandidates({
+      orderId: row.orderId, orderItemId: row.orderItemId, studentId: row.studentId,
+      participantIndex: row.participantIndex,
+    });
+    refundUndoCandidates.value = data.data.candidates ?? [];
+    refundUndoError.value = data.data.unavailableReason ?? '';
+  } catch (error) {
+    refundUndoError.value = extractErrorMessage(error);
+  } finally {
+    refundUndoLoading.value = false;
+  }
+}
+
+async function confirmRefundUndo() {
+  const candidate = selectedRefundCandidate.value;
+  if (!candidate?.eligible || candidate.receiptId == null || refundUndoSubmitting.value) return;
+  try {
+    await ElMessageBox.confirm(
+      'Undo this student and course refund? The course, package, and future lessons return to their state before the refund, and the related student Credit is reversed. The undo is rejected if lessons or schedule changes happened after the refund. Money already sent externally is not recovered.',
+      `Undo ${candidate.receiptNo || candidate.paymentNo}?`,
+      { type: 'warning', confirmButtonText: 'Undo refund', cancelButtonText: 'Cancel' },
+    );
+  } catch {
+    return;
+  }
+  refundUndoSubmitting.value = true;
+  try {
+    await deleteRefundReceipt(candidate.receiptId);
+    refundUndoVisible.value = false;
+    ElMessage.success('Refund undone.');
+    await loadPage();
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    refundUndoSubmitting.value = false;
+  }
 }
 
 function openStudentContextMenu(event: MouseEvent, row: DataSummaryDisplayRow, refundRow = false) {

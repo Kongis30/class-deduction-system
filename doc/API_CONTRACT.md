@@ -80,6 +80,12 @@ Shared conventions:
 - `GET /api/v1/enrollment/packages/{id}`
 - `GET /api/v1/enrollment/receipts`
 - `GET /api/v1/enrollment/receipts/{id}`
+- `DELETE /api/v1/enrollment/receipts/{id}` (refund undo; ADMIN/STAFF only)
+
+#### Data Summary
+
+- `GET /api/v1/data-summary` (MANAGER receives a response without monetary fields)
+- `GET /api/v1/data-summary/refund-candidates?orderId=&orderItemId=&studentId=&participantIndex=` (ADMIN/STAFF only)
 
 #### Course-level discounts and payments
 
@@ -93,6 +99,28 @@ Shared conventions:
 - `POST /api/v1/enrollment/payments` accepts per-split `allocations[]` containing `enrollmentOrderItemId` and `amount`. A participant-specific payment cannot also use course allocations.
 - `GET /api/v1/enrollment/orders/{id}` returns each item’s `discountAmount`, `amountDue`, `paidAmount`, and `balanceAmount`, plus each payment’s course allocations.
 - Legacy clients may omit allocations; the backend keeps the existing automatic allocation behavior for those requests.
+
+#### Undoing a refund (line-level)
+
+Undoing a refund reverses **one refund transaction of one student on one course purchase**. It must not touch other students, other course lines, or other refunds on the same order. A refund that covers several course lines (or a historical whole-order refund) is never undone partially.
+
+- `GET /api/v1/data-summary/refund-candidates` (ADMIN/STAFF only) takes `orderId`, `orderItemId`, `studentId`, and `participantIndex`. It returns `{ candidates: [...], unavailableReason: string|null }`. Each candidate carries `receiptId`, `receiptNo`, `paymentId`, `paymentNo`, `refundedAt`, `amount` (positive), `paymentMethod`, `eligible`, and `ineligibleReason`. A candidate is eligible only when the refund links to exactly one of its receipts, one matching negative `payment_allocation` for this purchase line, and a complete recovery snapshot, and no later facts invalidate the undo. The preview never returns the snapshot, and it applies the same checks as the delete endpoint.
+- `DELETE /api/v1/enrollment/receipts/{id}` (ADMIN/STAFF only) undoes the refund behind a `REFUND_RECEIPT` receipt, where `{id}` is the refund receipt id. In one transaction it restores the order, course item, participant, package, class entitlement, future lesson occurrences, and schedule rules/slots captured by the snapshot, reverses the refund's student Credit, then marks the refund payment `VOIDED`, soft-deletes the refund payment and its receipt, and writes an audit record. Lesson records, hour ledger entries, and package balance snapshots are never rewritten; this endpoint cannot recover money already sent back outside the system.
+- The endpoint fails closed. When the refund cannot be proven safe to undo, nothing is changed and the response carries one of the error codes below; the UI must show the message and ask staff to review instead of retrying blindly.
+
+| Code | Meaning |
+| --- | --- |
+| `REFUND_TRANSACTION_REQUIRED` | The refund payment is missing, not a refund, already voided, or not negative. |
+| `REFUND_UNDO_LINE_REQUIRED` | The receipt is not tied to one student and one course purchase (for example a whole-order refund). |
+| `REFUND_UNDO_LINE_AMBIGUOUS` | The receipt, refund payment, negative allocation, participant, or student do not map to exactly one course line. |
+| `REFUND_UNDO_SNAPSHOT_REQUIRED` | No recovery snapshot was saved with the refund, so it needs manual review. |
+| `REFUND_UNDO_SNAPSHOT_INVALID` | The saved snapshot is incomplete or unreadable. |
+| `REFUND_UNDO_STATE_CHANGED` | Orders, packages, occurrences, or entitlements no longer match the recorded post-refund state. |
+| `REFUND_UNDO_ACTIVITY` | Lessons were confirmed, scheduled, or otherwise recorded after the refund. |
+| `REFUND_UNDO_SCHEDULE_CONFLICT` | Restoring a cancelled occurrence would clash with the teacher, student, classroom, or another occurrence. |
+| `REFUND_UNDO_CREDIT_MISMATCH` | The refund Credit cannot be reversed: the student, the original ledger entry, or the current balance do not support it. |
+| `REFUND_UNDO_RESTORE_FAILED` | A record could not be restored; the transaction is rolled back. |
+| `REFUND_RECEIPT_CONCURRENT_UPDATE` / `REFUND_TRANSACTION_CONCURRENT_UPDATE` | The refund was changed concurrently; reload and review. |
 
 ### Scheduling
 
