@@ -475,11 +475,7 @@
             @contextmenu.prevent.stop="openStudentContextMenu($event, row)"
           >
             <td v-for="column in columns" :key="column.key" :class="stoppedCellClass(column.key)">
-              <span v-if="column.key === 'studentName'">
-                {{ displayText(row.studentName) }}
-                <el-button v-if="!isManager" link type="primary" @click.stop="openRefundUndo(row)">Undo refund</el-button>
-              </span>
-              <span v-else-if="column.key === 'period'">{{ formatPeriod(row) }}</span>
+              <span v-if="column.key === 'period'">{{ formatPeriod(row) }}</span>
               <span v-else-if="column.key === 'signupDate'">{{ formatDate(row.signupDate) }}</span>
               <span v-else-if="column.key === 'phone'">{{ formatUsPhoneDisplay(row.phone) || '—' }}</span>
               <span v-else-if="column.key === 'phone2'">{{ formatUsPhoneDisplay(row.phone2) || '—' }}</span>
@@ -506,7 +502,20 @@
             @contextmenu.prevent.stop="openStudentContextMenu($event, row, true)"
           >
             <td v-for="column in columns" :key="column.key" :class="stoppedCellClass(column.key)">
-              <span v-if="column.key === 'period'">{{ formatPeriod(row) }}</span>
+              <span v-if="column.key === 'studentName'" class="workbook-student-name">
+                {{ displayText(row.studentName) }}
+                <!-- 移动端没有右键，提供与主表一致的触屏操作入口打开退款行菜单。 -->
+                <button
+                  v-if="isMobileViewport"
+                  type="button"
+                  class="workbook-student-actions"
+                  :aria-label="`Actions for ${displayText(row.studentName)}`"
+                  @click.stop="openStudentContextMenu($event, row, true)"
+                >
+                  <el-icon><MoreFilled /></el-icon>
+                </button>
+              </span>
+              <span v-else-if="column.key === 'period'">{{ formatPeriod(row) }}</span>
               <span v-else-if="column.key === 'signupDate'">{{ formatDate(row.signupDate) }}</span>
               <span v-else-if="column.key === 'phone'">{{ formatUsPhoneDisplay(row.phone) || '—' }}</span>
               <span v-else-if="column.key === 'phone2'">{{ formatUsPhoneDisplay(row.phone2) || '—' }}</span>
@@ -633,6 +642,14 @@
     >
       <button type="button" role="menuitem" @click="viewStudentReceipt">
         View receipt
+      </button>
+      <button
+        v-if="!isManager && studentContextMenu.refundRow"
+        type="button"
+        role="menuitem"
+        @click="openRefundUndoFromMenu"
+      >
+        Undo refund
       </button>
       <button
         v-if="!studentContextMenu.refundRow && studentContextMenu.row?.discontinued"
@@ -1650,6 +1667,14 @@ function setArchiveScope(value: 'CURRENT' | 'ARCHIVED') {
   if (activeTabId.value) restoreState(tabStates.get(activeTabId.value) ?? createDefaultState());
 }
 
+/** 从退款行的右键菜单进入撤销流程；先关闭菜单再打开撤销弹窗。 */
+function openRefundUndoFromMenu() {
+  const row = studentContextMenu.row;
+  closeStudentContextMenu();
+  if (!row) return;
+  void openRefundUndo(row);
+}
+
 async function openRefundUndo(row: DataSummaryRow) {
   refundUndoRow.value = row;
   refundUndoCandidates.value = [];
@@ -1702,7 +1727,8 @@ async function confirmRefundUndo() {
 
 function openStudentContextMenu(event: MouseEvent, row: DataSummaryDisplayRow, refundRow = false) {
   const menuWidth = 150;
-  const menuHeight = refundRow ? 132 : 230;
+  // 退款行菜单包含 View receipt 与 Undo refund 两项，可能仍有 Refund 项，按最高的组合估算避免溢出屏幕。
+  const menuHeight = refundRow ? 190 : 230;
   studentContextMenu.x = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
   studentContextMenu.y = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
   studentContextMenu.row = row;
