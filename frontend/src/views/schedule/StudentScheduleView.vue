@@ -475,14 +475,18 @@ async function loadDailyPrivateLessons() {
     const response = await fetchDailyPrivateLessons(dailyDate.value);
     if (requestId !== dailyRequestId) return;
     const nameOrder = new Intl.Collator('en', { sensitivity: 'base' });
+    // 弹窗以 Time 列为主视图，按开始时间从早到晚排序；同一时段再按学生名稳定排序。
     dailyLessons.value = response.data.data.lessons
       .map((lesson) => ({
         ...lesson,
         participantNames: [...lesson.participantNames].sort(nameOrder.compare),
       }))
       .sort((left, right) => {
-        const byStudent = nameOrder.compare(left.participantNames[0] ?? '', right.participantNames[0] ?? '');
-        return byStudent || left.plannedStartAt.localeCompare(right.plannedStartAt);
+        const byStart = left.plannedStartAt.localeCompare(right.plannedStartAt);
+        if (byStart !== 0) return byStart;
+        const byEnd = left.plannedEndAt.localeCompare(right.plannedEndAt);
+        if (byEnd !== 0) return byEnd;
+        return nameOrder.compare(left.participantNames[0] ?? '', right.participantNames[0] ?? '');
       });
     dailyStudentCount.value = response.data.data.studentCount;
   } catch {
