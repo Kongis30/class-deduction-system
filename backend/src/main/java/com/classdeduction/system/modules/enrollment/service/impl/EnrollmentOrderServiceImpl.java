@@ -5457,28 +5457,13 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         }
         BigDecimal allocated = allocations.stream().map(PaymentAllocationEntity::getAmount)
                 .map(this::defaultAmount).reduce(ZERO_AMOUNT, BigDecimal::add);
-        // 删除课程不能隐式吞掉已收款；先退款至课程净收款为零，保留其他课程付款。
-        if (allocated.compareTo(ZERO_AMOUNT) != 0 || defaultAmount(target.getPaidAmount()).compareTo(ZERO_AMOUNT) != 0) {
-            throw new BusinessException("COURSE_REFUND_REQUIRED",
-                    "Refund this course's allocated payments before deleting it.");
-        }
-        if (items.size() == 1) {
-            if (defaultAmount(order.getReceivedAmount()).compareTo(ZERO_AMOUNT) != 0) {
-                throw new BusinessException("COURSE_REFUND_REQUIRED",
-                        "Refund the payment before deleting this receipt.");
-            }
+        // Edit receipt 由管理员直接维护报名课程；删除课程时保留实际付款流水，只移除课程分摊。
+        boolean hasRecordedPayment = allocated.compareTo(ZERO_AMOUNT) != 0
+                || defaultAmount(target.getPaidAmount()).compareTo(ZERO_AMOUNT) != 0
+                || defaultAmount(order.getReceivedAmount()).compareTo(ZERO_AMOUNT) != 0;
+        if (items.size() == 1 && !hasRecordedPayment) {
             deleteOrder(orderId);
             return;
-        }
-        if (allocations.isEmpty() && defaultAmount(order.getReceivedAmount()).compareTo(ZERO_AMOUNT) > 0) {
-            BigDecimal otherCoursePaid = items.stream()
-                    .filter(item -> !Objects.equals(item.getId(), itemId))
-                    .map(EnrollmentOrderItemEntity::getPaidAmount)
-                    .map(this::defaultAmount).reduce(ZERO_AMOUNT, BigDecimal::add);
-            if (otherCoursePaid.compareTo(defaultAmount(order.getReceivedAmount())) != 0) {
-                throw new BusinessException("COURSE_PAYMENT_ALLOCATION_REQUIRED",
-                        "This receipt has payments without reliable course allocations. Review its payments before deleting this course.");
-            }
         }
         List<EnrollmentOrderParticipantEntity> participants = listOrderParticipants(orderId);
         if (participants.size() > 1) {
@@ -5493,9 +5478,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 : target.getAmountDue();
         BigDecimal newDue = defaultAmount(order.getAmountDue()).subtract(removedDue);
         BigDecimal received = defaultAmount(order.getReceivedAmount());
-        if (newDue.compareTo(ZERO_AMOUNT) < 0 || received.compareTo(newDue) > 0) {
+        if (newDue.compareTo(ZERO_AMOUNT) < 0) {
             throw new BusinessException("COURSE_DELETE_BALANCE_CONFLICT",
-                    "The remaining receipt balance is inconsistent. Review its payments before deleting this course.");
+                    "The remaining receipt amount is invalid. Review the receipt before deleting this course.");
         }
         requireSeparableOrderItemLines(order.getExtraFeeDetail(), target.getExtraFeeAmount(), target);
         requireSeparableOrderItemLines(order.getDiscountDetail(), target.getDiscountAmount(), target);
