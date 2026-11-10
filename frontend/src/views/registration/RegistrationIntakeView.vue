@@ -3471,7 +3471,10 @@ function toHistoricalCourseLine(
     fallbackServiceFees.push({ rowKey: `history-fee-${index}-total`, label: 'Other fee', amount: savedExtraFeeAmount });
   }
   return {
-    rowKey: `history-course-${getString(item, 'id') || getString(item, 'orderItemId') || getString(fallback, 'id') || index}`,
+    // rowKey 必须含 index 兜底：payload 快照里的 Snowflake id 经 JSON.parse 降精度后
+    // 两个不同 item 可能撞成同一个字符串，导致两个课程卡片共用同一 rowKey，
+    // 付款/折扣按 rowKey 匹配时全部联动（输入一个框，另一卡同步变化）。
+    rowKey: `history-course-${index}-${getString(item, 'id') || getString(item, 'orderItemId') || getString(fallback, 'id') || 'noid'}`,
     // 订单明细是业务主数据；收据 payload 是历史快照，内部 JSON 的 Snowflake ID
     // 可能已经被原生 JSON.parse 转成不精确的 number，因此 ID 优先取订单明细。
     orderItemId: getString(fallback, 'id') || getString(item, 'orderItemId') || getString(item, 'id') || undefined,
