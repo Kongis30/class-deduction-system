@@ -1752,41 +1752,63 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
-    void shouldRequireRefundBeforeDeletingPaidCourseItem() {
+    void shouldDeletePaidCourseItemAndKeepOrderReceivedAmount() {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(2001L);
+        order.setOriginalAmount(new BigDecimal("50.00"));
+        order.setAmountDue(new BigDecimal("50.00"));
+        order.setReceivedAmount(new BigDecimal("50.00"));
         EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
         item.setId(2101L);
+        item.setPriceAmount(new BigDecimal("50.00"));
+        item.setAmountDue(new BigDecimal("50.00"));
         item.setPaidAmount(new BigDecimal("50.00"));
         when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
         when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
         when(paymentAllocationMapper.selectList(any())).thenReturn(List.of());
+        when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+        when(receiptRecordMapper.selectList(any())).thenReturn(List.of());
 
-        assertThatThrownBy(() -> enrollmentOrderService.deleteOrderItem(2001L, 2101L))
-                .isInstanceOf(BusinessException.class)
-                .extracting("code")
-                .isEqualTo("COURSE_REFUND_REQUIRED");
-        verify(enrollmentOrderItemMapper, never()).deleteById(2101L);
+        enrollmentOrderService.deleteOrderItem(2001L, 2101L);
+
+        assertThat(order.getAmountDue()).isEqualByComparingTo("0.00");
+        assertThat(order.getReceivedAmount()).isEqualByComparingTo("50.00");
+        assertThat(order.getBalanceAmount()).isEqualByComparingTo("-50.00");
+        verify(enrollmentOrderItemMapper).deleteById(2101L);
+        verify(enrollmentOrderMapper, never()).deleteById(2001L);
+        verify(paymentRecordMapper, never()).delete(any());
     }
 
     @Test
-    void shouldRejectMixedReceiptWhenLegacyPaymentCannotBeAssignedToRemainingCourse() {
+    void shouldKeepLegacyPaymentOnMixedReceiptWhenCourseIsDeleted() {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(2001L);
+        order.setOriginalAmount(new BigDecimal("200.00"));
+        order.setAmountDue(new BigDecimal("200.00"));
         order.setReceivedAmount(new BigDecimal("100.00"));
         EnrollmentOrderItemEntity removed = new EnrollmentOrderItemEntity();
         removed.setId(2101L);
+        removed.setPriceAmount(new BigDecimal("100.00"));
+        removed.setAmountDue(new BigDecimal("100.00"));
         EnrollmentOrderItemEntity retained = new EnrollmentOrderItemEntity();
         retained.setId(2102L);
+        retained.setPriceAmount(new BigDecimal("100.00"));
+        retained.setAmountDue(new BigDecimal("100.00"));
         when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
         when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(removed, retained));
         when(paymentAllocationMapper.selectList(any())).thenReturn(List.of());
+        when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
 
-        assertThatThrownBy(() -> enrollmentOrderService.deleteOrderItem(2001L, 2101L))
-                .isInstanceOf(BusinessException.class)
-                .extracting("code")
-                .isEqualTo("COURSE_PAYMENT_ALLOCATION_REQUIRED");
-        verify(enrollmentOrderItemMapper, never()).deleteById(2101L);
+        enrollmentOrderService.deleteOrderItem(2001L, 2101L);
+
+        // 未分摊的历史付款保留在订单上，删除课程只移除课程及其分摊，不再要求先退款。
+        assertThat(order.getAmountDue()).isEqualByComparingTo("100.00");
+        assertThat(order.getReceivedAmount()).isEqualByComparingTo("100.00");
+        assertThat(order.getBalanceAmount()).isEqualByComparingTo("0.00");
+        verify(enrollmentOrderItemMapper).deleteById(2101L);
+        verify(paymentAllocationMapper).delete(any());
+        verify(paymentRecordMapper, never()).delete(any());
+        verify(enrollmentOrderMapper, never()).deleteById(2001L);
     }
 
     @Test

@@ -3749,17 +3749,24 @@ async function handleCourseRowRemove(index: number) {
   });
 }
 
-// 已保存的课程行通过订单课程删除接口处理；接口会保护未退款款项与关联排课。
+// 已保存的课程行通过订单课程删除接口处理；付款流水保留，课程及其排课单独清理。
 async function deleteSavedCourseLine(line: RegistrationCourseLine) {
   const orderId = Array.isArray(route.query.orderId) ? route.query.orderId[0] : route.query.orderId;
   if (!orderId || !line.orderItemId || deletingCourseRowKey.value) return;
 
-  const removesWholeReceipt = (historicalOrder.value?.items.length ?? courseLines.value.length) <= 1;
+  const savedItem = historicalOrder.value?.items.find((item) => String(item.id) === String(line.orderItemId));
+  const hasRecordedPayment = numeric(historicalOrder.value?.receivedAmount) !== 0
+    || numeric(savedItem?.paidAmount) !== 0
+    || (historicalOrder.value?.payments.length ?? 0) > 0;
+  const removesWholeReceipt = (historicalOrder.value?.items.length ?? courseLines.value.length) <= 1
+    && !hasRecordedPayment;
   const hasUnsavedEdits = Boolean(changedCorrectionPayload(buildCurrentCorrectionPayload()));
   const confirmation = [
     `Delete “${courseLineOptionLabel(line, courseLines.value.indexOf(line))}” from this saved receipt?`,
-    'The course is removed immediately. The system will block deletion if it still has payments that need to be refunded.',
+    'Recorded payments and the total received amount will stay unchanged. Review payment records separately if needed.',
     removesWholeReceipt ? 'This is the only course, so deleting it will remove the entire unpaid receipt.' : '',
+    !removesWholeReceipt && courseLines.value.length === 1
+      ? 'This is the only course. The receipt and its payment history will remain.' : '',
     hasUnsavedEdits ? 'Other unsaved receipt changes will be discarded.' : '',
   ].filter(Boolean).join('\n\n');
 
@@ -3780,7 +3787,7 @@ async function deleteSavedCourseLine(line: RegistrationCourseLine) {
       return;
     }
     await loadHistoricalOrder();
-    ElMessage.success('Course removed. The receipt has been refreshed.');
+    ElMessage.success('Course removed. Recorded payments were kept unchanged.');
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') ElMessage.error(extractErrorMessage(error));
   } finally {
@@ -4035,7 +4042,14 @@ function courseRefundAmount(courseRowKey: string) {
 }
 
 function coursePaymentAmount(payment: PaymentLine, courseRowKey: string) {
-  if (payment.courseRowKey === courseRowKey || courseLines.value.length === 1) {
+  if (courseLines.value.length === 1) {
+    return payment.amount;
+  }
+  // 多课程收据的输入框编辑本课程分摊；不能回退到整笔付款金额覆盖其他课程的输入值。
+  if (Object.prototype.hasOwnProperty.call(payment.courseAllocations ?? {}, courseRowKey)) {
+    return numeric(payment.courseAllocations[courseRowKey]);
+  }
+  if (payment.courseRowKey === courseRowKey) {
     return payment.amount;
   }
   if (isUnallocatedOrderPayment(payment) && courseRowKey === courseLines.value[0]?.rowKey) {

@@ -1,6 +1,16 @@
 import { expect, test } from '@playwright/test';
 
 test('Data Summary ends only the selected student course after confirmation', async ({ page }) => {
+  page.on('pageerror', (error) => console.log('[pageerror]', error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') console.log('[console]', message.text());
+  });
+  page.on('requestfailed', (request) => console.log('[requestfailed]', request.url(), request.failure()?.errorText));
+  page.on('response', async (response) => {
+    if (response.request().resourceType() === 'script' && response.headers()['content-type']?.includes('json')) {
+      console.log('[json-script]', response.url());
+    }
+  });
   const requestBodies: unknown[] = [];
   await page.route('**/api/**', async (route) => {
     const request = route.request();
