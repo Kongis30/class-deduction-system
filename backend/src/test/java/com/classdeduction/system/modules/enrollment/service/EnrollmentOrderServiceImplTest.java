@@ -501,6 +501,54 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
+    void shouldUndoRefundDaysLaterWithoutRevivingAlreadyElapsedOccurrence() throws Exception {
+        // 退款发生在一周前，被取消的课次日期早已过去：撤销应恢复课程与课包余额，
+        // 但已过去的课次保持取消，不能重新变成待上。
+        stubUndoableLineRefund(LocalDateTime.now().withNano(0).minusDays(2));
+
+        enrollmentOrderService.deleteRefundReceipt(7001L, null);
+
+        // 财务与课包按退款前状态恢复。
+        ArgumentCaptor<EnrollmentOrderEntity> restoredOrder = ArgumentCaptor.forClass(EnrollmentOrderEntity.class);
+        verify(enrollmentOrderMapper).updateById(restoredOrder.capture());
+        assertThat(restoredOrder.getValue().getReceivedAmount()).isEqualByComparingTo("1100.00");
+        ArgumentCaptor<CoursePackageEntity> restoredPackage = ArgumentCaptor.forClass(CoursePackageEntity.class);
+        verify(coursePackageMapper).updateById(restoredPackage.capture());
+        assertThat(restoredPackage.getValue().getRemainingUnits()).isEqualTo(2);
+        assertThat(restoredPackage.getValue().getPackageStatus()).isEqualTo("ACTIVE");
+
+        // 关键断言：过期课次不被复活。
+        verify(lessonOccurrenceMapper, never()).updateById(any(LessonOccurrenceEntity.class));
+
+        // 撤销本身成功并留痕。
+        verify(paymentRecordMapper).deleteById(5001L);
+        verify(receiptRecordMapper).deleteById(7001L);
+    }
+
+    @Test
+    void shouldPreviewRefundWithElapsedOccurrenceAsUndoable() throws Exception {
+        // 预览与执行必须给出一致结论：过期课次不复活，但整笔撤销仍可执行。
+        stubUndoableLineRefund(LocalDateTime.now().withNano(0).minusDays(2));
+
+        assertThat(enrollmentOrderService.evaluateRefundUndo(7001L)).isNull();
+        verify(paymentRecordMapper, never()).deleteById(5001L);
+        verify(lessonOccurrenceMapper, never()).updateById(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
+    void shouldReviveOccurrenceStartingJustAfterUndoMoment() throws Exception {
+        // 时间边界：课次在撤销提交后 1 分钟开始，仍属于未来，必须复活。
+        stubUndoableLineRefund(LocalDateTime.now().withNano(0).plusMinutes(1));
+
+        enrollmentOrderService.deleteRefundReceipt(7001L, null);
+
+        ArgumentCaptor<LessonOccurrenceEntity> restoredOccurrence =
+                ArgumentCaptor.forClass(LessonOccurrenceEntity.class);
+        verify(lessonOccurrenceMapper).updateById(restoredOccurrence.capture());
+        assertThat(restoredOccurrence.getValue().getPlanningStatus()).isEqualTo("SCHEDULED");
+    }
+
+    @Test
     void shouldCreateOrderPackagePaymentAndReceipt() {
         EnrollmentCreateRequest request = buildCreateRequest();
         when(studentMapper.selectById(101L)).thenReturn(buildStudent());
@@ -3037,6 +3085,16 @@ class EnrollmentOrderServiceImplTest {
      * 收据中保存了退款前后两份完整快照。</p>
      */
     private RefundUndoFixture stubUndoableLineRefund() throws Exception {
+        return stubUndoableLineRefund(LocalDateTime.now().withNano(0).plusDays(3));
+    }
+
+    /**
+     * 按指定的课次开始时间构造可撤销退款的场景。
+     *
+     * <p>课次是"退款后过几天才撤销"场景的核心变量：只有撤销提交时仍在未来的课次会被复活，
+     * 已经过去的保持取消，因此这里把时间边界开放给各用例。
+     */
+    private RefundUndoFixture stubUndoableLineRefund(LocalDateTime occurrenceStartAt) throws Exception {
         RefundUndoFixture fixture = new RefundUndoFixture();
         fixture.orderAfter = refundOrderEntity(2001L, "PARTIAL", "900.00");
         fixture.orderBefore = refundOrderEntity(2001L, "PAID", "1100.00");
@@ -3044,7 +3102,7 @@ class EnrollmentOrderServiceImplTest {
         fixture.itemBefore = refundItemEntity("ACTIVE", "1000.00");
         fixture.packageAfter = refundPackageEntity(0, "CLOSED");
         fixture.packageBefore = refundPackageEntity(2, "ACTIVE");
-        LocalDateTime futureStart = LocalDateTime.now().withNano(0).plusDays(3);
+        LocalDateTime futureStart = occurrenceStartAt;
         fixture.occurrenceAfter = refundOccurrenceEntity("CANCELLED", futureStart);
         fixture.occurrenceBefore = refundOccurrenceEntity("SCHEDULED", futureStart);
         fixture.participant = refundParticipantEntity();

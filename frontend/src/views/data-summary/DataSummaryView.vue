@@ -614,23 +614,68 @@
       </button>
     </nav>
 
-    <el-dialog v-model="refundUndoVisible" title="Undo refund" width="min(640px, calc(100vw - 32px))" append-to-body>
-      <p>Student: {{ displayText(refundUndoRow?.studentName) }} · Course: {{ displayText(refundUndoRow?.detail) }}</p>
-      <p>Undo restores the course, package, and future lessons to their state before this refund, and reverses the related student Credit. It is rejected if lessons or schedule changes were recorded after the refund. Money already sent externally is not recovered.</p>
-      <div v-loading="refundUndoLoading">
-        <el-alert v-if="refundUndoError" :title="refundUndoError" type="warning" :closable="false" />
-        <el-radio-group v-else v-model="selectedRefundPaymentId" class="refund-undo-candidates">
-          <el-radio v-for="candidate in refundUndoCandidates" :key="String(candidate.paymentId)"
-                    :value="String(candidate.paymentId)" :disabled="!candidate.eligible">
-            {{ candidate.receiptNo || candidate.paymentNo }} · {{ formatDate(candidate.refundedAt) }} · {{ formatMoney(candidate.amount) }}
-            <small v-if="candidate.ineligibleReason"> — {{ candidate.ineligibleReason }}</small>
-          </el-radio>
-        </el-radio-group>
-        <p v-if="!refundUndoLoading && !refundUndoError && !refundUndoCandidates.length">No linked refund found. Please request manual review.</p>
+    <el-dialog
+      v-model="refundUndoVisible"
+      title="Undo refund"
+      width="min(560px, calc(100vw - 32px))"
+      class="refund-undo-dialog"
+      append-to-body
+    >
+      <div class="refund-undo-summary">
+        <span class="refund-undo-summary__label">Student</span>
+        <span class="refund-undo-summary__value">{{ displayText(refundUndoRow?.studentName) }}</span>
+        <span class="refund-undo-summary__label">Course</span>
+        <span class="refund-undo-summary__value">{{ displayText(refundUndoRow?.detail) }}</span>
       </div>
+
+      <div v-loading="refundUndoLoading" class="refund-undo-body">
+        <el-alert v-if="refundUndoError" :title="refundUndoError" type="warning" :closable="false" show-icon />
+        <template v-else>
+          <el-radio-group
+            v-if="refundUndoCandidates.length"
+            v-model="selectedRefundPaymentId"
+            class="refund-undo-list"
+          >
+            <el-radio
+              v-for="candidate in refundUndoCandidates"
+              :key="String(candidate.paymentId)"
+              :value="String(candidate.paymentId)"
+              :disabled="!candidate.eligible"
+              class="refund-undo-item"
+            >
+              <span class="refund-undo-item__main">
+                <span class="refund-undo-item__title">{{ candidate.receiptNo || candidate.paymentNo }}</span>
+                <span class="refund-undo-item__amount">{{ formatMoney(candidate.amount) }}</span>
+              </span>
+              <span class="refund-undo-item__meta">
+                {{ formatDate(candidate.refundedAt) }}
+                <template v-if="candidate.paymentMethod"> · {{ displayText(candidate.paymentMethod) }}</template>
+              </span>
+              <span v-if="!candidate.eligible && candidate.ineligibleReason" class="refund-undo-item__reason">
+                {{ candidate.ineligibleReason }}
+              </span>
+            </el-radio>
+          </el-radio-group>
+          <p v-else class="refund-undo-empty">No linked refund found. Please request manual review.</p>
+        </template>
+      </div>
+
+      <p class="refund-undo-note">
+        Restores the course, package and future lessons, and reverses the related Credit.
+        Undo is blocked if lessons or schedule changes were recorded after the refund.
+        Money already sent externally is not recovered.
+      </p>
+
       <template #footer>
         <el-button @click="refundUndoVisible = false">Cancel</el-button>
-        <el-button type="danger" :loading="refundUndoSubmitting" :disabled="!selectedRefundCandidate?.eligible" @click="confirmRefundUndo">Undo selected refund</el-button>
+        <el-button
+          type="danger"
+          :loading="refundUndoSubmitting"
+          :disabled="!selectedRefundCandidate?.eligible"
+          @click="confirmRefundUndo"
+        >
+          Undo refund
+        </el-button>
       </template>
     </el-dialog>
     <div
@@ -1705,7 +1750,7 @@ async function confirmRefundUndo() {
   if (!candidate?.eligible || candidate.receiptId == null || refundUndoSubmitting.value) return;
   try {
     await ElMessageBox.confirm(
-      'Undo this student and course refund? The course, package, and future lessons return to their state before the refund, and the related student Credit is reversed. The undo is rejected if lessons or schedule changes happened after the refund. Money already sent externally is not recovered.',
+      'The course, package and future lessons return to their state before the refund, and the related Credit is reversed. Money already sent externally is not recovered.',
       `Undo ${candidate.receiptNo || candidate.paymentNo}?`,
       { type: 'warning', confirmButtonText: 'Undo refund', cancelButtonText: 'Cancel' },
     );
@@ -3185,6 +3230,124 @@ onMounted(() => {
   background: #eef6ff;
   color: #1d4ed8;
   outline: none;
+}
+
+/* ─── Undo refund 弹窗 ──────────────────────────────────────
+   单元格紧凑排版不适用于弹窗：这里恢复常规字号和行高，
+   并让候选退款逐条纵向排列，避免长原因文字溢出。 */
+.refund-undo-dialog :deep(.el-dialog__body) {
+  padding: 8px 24px 4px;
+}
+
+.refund-undo-summary {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  padding-bottom: 16px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #e7edf3;
+}
+
+.refund-undo-summary__label {
+  color: #7a8794;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.refund-undo-summary__value {
+  color: #1f2937;
+  font-size: 13px;
+  line-height: 18px;
+  word-break: break-word;
+}
+
+.refund-undo-body {
+  min-height: 96px;
+  padding-top: 4px;
+}
+
+.refund-undo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.refund-undo-item {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  height: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #e2e9f0;
+  border-radius: 8px;
+  background: #fbfdff;
+  white-space: normal;
+}
+
+.refund-undo-item.is-disabled {
+  background: #f7f8fa;
+}
+
+.refund-undo-item :deep(.el-radio__label) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding-left: 10px;
+  white-space: normal;
+}
+
+.refund-undo-item__main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+
+.refund-undo-item__title {
+  overflow: hidden;
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refund-undo-item__amount {
+  flex: 0 0 auto;
+  color: #1f2937;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.refund-undo-item__meta {
+  color: #6b7785;
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.refund-undo-item__reason {
+  color: #b26a00;
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.refund-undo-empty {
+  margin: 12px 0;
+  color: #6b7785;
+  font-size: 13px;
+}
+
+.refund-undo-note {
+  margin: 14px 0 0;
+  color: #7a8794;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .workbook-cell--balance-due {
