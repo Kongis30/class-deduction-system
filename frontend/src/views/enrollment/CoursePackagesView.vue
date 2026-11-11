@@ -2128,7 +2128,7 @@ loadTeachers();
 .detail-notes { margin: 0; color: #606266; font-size: 13px; line-height: 1.5; }
 .dialog-footer { display: flex; justify-content: flex-end; gap: 8px; }
 
-html.mobile-layout & {
+:global(html.mobile-layout) & {
   .filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
   .filters__item, .filters__item :deep(.el-input), .filters__item :deep(.el-select) { width: 100% !important; }
   .panel-header { min-height: 36px; align-items: center; flex-direction: row; justify-content: flex-end; gap: 6px; margin-bottom: 6px; }

@@ -2439,7 +2439,7 @@ onMounted(async () => {
   line-height: 1.5;
 }
 
-html.mobile-layout & {
+:global(html.mobile-layout) & {
   .adj-page {
     height: auto;
     min-height: calc(100dvh - 150px);

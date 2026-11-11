@@ -1048,7 +1048,7 @@ onMounted(async () => {
   }
 }
 
-html.mobile-layout & {
+:global(html.mobile-layout) & {
   .pr-page { height: calc(100dvh - 176px); min-height: 0; align-items: stretch; gap: 10px; }
   .pr-sidebar { height: 100%; min-height: 0; max-height: none; border-color: #d5deea; border-radius: 10px; box-shadow: 0 2px 8px rgb(33 53 77 / 5%); }
   .pr-sidebar--mobile-hidden,

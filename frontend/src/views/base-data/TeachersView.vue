@@ -1013,7 +1013,7 @@ onBeforeUnmount(() => {
   gap: 4px;
 }
 
-html.mobile-layout & {
+:global(html.mobile-layout) & {
   .people-table-zoom-scroll {
     max-height: max(260px, calc(100dvh - 340px));
     overflow-x: hidden;

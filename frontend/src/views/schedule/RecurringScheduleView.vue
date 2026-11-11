@@ -4390,7 +4390,7 @@ function disabledPastDate(date: Date) {
   }
 }
 
-html.mobile-layout & {
+:global(html.mobile-layout) & {
   .schedule-page {
     height: auto;
     min-height: 0;

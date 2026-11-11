@@ -430,7 +430,7 @@ onBeforeUnmount(() => {
 :global(.system-message-bell__dialog .el-dialog__body) { min-height: 0; flex: 1 1 auto; overflow: hidden; padding: 12px 16px 16px; }
 :global(.system-message-bell__dialog .system-message-dialog__actions .el-button) { width: 34px; min-width: 34px; min-height: 34px !important; height: 34px !important; padding: 0; }
 
-html.mobile-layout & {
+:global(html.mobile-layout) & {
   .system-message-bell { display: inline-flex; width: auto; justify-content: center; }
   .system-message-bell__trigger { width: 44px; min-height: 44px; padding: 0; color: #53657c; }
   .system-message-bell__badge :deep(.el-badge__content) { border-color: #fff; }

@@ -190,7 +190,7 @@ async function syncTabAndRender(tab: PeopleTab) {
 
 }
 
-html.mobile-layout & {
+:global(html.mobile-layout) & {
   .people-page .people-tabs.el-tabs :deep(.el-tabs__header) {
     border: 1px solid #cbd8e6;
     border-radius: 10px;

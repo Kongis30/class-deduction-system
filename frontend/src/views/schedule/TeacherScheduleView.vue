@@ -788,7 +788,7 @@ onMounted(async () => {
   flex-wrap: wrap;
 }
 
-html.mobile-layout & {
+:global(html.mobile-layout) & {
   .teacher-calendar {
     height: auto;
     min-height: 0;
@@ -1046,7 +1046,7 @@ html.mobile-layout & {
   line-height: 1.5;
 }
 
-html.mobile-layout & {
+:global(html.mobile-layout) & {
   .calendar-controls { display: grid; grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 0; margin: 0 0 4px; }
   .calendar-controls__nav { display: grid; width: 100%; min-width: 0; grid-template-columns: 44px minmax(0, 1fr) 44px; grid-template-rows: 44px; gap: 4px 6px; }
   .calendar-controls__nav > * { min-width: 0; max-width: 100%; }

@@ -1771,7 +1771,7 @@ function resolveQueryId(value: unknown): EntityId | null {
   font-size: 13px;
 }
 
-html.mobile-layout & {
+:global(html.mobile-layout) & {
   .page-stack { overflow-x: visible; }
   .classroom-calendar { width: 100%; min-width: 0; min-height: 0; height: auto; gap: 10px; overflow: visible; padding: 0; border: 0; background: transparent; }
   .classroom-calendar__header { display: none; }

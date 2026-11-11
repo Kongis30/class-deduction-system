@@ -9288,7 +9288,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   }
 }
 
-html.mobile-layout & {
+:global(html.mobile-layout) & {
 .registration-page {
   padding-bottom: calc(158px + env(safe-area-inset-bottom));
 }
@@ -9543,7 +9543,7 @@ html.mobile-layout & {
 
 }
 
-html.mobile-layout & {
+:global(html.mobile-layout) & {
 .registration-page {
   gap: 4px;
   padding-top: 6px;

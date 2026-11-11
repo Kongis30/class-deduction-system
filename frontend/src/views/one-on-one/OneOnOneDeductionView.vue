@@ -3182,7 +3182,7 @@ onMounted(async () => {
 
 }
 
-html.mobile-layout & {
+:global(html.mobile-layout) & {
   .oo-toolbar {
     display: none;
   }
@@ -3496,7 +3496,7 @@ html.mobile-layout & {
   }
 }
 
-html.mobile-layout & {
+:global(html.mobile-layout) & {
   :global(.app-shell__content--one-on-one ) {
     padding: 8px 8px calc(64px + env(safe-area-inset-bottom));
   }

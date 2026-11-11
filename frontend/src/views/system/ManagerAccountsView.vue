@@ -369,7 +369,7 @@ defineExpose({ openCreateDialog: openCreate });
 .manager-name-cell strong { overflow: hidden; color: #303133; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .manager-name-cell span { overflow: hidden; color: #7a8699; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .form-hint { margin-top: 4px; color: #909399; font-size: 12px; line-height: 1.4; }
-html.mobile-layout & {
+:global(html.mobile-layout) & {
   .manager-accounts-toolbar,
   .manager-accounts-footer { flex-wrap: wrap; }
   .manager-accounts-footer :deep(.el-pagination) { margin-left: auto; }
