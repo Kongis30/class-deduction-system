@@ -333,47 +333,175 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
-    void shouldRejectLineRefundUndoWithoutSnapshotWithoutChangingFinancialRecords() {
+    void shouldUndoLegacyRefundWithoutSnapshotByRebuildingPreRefundState() throws Exception {
+        // 撤销功能上线之前的历史退款没有内嵌快照；撤销应按当前状态反推退款前状态并恢复。
+        RefundUndoFixture fixture = stubLegacyRefundWithoutSnapshot();
+        EnrollmentCorrectionLogMapper correctionLogMapper =
+                org.mockito.Mockito.mock(EnrollmentCorrectionLogMapper.class);
+        ReflectionTestUtils.setField(enrollmentOrderService, "correctionLogMapper", correctionLogMapper);
+
+        enrollmentOrderService.deleteRefundReceipt(7001L, null);
+
+        // 订单收款按退款额回加并重算付款状态（1000 / 1100 → PARTIAL）。
+        ArgumentCaptor<EnrollmentOrderEntity> restoredOrder = ArgumentCaptor.forClass(EnrollmentOrderEntity.class);
+        verify(enrollmentOrderMapper).updateById(restoredOrder.capture());
+        assertThat(restoredOrder.getValue().getPaymentStatus()).isEqualTo("PARTIAL");
+        assertThat(restoredOrder.getValue().getReceivedAmount()).isEqualByComparingTo("1000.00");
+
+        // 课程行金额回加（800 + 100），退款造成的停课状态恢复为 ACTIVE。
+        ArgumentCaptor<EnrollmentOrderItemEntity> restoredItem = ArgumentCaptor.forClass(EnrollmentOrderItemEntity.class);
+        verify(enrollmentOrderItemMapper).updateById(restoredItem.capture());
+        assertThat(restoredItem.getValue().getItemStatus()).isEqualTo("ACTIVE");
+        assertThat(restoredItem.getValue().getPaidAmount()).isEqualByComparingTo("900.00");
+
+        // 课包从 CLOSED 恢复为 ACTIVE，收款回加（900 + 100）。
+        ArgumentCaptor<CoursePackageEntity> restoredPackage = ArgumentCaptor.forClass(CoursePackageEntity.class);
+        verify(coursePackageMapper).updateById(restoredPackage.capture());
+        assertThat(restoredPackage.getValue().getPackageStatus()).isEqualTo("ACTIVE");
+        assertThat(restoredPackage.getValue().getReceivedAmount()).isEqualByComparingTo("1000.00");
+
+        // 未来课次恢复为待上课。
+        ArgumentCaptor<LessonOccurrenceEntity> restoredOccurrence =
+                ArgumentCaptor.forClass(LessonOccurrenceEntity.class);
+        verify(lessonOccurrenceMapper).updateById(restoredOccurrence.capture());
+        assertThat(restoredOccurrence.getValue().getPlanningStatus()).isEqualTo("SCHEDULED");
+
+        // 退款生成的负向分摊被删除，退款流水与收据作废。
+        verify(paymentAllocationMapper).deleteById(9001L);
+        verify(paymentRecordMapper).updateById(fixture.refund);
+        assertThat(fixture.refund.getPaymentStatus()).isEqualTo("VOIDED");
+        verify(paymentRecordMapper).deleteById(5001L);
+        verify(receiptRecordMapper).deleteById(7001L);
+    }
+
+    @Test
+    void shouldPreviewLegacyRefundWithoutSnapshotAsUndoable() throws Exception {
+        // 预览必须与执行结论一致：历史无快照退款可自动撤销。
+        stubLegacyRefundWithoutSnapshot();
+
+        assertThat(enrollmentOrderService.evaluateRefundUndo(7001L)).isNull();
+        verify(paymentRecordMapper, never()).deleteById(5001L);
+        verify(receiptRecordMapper, never()).deleteById(7001L);
+    }
+
+    @Test
+    void shouldRejectLegacyRefundUndoWhenLessonsWereConfirmedAfterRefund() throws Exception {
+        // 重建路径不跳过硬性安全检查：退款后已消课的历史退款仍然拒绝自动撤销。
+        stubLegacyRefundWithoutSnapshot();
+        lenient().when(lessonRecordMapper.selectCount(any())).thenReturn(1L);
+
+        assertThatThrownBy(() -> enrollmentOrderService.deleteRefundReceipt(7001L, null))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("REFUND_UNDO_ACTIVITY");
+        verify(paymentRecordMapper, never()).deleteById(5001L);
+        verify(receiptRecordMapper, never()).deleteById(7001L);
+    }
+
+    @Test
+    void shouldRejectLegacyRefundUndoWhenRestoringOccurrenceWouldConflict() throws Exception {
+        // 重建路径保留排课冲突检查。
+        RefundUndoFixture fixture = stubLegacyRefundWithoutSnapshot();
+        lenient().when(lessonOccurrenceMapper.selectList(any())).thenAnswer(invocation -> {
+            Wrapper<?> wrapper = invocation.getArgument(0);
+            if (wrapper == null) {
+                return Collections.emptyList();
+            }
+            return queryUsesValue(wrapper, 4001L)
+                    ? List.of(fixture.occurrenceAfter)
+                    : List.of(new LessonOccurrenceEntity());
+        });
+
+        assertThatThrownBy(() -> enrollmentOrderService.deleteRefundReceipt(7001L, null))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("REFUND_UNDO_SCHEDULE_CONFLICT");
+        verify(paymentRecordMapper, never()).deleteById(5001L);
+    }
+
+    /**
+     * 构造一笔缺少快照的历史行级退款：数据库当前处于退款后状态
+     * （订单收款 900、课程行停课 800、课包 CLOSED、未来课次 CANCELLED），
+     * 收据 payload 只有 orderItemId / participantIndex，没有 refundUndoSnapshot。
+     */
+    private RefundUndoFixture stubLegacyRefundWithoutSnapshot() throws Exception {
+        RefundUndoFixture fixture = new RefundUndoFixture();
+        // 当前（退款后）状态。
+        fixture.orderAfter = refundOrderEntity(2001L, "PARTIAL", "900.00");
+        fixture.itemAfter = refundItemEntity("STOPPED", "800.00");
+        fixture.packageAfter = refundPackageEntity(0, "CLOSED");
+        fixture.packageAfter.setOriginalAmount(new BigDecimal("1100.00"));
+        fixture.packageAfter.setDiscountAmount(BigDecimal.ZERO);
+        fixture.packageAfter.setReceivedAmount(new BigDecimal("900.00"));
+        LocalDateTime futureStart = LocalDateTime.now().withNano(0).plusDays(3);
+        fixture.occurrenceAfter = refundOccurrenceEntity("CANCELLED", futureStart);
+        fixture.participant = refundParticipantEntity();
+        fixture.refund = refundPaymentEntity(futureStart.minusDays(5));
+        fixture.originalAllocation = refundAllocationEntity(9000L, "1000.00");
+        fixture.refundAllocation = refundAllocationEntity(9001L, "-100.00");
+
         ReceiptRecordEntity receipt = new ReceiptRecordEntity();
         receipt.setId(7001L);
+        receipt.setReceiptNo("RCP-REFUND-7001");
         receipt.setEnrollmentOrderId(2001L);
         receipt.setStudentId(101L);
         receipt.setPaymentRecordId(5001L);
         receipt.setTemplateCode("REFUND_RECEIPT");
         receipt.setReceiptPayload("{}");
-        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
-        order.setId(2001L);
-        PaymentRecordEntity refund = new PaymentRecordEntity();
-        refund.setId(5001L);
-        refund.setEnrollmentOrderId(2001L);
-        refund.setParticipantIndex(1);
-        refund.setPaymentType("REFUND");
-        refund.setPaymentStatus("REFUNDED");
-        refund.setAmount(new BigDecimal("-100.00"));
-        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
-        item.setId(3001L);
-        EnrollmentOrderParticipantEntity participant = new EnrollmentOrderParticipantEntity();
-        participant.setStudentId(101L);
-        participant.setParticipantIndex(1);
-        PaymentAllocationEntity allocation = new PaymentAllocationEntity();
-        allocation.setEnrollmentOrderItemId(3001L);
-        allocation.setEnrollmentOrderId(2001L);
-        allocation.setAmount(new BigDecimal("-100.00"));
-        when(receiptRecordMapper.selectById(7001L)).thenReturn(receipt);
-        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
-        when(paymentRecordMapper.selectById(5001L)).thenReturn(refund);
-        when(jsonHelper.fromJson(any(String.class), any(com.fasterxml.jackson.core.type.TypeReference.class)))
-                .thenReturn(new LinkedHashMap<>(Map.of("orderItemId", 3001, "participantIndex", 1)));
-        when(enrollmentOrderItemMapper.selectOne(any())).thenReturn(item);
-        when(enrollmentOrderParticipantMapper.selectOne(any())).thenReturn(participant);
-        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of(allocation));
+        fixture.receipt = receipt;
 
-        assertThatThrownBy(() -> enrollmentOrderService.deleteRefundReceipt(7001L, null))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("no complete recovery snapshot");
-        verify(paymentRecordMapper, never()).deleteById(5001L);
-        verify(receiptRecordMapper, never()).deleteById(7001L);
-        verify(paymentAllocationMapper, never()).delete(any());
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("orderItemId", 3001L);
+        payload.put("participantIndex", 1);
+
+        lenient().when(receiptRecordMapper.selectById(7001L)).thenReturn(receipt);
+        lenient().when(enrollmentOrderMapper.selectById(2001L)).thenReturn(fixture.orderAfter);
+        lenient().when(paymentRecordMapper.selectById(5001L)).thenReturn(fixture.refund);
+        lenient().when(enrollmentOrderItemMapper.selectOne(any())).thenReturn(fixture.itemAfter);
+        lenient().when(enrollmentOrderParticipantMapper.selectOne(any())).thenReturn(fixture.participant);
+        lenient().when(paymentAllocationMapper.selectList(any())).thenAnswer(invocation -> {
+            Wrapper<?> wrapper = invocation.getArgument(0);
+            if (wrapper == null) {
+                return Collections.emptyList();
+            }
+            return queryUsesValue(wrapper, 5001L)
+                    ? List.of(fixture.refundAllocation)
+                    : List.of(fixture.originalAllocation, fixture.refundAllocation);
+        });
+
+        // captureRefundState 采集当前（退款后）状态。
+        lenient().when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(fixture.itemAfter));
+        lenient().when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(List.of(fixture.participant));
+        lenient().when(coursePackageMapper.selectList(any())).thenReturn(List.of(fixture.packageAfter));
+        lenient().when(enrollmentOrderCourseRefundStateMapper.selectList(any())).thenReturn(Collections.emptyList());
+        lenient().when(paymentRecordMapper.selectList(any())).thenReturn(List.of(fixture.refund));
+        lenient().when(recurringScheduleRuleMapper.selectList(any())).thenReturn(Collections.emptyList());
+        lenient().when(classEnrollmentMapper.selectRefundScopeIncludingDeleted(any(), any(), any()))
+                .thenReturn(Collections.emptyList());
+        lenient().when(lessonOccurrenceMapper.selectList(any())).thenAnswer(invocation -> {
+            Wrapper<?> wrapper = invocation.getArgument(0);
+            if (wrapper == null) {
+                return Collections.emptyList();
+            }
+            return queryUsesValue(wrapper, 4001L) ? List.of(fixture.occurrenceAfter) : Collections.emptyList();
+        });
+        lenient().when(jsonHelper.fromJson(any(String.class), any(TypeReference.class)))
+                .thenReturn(payload);
+
+        // 恢复写入与删除返回成功。
+        lenient().when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+        lenient().when(enrollmentOrderItemMapper.updateById(any(EnrollmentOrderItemEntity.class))).thenReturn(1);
+        lenient().when(enrollmentOrderParticipantMapper.updateById(any(EnrollmentOrderParticipantEntity.class))).thenReturn(1);
+        lenient().when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
+        lenient().when(lessonOccurrenceMapper.updateById(any(LessonOccurrenceEntity.class))).thenReturn(1);
+        lenient().when(enrollmentOrderItemMapper.selectById(3001L)).thenReturn(fixture.itemAfter);
+        lenient().when(enrollmentOrderParticipantMapper.selectById(20001L)).thenReturn(fixture.participant);
+        lenient().when(coursePackageMapper.selectById(4001L)).thenReturn(fixture.packageAfter);
+        lenient().when(lessonOccurrenceMapper.selectById(6001L)).thenReturn(fixture.occurrenceAfter);
+        lenient().when(paymentAllocationMapper.selectById(9000L)).thenReturn(fixture.originalAllocation);
+        lenient().when(paymentAllocationMapper.selectById(9001L)).thenReturn(fixture.refundAllocation);
+        lenient().when(paymentAllocationMapper.deleteById(9001L)).thenReturn(1);
+        lenient().when(paymentRecordMapper.deleteById(5001L)).thenReturn(1);
+        lenient().when(receiptRecordMapper.deleteById(7001L)).thenReturn(1);
+        return fixture;
     }
 
     @Test
@@ -3346,6 +3474,7 @@ class EnrollmentOrderServiceImplTest {
         // 恢复写入时逐行读取当前值。
         lenient().when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
         lenient().when(enrollmentOrderItemMapper.updateById(any(EnrollmentOrderItemEntity.class))).thenReturn(1);
+        lenient().when(enrollmentOrderParticipantMapper.updateById(any(EnrollmentOrderParticipantEntity.class))).thenReturn(1);
         lenient().when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
         lenient().when(lessonOccurrenceMapper.updateById(any(LessonOccurrenceEntity.class))).thenReturn(1);
         lenient().when(enrollmentOrderItemMapper.selectById(3001L)).thenReturn(fixture.itemAfter);
@@ -3453,6 +3582,8 @@ class EnrollmentOrderServiceImplTest {
         PaymentAllocationEntity allocation = new PaymentAllocationEntity();
         allocation.setId(id);
         allocation.setEnrollmentOrderId(2001L);
+        // 9001 是退款流水生成的负向分摊；9000 是原始收款分摊。
+        allocation.setPaymentRecordId(Long.valueOf(9001L).equals(id) ? 5001L : 5000L);
         allocation.setEnrollmentOrderItemId(3001L);
         allocation.setAmount(new BigDecimal(amount));
         allocation.setVersion(1);

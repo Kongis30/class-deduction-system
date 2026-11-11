@@ -3490,7 +3490,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             payload.put("handledByName", order.getHandledByName());
             payload.put("registrationRemark", order.getRemark());
             if (request.getItems() != null) {
-                mergeCorrectedReceiptItems(payload, request.getItems(), request.getRemovedReceiptItemLineNos());
+                mergeCorrectedReceiptItems(payload, request.getItems(), request.getRemovedReceiptItemLineNos(),
+                        request.getRemovedReceiptItemOrderItemIds());
             }
             if (request.getExtraFees() != null) {
                 payload.put("extraFees", request.getExtraFees());
@@ -3549,9 +3550,23 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private void mergeCorrectedReceiptItems(Map<String, Object> receiptPayload,
                                             List<RegistrationIntakeRequest.CourseItemPayload> edits,
                                             List<Integer> removedReceiptItemLineNos) {
+        mergeCorrectedReceiptItems(receiptPayload, edits, removedReceiptItemLineNos, null);
+    }
+
+    /**
+     * 同 {@link #mergeCorrectedReceiptItems(Map, List, List)}，另支持按原订单行 ID 移除死快照行：
+     * 老快照行可能缺 lineNo（如只有 enrollmentOrderItemId 的旧格式行），按行号定位不到，
+     * 需按快照行的 orderItemId / enrollmentOrderItemId 字符串匹配移除。
+     */
+    private void mergeCorrectedReceiptItems(Map<String, Object> receiptPayload,
+                                            List<RegistrationIntakeRequest.CourseItemPayload> edits,
+                                            List<Integer> removedReceiptItemLineNos,
+                                            List<String> removedReceiptItemOrderItemIds) {
         List<?> savedRows = receiptPayload.get("items") instanceof List<?> rows ? rows : List.of();
         Set<Integer> removedLineNos = removedReceiptItemLineNos == null
                 ? Collections.emptySet() : new HashSet<>(removedReceiptItemLineNos);
+        Set<String> removedItemIds = removedReceiptItemOrderItemIds == null
+                ? Collections.emptySet() : new HashSet<>(removedReceiptItemOrderItemIds);
         Map<Long, RegistrationIntakeRequest.CourseItemPayload> editsById = edits.stream()
                 .filter(Objects::nonNull)
                 .filter(item -> item.getOrderItemId() != null)
@@ -3570,8 +3585,11 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 continue;
             }
             Integer rowLineNo = wholeNumber(saved.get("lineNo"));
-            // 死快照行按行号移除；老快照行缺 lineNo 时保留，避免误删无法定位的行。
+            // 死快照行按行号移除；老快照行缺 lineNo 时按原订单行 ID 移除。
             if (rowLineNo != null && removedLineNos.contains(rowLineNo)) {
+                continue;
+            }
+            if (isRemovedSnapshotItem(saved, removedItemIds)) {
                 continue;
             }
             Long itemId = null;
@@ -3619,6 +3637,20 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             representedItemIds.add(edit.getOrderItemId());
         }
         receiptPayload.put("items", mergedRows);
+    }
+
+    /**
+     * 快照行是否属于待移除的死快照行：按快照行的 orderItemId 或 enrollmentOrderItemId
+     * 字符串匹配。快照 JSON 中的 Snowflake ID 可能经原生解析丢失精度，因此只做字符串比较。
+     */
+    private boolean isRemovedSnapshotItem(Map<?, ?> saved, Set<String> removedItemIds) {
+        if (removedItemIds.isEmpty()) return false;
+        return matchesRemovedItem(saved.get("orderItemId"), removedItemIds)
+                || matchesRemovedItem(saved.get("enrollmentOrderItemId"), removedItemIds);
+    }
+
+    private boolean matchesRemovedItem(Object value, Set<String> removedItemIds) {
+        return value != null && removedItemIds.contains(value.toString());
     }
 
     private List<Map<String, Object>> receiptParticipantPayloads(Long orderId) {
@@ -5056,7 +5088,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         lockRefundUndoScope(plan.undoSnapshot());
 
         RefundStateSnapshot current = captureRefundState(order.getId(), plan.undoSnapshot().creditStudentId());
-        if (!refundSnapshotsMatch(plan.undoSnapshot().after(), current)) {
+        if (plan.savedSnapshot() && !refundSnapshotsMatch(plan.undoSnapshot().after(), current)) {
             throw new BusinessException("REFUND_UNDO_STATE_CHANGED",
                     "The course or payment state changed after this refund. Refresh and review it manually.");
         }
@@ -5107,7 +5139,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 return exception.getMessage();
             }
             RefundStateSnapshot current = captureRefundState(order.getId(), plan.undoSnapshot().creditStudentId());
-            if (!refundSnapshotsMatch(plan.undoSnapshot().after(), current)) {
+            if (plan.savedSnapshot() && !refundSnapshotsMatch(plan.undoSnapshot().after(), current)) {
                 return "The course or payment state changed after this refund. Review it manually.";
             }
             ensureNoLessonsAfterRefund(plan);
@@ -5166,8 +5198,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         }
         Object rawSnapshot = receiptPayload == null ? null : receiptPayload.get("refundUndoSnapshot");
         if (!(rawSnapshot instanceof String snapshotJson) || !StringUtils.hasText(snapshotJson)) {
-            throw new BusinessException("REFUND_UNDO_SNAPSHOT_REQUIRED",
-                    "This refund has no complete recovery snapshot and requires manual review.");
+            // 撤销功能上线之前的历史退款没有内嵌快照；按当前状态反推退款前状态后走统一的撤销流程。
+            return new RefundUndoPlan(receipt, order, refund, targetItem, targetParticipant,
+                    rebuildLegacyRefundUndoSnapshot(order, refund, targetItem, targetParticipant, receiptPayload), false);
         }
         RefundUndoSnapshot undoSnapshot = jsonHelper.fromJson(snapshotJson,
                 new TypeReference<RefundUndoSnapshot>() {});
@@ -5175,7 +5208,181 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             throw new BusinessException("REFUND_UNDO_SNAPSHOT_INVALID",
                     "The refund recovery snapshot is incomplete.");
         }
-        return new RefundUndoPlan(receipt, order, refund, targetItem, targetParticipant, undoSnapshot);
+        return new RefundUndoPlan(receipt, order, refund, targetItem, targetParticipant, undoSnapshot, true);
+    }
+
+    /**
+     * 历史退款快照重建：以当前数据库状态为撤销起点（after），把退款流水造成的负向金额与状态
+     * 回加得到退款前状态（before）。
+     *
+     * <p>金额以 payment_record 为事实来源反推；课程行/课包/排课规则从退款造成的终态
+     * （ENDED / CLOSED / INACTIVE / CANCELLED）回退为可上课状态；未来 CANCELLED 课次按
+     * 退款前 SCHEDULED 复活。重建快照没有历史基准可比对，因此调用方须跳过 after 漂移校验，
+     * 但消课、排课冲突和 Credit 可逆等硬性安全检查仍然生效。</p>
+     */
+    private RefundUndoSnapshot rebuildLegacyRefundUndoSnapshot(EnrollmentOrderEntity order,
+                                                               PaymentRecordEntity refund,
+                                                               EnrollmentOrderItemEntity targetItem,
+                                                               EnrollmentOrderParticipantEntity targetParticipant,
+                                                               Map<String, Object> receiptPayload) {
+        Long creditStudentId = null;
+        boolean creditRefund = false;
+        BigDecimal creditBalanceBefore = null;
+        // Credit 处置的历史退款按流水定位：唯一 REFUND_TO_CREDIT 入账且未被冲正时可反向。
+        List<StudentCreditLedgerEntity> creditEntries = studentCreditLedgerMapper.selectList(
+                new LambdaQueryWrapper<StudentCreditLedgerEntity>()
+                        .eq(StudentCreditLedgerEntity::getSourcePaymentRecordId, refund.getId())
+                        .eq(StudentCreditLedgerEntity::getEntryType, "REFUND_TO_CREDIT"));
+        if (creditEntries.size() == 1
+                && StudentCreditService.PAYMENT_METHOD_CODE.equalsIgnoreCase(refund.getPaymentMethod())) {
+            creditRefund = true;
+            creditStudentId = creditEntries.get(0).getStudentId();
+            // 历史退款没有余额前值快照；以“当前余额 - 退款额”作为反向前余额，
+            // reverseRefundCredit 的余额校验因此退化为“退款 Credit 尚未被任何操作改动”，
+            // 改动过（已消费/已冲正）会在校验中拒绝。
+            creditBalanceBefore = studentCreditService.getBalance(creditStudentId)
+                    .subtract(defaultAmount(refund.getAmount()).abs());
+        }
+
+        RefundStateSnapshot after = captureRefundState(order.getId(), creditStudentId);
+        RefundStateSnapshot before = reverseLegacyRefundState(after, refund, targetItem, targetParticipant, creditRefund);
+        return new RefundUndoSnapshot(before, after, creditStudentId, creditBalanceBefore, creditRefund);
+    }
+
+    /**
+     * 把 after 状态按退款流水逆向回推为 before 状态。
+     *
+     * <p>只回推退款确定会改写的字段：订单/课程行/参与人金额、课程状态、课包状态、
+     * 排课规则状态、未来 CANCELLED 课次。其余字段沿用当前值，反正撤销写回时
+     * 与当前一致就不会产生实际的更新。</p>
+     */
+    private RefundStateSnapshot reverseLegacyRefundState(RefundStateSnapshot after,
+                                                         PaymentRecordEntity refund,
+                                                         EnrollmentOrderItemEntity targetItem,
+                                                         EnrollmentOrderParticipantEntity targetParticipant,
+                                                         boolean creditRefund) {
+        BigDecimal refundAmount = defaultAmount(refund.getAmount()).abs();
+        // 退款流水与负向分摊在 after 状态里仍然存在；before 必须把它们移除，
+        // 这样 applyRefundUndo 的 restoreRows 才会删掉退款生成的负向分摊行。
+        List<PaymentRecordEntity> paymentsBefore = after.payments().stream()
+                .filter(payment -> !Objects.equals(payment.getId(), refund.getId()))
+                .toList();
+        List<PaymentAllocationEntity> allocationsBefore = after.allocations().stream()
+                .filter(allocation -> !Objects.equals(allocation.getPaymentRecordId(), refund.getId()))
+                .toList();
+
+        // 订单金额回加：撤销后收款 = 当前收款 + 退款额。
+        EnrollmentOrderEntity orderBefore = new EnrollmentOrderEntity();
+        BeanUtils.copyProperties(after.order(), orderBefore);
+        BigDecimal receivedBefore = defaultAmount(after.order().getReceivedAmount()).add(refundAmount);
+        BigDecimal amountDue = defaultAmount(after.order().getAmountDue());
+        orderBefore.setReceivedAmount(receivedBefore);
+        orderBefore.setBalanceAmount(amountDue.subtract(receivedBefore).max(ZERO_AMOUNT));
+        orderBefore.setPaymentStatus(resolvePaymentStatus(
+                defaultAmount(after.order().getOriginalAmount()),
+                defaultAmount(after.order().getDiscountAmount()),
+                receivedBefore));
+        if ("CANCELLED".equals(after.order().getOrderStatus())
+                && hasActiveItems(allocationsBefore, after)) {
+            // 整单退款导致订单取消；撤销后仍有有效课程购买，订单回到确认态。
+            orderBefore.setOrderStatus("CONFIRMED");
+        }
+
+        // 课程行金额回加；退款造成的 ENDED/STOPPED 回退为 ACTIVE。
+        List<EnrollmentOrderItemEntity> itemsBefore = after.items().stream().map(item -> {
+            EnrollmentOrderItemEntity before = new EnrollmentOrderItemEntity();
+            BeanUtils.copyProperties(item, before);
+            if (Objects.equals(item.getId(), targetItem.getId())) {
+                before.setPaidAmount(defaultAmount(item.getPaidAmount()).add(refundAmount));
+                before.setBalanceAmount(defaultAmount(item.getAmountDue())
+                        .subtract(defaultAmount(item.getPaidAmount()).add(refundAmount)));
+                if (!"ACTIVE".equalsIgnoreCase(item.getItemStatus())) {
+                    before.setItemStatus("ACTIVE");
+                }
+            }
+            return before;
+        }).toList();
+
+        // 参与人金额回加。
+        List<EnrollmentOrderParticipantEntity> participantsBefore = after.participants().stream()
+                .map(participant -> {
+                    EnrollmentOrderParticipantEntity before = new EnrollmentOrderParticipantEntity();
+                    BeanUtils.copyProperties(participant, before);
+                    if (Objects.equals(participant.getParticipantIndex(), targetParticipant.getParticipantIndex())) {
+                        before.setPaidAmount(defaultAmount(participant.getPaidAmount()).add(refundAmount));
+                        before.setBalanceAmount(defaultAmount(participant.getAmountDue())
+                                .subtract(defaultAmount(participant.getPaidAmount()).add(refundAmount)));
+                    }
+                    return before;
+                }).toList();
+
+        // 课包：退款结课的 CLOSED 回退为 ACTIVE 并清掉完成时间。
+        List<CoursePackageEntity> packagesBefore = after.packages().stream().map(coursePackage -> {
+            CoursePackageEntity before = new CoursePackageEntity();
+            BeanUtils.copyProperties(coursePackage, before);
+            if (Objects.equals(coursePackage.getEnrollmentOrderItemId(), targetItem.getId())
+                    && Objects.equals(coursePackage.getStudentId(), targetParticipant.getStudentId())
+                    && "CLOSED".equalsIgnoreCase(coursePackage.getPackageStatus())) {
+                before.setPackageStatus("ACTIVE");
+                before.setCompletedAt(null);
+                BigDecimal receivedAmount = defaultAmount(coursePackage.getReceivedAmount()).add(refundAmount);
+                before.setReceivedAmount(receivedAmount);
+            }
+            return before;
+        }).toList();
+
+        // 课程退款状态行是退款产生的记录；撤销时应整体删除（before 不含该行，
+        // restoreRows 会把 after 中存在、before 中不存在的行删掉）。
+        List<EnrollmentOrderCourseRefundStateEntity> refundStatesBefore = after.courseRefundStates().stream()
+                .filter(state -> !Objects.equals(state.getEnrollmentOrderItemId(), targetItem.getId()))
+                .toList();
+
+        // 周期规则与时段：退款停排的 INACTIVE 回退为 ACTIVE。
+        List<RecurringScheduleRuleEntity> rulesBefore = after.recurringRules().stream().map(rule -> {
+            RecurringScheduleRuleEntity before = new RecurringScheduleRuleEntity();
+            BeanUtils.copyProperties(rule, before);
+            if (packagesBefore.stream().anyMatch(pkg -> Objects.equals(pkg.getId(), rule.getPackageId()))
+                    && "INACTIVE".equalsIgnoreCase(rule.getRuleStatus())) {
+                before.setRuleStatus("ACTIVE");
+            }
+            return before;
+        }).toList();
+        List<Long> activeRuleIds = rulesBefore.stream()
+                .map(RecurringScheduleRuleEntity::getId).filter(Objects::nonNull).toList();
+        List<RecurringScheduleSlotEntity> slotsBefore = after.recurringSlots().stream().map(slot -> {
+            RecurringScheduleSlotEntity before = new RecurringScheduleSlotEntity();
+            BeanUtils.copyProperties(slot, before);
+            if (activeRuleIds.contains(slot.getRuleId())
+                    && "INACTIVE".equalsIgnoreCase(slot.getSlotStatus())) {
+                before.setSlotStatus("ACTIVE");
+            }
+            return before;
+        }).toList();
+
+        // 未来 CANCELLED 课次恢复为 SCHEDULED；已过去的保持取消。
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        List<LessonOccurrenceEntity> occurrencesBefore = after.occurrences().stream().map(occurrence -> {
+            LessonOccurrenceEntity before = new LessonOccurrenceEntity();
+            BeanUtils.copyProperties(occurrence, before);
+            if (packagesBefore.stream().anyMatch(pkg -> Objects.equals(pkg.getId(), occurrence.getPackageId()))
+                    && "CANCELLED".equalsIgnoreCase(occurrence.getPlanningStatus())
+                    && occurrence.getPlannedStartAt() != null
+                    && occurrence.getPlannedStartAt().isAfter(now)) {
+                before.setPlanningStatus("SCHEDULED");
+            }
+            return before;
+        }).toList();
+
+        // 退款写入的 Credit 台账行在 before 中不存在；Credit 反向在 reverseRefundCreditIfNeeded
+        // 单独处理，restoreRows 对 creditLedger 不做任何事。
+        return new RefundStateSnapshot(orderBefore, itemsBefore, participantsBefore, packagesBefore,
+                refundStatesBefore, paymentsBefore, allocationsBefore, after.groupMembers(),
+                after.classEnrollments(), occurrencesBefore, rulesBefore, slotsBefore, after.creditLedger());
+    }
+
+    /** 重建路径判断订单是否仍有未删除课程行（决定 CANCELLED 订单是否回到 CONFIRMED）。 */
+    private boolean hasActiveItems(List<PaymentAllocationEntity> allocationsBefore, RefundStateSnapshot after) {
+        return after.items().stream().anyMatch(item -> item.getIsDeleted() == null || item.getIsDeleted() == 0);
     }
 
     /** 按主键升序锁定快照内所有会被恢复的记录，降低与排课/课时写入的死锁概率。 */
@@ -5474,7 +5681,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                                   PaymentRecordEntity refund,
                                   EnrollmentOrderItemEntity targetItem,
                                   EnrollmentOrderParticipantEntity targetParticipant,
-                                  RefundUndoSnapshot undoSnapshot) {}
+                                  RefundUndoSnapshot undoSnapshot,
+                                  boolean savedSnapshot) {}
 
     private <T extends BaseEntity> void restoreRows(List<T> before,
                                                    List<T> after,
