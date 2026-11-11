@@ -2678,17 +2678,6 @@ async function saveCorrection() {
   }
   savingCorrection.value = true;
   try {
-    const paymentsChanged = correction.payments !== undefined
-      || (correction.participantBillings ?? []).some((billing) =>
-        (billing.payments ?? []).some((payment) => (payment.correctionChangedFields ?? []).length > 0));
-    if (paymentsChanged) {
-      const answer = await ElMessageBox.prompt(
-        'Record why this order’s payment details are being changed or a payment is being added. Use the refund workflow for returned money.',
-        'Payment correction reason',
-        { confirmButtonText: 'Continue', cancelButtonText: 'Keep editing', inputValidator: (value) => Boolean(value.trim()) || 'Enter a reason.' },
-      );
-      correction.correctionReason = answer.value.trim();
-    }
     const impact = correctionImpactSummary(correction);
     if (impact.length) {
       await ElMessageBox.confirm(

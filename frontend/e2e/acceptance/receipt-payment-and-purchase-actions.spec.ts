@@ -160,13 +160,11 @@ test('Edit Receipt adds a payment to the current order and keeps its receipt rou
   await page.getByRole('option', { name: 'Cash' }).click();
   await payment.locator('.payment-amount-field input').fill('125');
   await page.getByRole('button', { name: 'Save changes' }).click();
-  const reasonDialog = page.getByRole('dialog', { name: 'Payment correction reason' });
-  await reasonDialog.getByRole('textbox').fill('Adding payment to the current order');
-  await reasonDialog.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Save correction' }).click();
   await expect.poll(() => correctionPayload?.payments?.length).toBe(1);
   expect(correctionPayload?.payments[0]).toMatchObject({ amount: 125, paymentMethod: 'CASH' });
   expect(correctionPayload?.payments[0].paymentId).toBeUndefined();
+  expect(correctionPayload?.correctionReason).toBeUndefined();
   await expect(page).toHaveURL(/\/registration\?orderId=100/);
 });
 
@@ -351,13 +349,10 @@ test('Edit Receipt连续调整全日/半日价格后保留付款，只有手动�
   await paymentAmount.press('Tab');
   await expect(paymentAmount).toHaveValue('2,800');
   await page.getByRole('button', { name: 'Save changes' }).click();
-  const reasonDialog = page.getByRole('dialog', { name: 'Payment correction reason' });
-  await reasonDialog.getByRole('textbox').fill('Correcting the amount entered on the original receipt');
-  await reasonDialog.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Save correction' }).click();
   await expect.poll(() => correctionPayloads.length).toBe(3);
   expect(correctionPayloads[2].items[0]).toMatchObject({ attendanceOption: 'MORNING', priceAmount: 2898 });
-  expect(correctionPayloads[2].correctionReason).toBe('Correcting the amount entered on the original receipt');
+  expect(correctionPayloads[2].correctionReason).toBeUndefined();
   expect(correctionPayloads[2].payments).toHaveLength(1);
   expect(correctionPayloads[2].payments[0]).toMatchObject({ paymentId: '900', amount: 2800 });
   expect(correctionPayloads[2].payments[0].correctionChangedFields).toContain('amount');
