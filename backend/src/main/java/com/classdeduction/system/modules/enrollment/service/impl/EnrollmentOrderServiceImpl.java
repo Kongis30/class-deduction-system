@@ -2614,6 +2614,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                             selectedSessions, selectedMonths);
                     billing = computeCorrectedClassBilling(targetClass, baseline, item, billingQuantity);
                 }
+                // 月数消耗守卫先于未来课次守卫：缩短月数把已上课次甩出覆盖期时，
+                // 提示应指向"月数不能低于已消耗"而非未来课次问题。
+                requireMonthsCoverConsumedLessons(current, billing);
                 requireFutureLessonsWithinCoverage(current, billing);
                 updateClassEnrollmentFromCorrection(current, item, billing, v2GroupItem);
             }
@@ -2655,6 +2658,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             replacements.add(new CorrectedEntitlementPlan(current, billing));
         }
         ensureCorrectionPlansDoNotOverlap(replacements);
+        for (CorrectedEntitlementPlan plan : replacements) {
+            requireMonthsCoverConsumedLessons(plan.current(), plan.billing());
+        }
 
         for (CorrectedEntitlementPlan plan : replacements) {
             ClassEnrollmentEntity current = plan.current();
@@ -2717,6 +2723,39 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                         "This student has a future lesson on " + record.getPlannedStartAt()
                                 + " outside the corrected class coverage. Resolve it before saving.");
             }
+        }
+    }
+
+    /** 有效消课状态：这些状态的课次已经计入权益消耗，缩短月数时不能把它们甩出覆盖期。 */
+    private static final Set<String> CONSUMED_LESSON_STATUSES =
+            Set.of("COMPLETED", "MAKEUP_COMPLETED", "SUBSTITUTED", "NO_SHOW", "FORMAL_LEAVE");
+
+    /**
+     * 按月班课的更正守卫：月数不能低于已确认消课覆盖到的月份。
+     * 已上过的月份（含 NO_SHOW / FORMAL_LEAVE 等有效消耗）在账面上属于原购买，
+     * 缩到它们之前会让历史消课落在新有效期外，账实不符。
+     */
+    private void requireMonthsCoverConsumedLessons(ClassEnrollmentEntity enrollment,
+                                                   ClassBillingService.ClassBilling billing) {
+        if (!"MONTH".equalsIgnoreCase(enrollment.getBillingType())) {
+            return;
+        }
+        List<LessonRecordEntity> consumedRecords = lessonRecordMapper.selectList(
+                new LambdaQueryWrapper<LessonRecordEntity>()
+                        .eq(LessonRecordEntity::getClassEnrollmentId, enrollment.getId())
+                        .eq(LessonRecordEntity::getConfirmStage, "CONFIRMED")
+                        .in(LessonRecordEntity::getResultStatus, CONSUMED_LESSON_STATUSES)
+                        .eq(LessonRecordEntity::getIsDeleted, 0)
+                        .lt(LessonRecordEntity::getPlannedStartAt, AppTime.nowLocalDateTime())
+                        .orderByDesc(LessonRecordEntity::getPlannedStartAt));
+        if (consumedRecords == null || consumedRecords.isEmpty()) {
+            return;
+        }
+        LocalDate lastConsumedDate = consumedRecords.get(0).getPlannedStartAt().toLocalDate();
+        if (lastConsumedDate.isAfter(billing.expiryDate())) {
+            throw new BusinessException("CORRECTION_MONTHS_BELOW_CONSUMED",
+                    "Purchased months cannot be reduced below the months already used. The latest confirmed lesson is on "
+                            + lastConsumedDate + "; keep at least the months covering it.");
         }
     }
 
@@ -2850,10 +2889,13 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         } else {
             end = classEnd == null ? start.plusYears(3) : classEnd;
         }
-        if ("MONTH".equals(unit) && classEnd != null
+        // 只拦"续月意图"（购买月数超过方案标称月数）：滚动月按自然月顺延会算到班级结束日之外，
+        // 提示管理员先延长班级周期再续月。正常购买（不超过方案月数）由后置 cap 截断到班级结束日。
+        if ("MONTH".equals(unit) && quantity > configuredQuantity && classEnd != null
                 && java.time.YearMonth.from(end).isAfter(java.time.YearMonth.from(classEnd))) {
             throw new BusinessException("GROUP_PLAN_DATES_INVALID",
-                    "The selected months extend beyond the actual class end date.");
+                    "The renewal months extend beyond the class end date (" + classEnd
+                            + "). Extend the class period before renewing this course.");
         }
         if (end == null || end.isBefore(start)) {
             throw new BusinessException("GROUP_PLAN_DATES_INVALID", "The selected registration plan has an invalid date range.");

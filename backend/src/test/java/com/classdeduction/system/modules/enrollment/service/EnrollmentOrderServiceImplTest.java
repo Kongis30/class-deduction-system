@@ -1472,6 +1472,173 @@ class EnrollmentOrderServiceImplTest {
         return request;
     }
 
+    /**
+     * 按月班课更正场景：9 月开课、指定结束日的班级，ROLLING_MONTHS 方案（标称 1 个月、$200/月）。
+     * 学生 9 月购 6 个月（覆盖到 2027-02-28），当前在册权益对应该购买。
+     */
+    private EnrollmentOrderCorrectionRequest stubMonthlyCorrection(int purchasedMonths,
+                                                                    int selectedMonths,
+                                                                    LocalDate classEndDate) {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setOrderStatus("CONFIRMED");
+        order.setPaymentStatus("PAID");
+        order.setStudentId(101L);
+        order.setClassId(801L);
+        order.setSignupDate(LocalDate.of(2026, 9, 14));
+
+        ClassGroupEntity group = buildClassGroup(202L);
+        group.setGroupProjectId(910L);
+        group.setStartDate(LocalDate.of(2026, 9, 1));
+        group.setEndDate(classEndDate);
+        group.setGradeBand("G1-G5");
+
+        GroupCourseProjectEntity project = new GroupCourseProjectEntity();
+        project.setId(910L);
+        project.setCourseProductId(202L);
+        project.setStatus("ACTIVE");
+        GroupRegistrationPlanEntity plan = new GroupRegistrationPlanEntity();
+        plan.setId(920L);
+        plan.setProjectId(910L);
+        plan.setCoverageType("ROLLING_MONTHS");
+        plan.setPackageUnit("MONTH");
+        // 标称 1 个月、月费率 200：价格一致性校验 expected = 200 × 购买月数，整数便于 stub。
+        plan.setPackageQuantity(BigDecimal.ONE);
+        plan.setFullDayPrice(new BigDecimal("200"));
+        plan.setStatus("ACTIVE");
+
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(8001L);
+        item.setLineNo(1);
+        item.setEnrollmentOrderId(2001L);
+        item.setCourseType("GROUP");
+        item.setCourseProductId(202L);
+        item.setClassId(801L);
+        item.setGroupProjectId(910L);
+        item.setGroupRegistrationPlanId(920L);
+        item.setGradeBand("G1-G5");
+        item.setPackageUnit("MONTH");
+        item.setPackageQuantity(new BigDecimal(purchasedMonths));
+        item.setStartDate(LocalDate.of(2026, 9, 14));
+
+        ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
+        enrollment.setId(9001L);
+        enrollment.setClassId(801L);
+        enrollment.setStudentId(101L);
+        enrollment.setEnrollmentOrderItemId(8001L);
+        enrollment.setEnrollmentDate(LocalDate.of(2026, 9, 14));
+        enrollment.setExpiryDate(LocalDate.of(2027, 2, 28));
+        enrollment.setPurchasedQuantity(purchasedMonths);
+        enrollment.setBillingType("MONTH");
+        enrollment.setGroupProjectId(910L);
+        enrollment.setGroupRegistrationPlanId(920L);
+        enrollment.setStatus("ACTIVE");
+
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(studentMapper.selectById(101L)).thenReturn(buildStudent());
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(classGroupMapper.selectById(801L)).thenReturn(group);
+        when(groupCourseProjectMapper.selectById(910L)).thenReturn(project);
+        when(groupRegistrationPlanMapper.selectById(920L)).thenReturn(plan);
+        lenient().when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        lenient().when(classHolidayMapper.selectList(any())).thenReturn(List.of());
+        lenient().when(receiptRecordMapper.selectList(any())).thenReturn(List.of());
+        // 班级每周一节课，覆盖期内的排课日期由服务按 slot 推导。
+        ClassGroupScheduleSlotEntity weeklySlot = new ClassGroupScheduleSlotEntity();
+        weeklySlot.setWeekday(1);
+        weeklySlot.setStartTime(java.time.LocalTime.of(9, 0));
+        weeklySlot.setEndTime(java.time.LocalTime.of(12, 0));
+        lenient().when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(weeklySlot));
+
+        RegistrationIntakeRequest.CourseItemPayload payload = new RegistrationIntakeRequest.CourseItemPayload();
+        payload.setOrderItemId(8001L);
+        payload.setClassId(801L);
+        payload.setGroupProjectId(910L);
+        payload.setGroupRegistrationPlanId(920L);
+        payload.setGradeBand("G1-G5");
+        payload.setCourseType("GROUP");
+        payload.setCourseProductId(202L);
+        payload.setPackageUnit("MONTH");
+        payload.setPackageQuantity(new BigDecimal(selectedMonths));
+        payload.setPurchasedMonths(selectedMonths);
+        payload.setStartDate(LocalDate.of(2026, 9, 14));
+        // 月费率 200 × 购买月数，满足更正的价格一致性校验。
+        payload.setPriceAmount(new BigDecimal(200 * selectedMonths));
+        EnrollmentOrderCorrectionRequest request = new EnrollmentOrderCorrectionRequest();
+        request.setItems(List.of(payload));
+        return request;
+    }
+
+    private LessonRecordEntity consumedLesson(Long classEnrollmentId, LocalDate lessonDate) {
+        LessonRecordEntity record = new LessonRecordEntity();
+        record.setClassEnrollmentId(classEnrollmentId);
+        record.setStudentId(101L);
+        record.setConfirmStage("CONFIRMED");
+        record.setResultStatus("COMPLETED");
+        record.setPlannedStartAt(lessonDate.atTime(9, 0));
+        record.setIsDeleted(0);
+        return record;
+    }
+
+    @Test
+    void shouldRejectReducingMonthsBelowConsumedLessons() {
+        // 学生 9 月购 6 个月，10 月已确认上课；把月数缩到 1 个月（覆盖仅至 9-30）须拦截，
+        // 否则 10-05 的已消耗课次被甩出覆盖期。
+        EnrollmentOrderCorrectionRequest request = stubMonthlyCorrection(6, 1, LocalDate.of(2027, 12, 31));
+        // 历史已消耗课次落在 10 月（1 个月到期日 2026-09-30 之前）。
+        lenient().when(lessonRecordMapper.selectList(any()))
+                .thenReturn(List.of(consumedLesson(9001L, LocalDate.of(2026, 10, 5))));
+
+        assertThatThrownBy(() -> enrollmentOrderService.correctOrder(2001L, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("CORRECTION_MONTHS_BELOW_CONSUMED");
+        verify(classEnrollmentMapper, never()).updateById(any(ClassEnrollmentEntity.class));
+    }
+
+    @Test
+    void shouldAllowRenewingMonthsWhenConsumedLessonsStayCovered() {
+        // 6 → 10 个月（同课续月）：已消耗课次仍在覆盖期内，正常放行。
+        EnrollmentOrderCorrectionRequest request = stubMonthlyCorrection(6, 10, LocalDate.of(2027, 12, 31));
+        lenient().when(lessonRecordMapper.selectList(any()))
+                .thenReturn(List.of(consumedLesson(9001L, LocalDate.of(2026, 10, 5))));
+
+        enrollmentOrderService.correctOrder(2001L, request);
+
+        verify(classEnrollmentMapper).updateById(classEnrollmentCaptor.capture());
+        assertThat(classEnrollmentCaptor.getValue().getPurchasedQuantity()).isEqualTo(10);
+    }
+
+    @Test
+    void shouldAllowUnchangedMonthsEvenWithoutConsumedLessonData() {
+        // 无消耗记录时不动月数（等值更正其他字段）不受守卫影响。
+        EnrollmentOrderCorrectionRequest request = stubMonthlyCorrection(6, 6, LocalDate.of(2026, 12, 31));
+        lenient().when(lessonRecordMapper.selectList(any())).thenReturn(List.of());
+
+        enrollmentOrderService.correctOrder(2001L, request);
+    }
+
+    @Test
+    void shouldRejectRenewalMonthsBeyondClassPeriodWithClearGuidance() {
+        // 6 → 10 个月但班级只开到 12-31：续月超出班级周期，提示先延长班级。
+        EnrollmentOrderCorrectionRequest request = stubMonthlyCorrection(6, 10, LocalDate.of(2026, 12, 31));
+
+        assertThatThrownBy(() -> enrollmentOrderService.correctOrder(2001L, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("message").asString()
+                .contains("class end date")
+                .contains("2026-12-31")
+                .contains("Extend the class period");
+    }
+
+    @Test
+    void shouldAllowNormalMonthlyPurchaseWithinPlanQuantityEvenIfRollingEndExceedsClassEnd() {
+        // 正常购买（月数不超过方案标称 6）即使滚动末月超班级结束日，也靠 cap 截断而不是前置拦截。
+        // 这是 db9103e 引入、本次恢复 quantity > configuredQuantity 前置条件后修复的回归。
+        EnrollmentOrderCorrectionRequest request = stubMonthlyCorrection(6, 6, LocalDate.of(2026, 12, 31));
+
+        enrollmentOrderService.correctOrder(2001L, request);
+    }
+
     @Test
     void shouldRejectConcurrentCancelSoEnrollmentChangesRollBack() {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
