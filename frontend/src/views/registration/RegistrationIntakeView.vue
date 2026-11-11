@@ -462,7 +462,7 @@
                       type="button"
                       class="remove-row no-print"
                       :aria-label="`Remove course row ${index + 1}`"
-                      :title="editingCorrection && line.orderItemId ? 'Delete saved course' : 'Remove course row'"
+                      :title="editingCorrection && line.orderItemId && !line.orderItemDetached ? 'Delete saved course' : 'Remove course row'"
                       :disabled="deletingCourseRowKey === line.rowKey"
                       @click="handleCourseRowRemove(index)"
                     >×</button>
@@ -1471,6 +1471,11 @@ interface CampusChoice {
 interface RegistrationCourseLine {
   rowKey: string;
   orderItemId?: EntityId;
+  /**
+   * 死快照行标记：该行的 orderItemId 来自收据快照，但对应订单行已软删。
+   * 死行不参与后端更正/删除接口，仅可从收据快照中移除（removedReceiptItemLineNos）。
+   */
+  orderItemDetached?: boolean;
   orderLineNo?: number;
   renewalSourceOrderItemId?: EntityId;
   renewalStartAfter?: string;
@@ -2755,6 +2760,22 @@ function correctionImpactSummary(changes: EnrollmentOrderCorrectionPayload): str
   return impact;
 }
 
+/**
+ * 找出基线里"死快照行"的行号：行带 orderItemId 但订单活行集合中不存在该 ID。
+ * 这些行允许被删除/换课，提交时通过 removedReceiptItemLineNos 通知后端清理快照。
+ */
+function detachedCourseLineNos(
+  baselineItems: EnrollmentOrderCorrectionPayload['items'] = [],
+): number[] {
+  const activeOrderItemIds = new Set(
+    (historicalOrder.value?.items ?? []).map((item) => String(item.id)),
+  );
+  return baselineItems
+    .filter((item) => item.orderItemId && !activeOrderItemIds.has(String(item.orderItemId)))
+    .map((item) => item.lineNo)
+    .filter((lineNo): lineNo is number => Number.isInteger(lineNo));
+}
+
 // 更正只提交相对打开页面时实际改变的字段，避免历史订单被当前方案和付款草稿重放。
 function changedCorrectionPayload(current: EnrollmentOrderCorrectionPayload): EnrollmentOrderCorrectionPayload | null {
   const original = correctionBaseline.value;
@@ -2767,13 +2788,20 @@ function changedCorrectionPayload(current: EnrollmentOrderCorrectionPayload): En
       const currentItems = current.items ?? [];
       const previousById = new Map(previousItems.map((item) => [String(item.orderItemId), item]));
       if (JSON.stringify(currentItems) === JSON.stringify(previousItems)) continue;
+      // 基线里的死行（订单行已软删）允许删除：它们本来就不在活订单中，
+      // 删除只影响收据快照展示，提交时以 removedReceiptItemLineNos 通知后端。
+      const detachedLineNos = new Set(detachedCourseLineNos(previousItems));
+      const previousProtectedItems = previousItems.filter((item) => !detachedLineNos.has(item.lineNo));
       const currentIds = currentItems.filter((item) => item.orderItemId).map((item) => String(item.orderItemId));
-      if (currentIds.length !== previousItems.length
+      if (currentIds.length !== previousProtectedItems.length
           || new Set(currentIds).size !== currentIds.length
-          || previousItems.some((item) => !currentIds.includes(String(item.orderItemId)))) {
+          || previousProtectedItems.some((item) => !currentIds.includes(String(item.orderItemId)))) {
         ElMessage.warning('Original course rows cannot be removed or replaced in Edit Receipt.');
         return null;
       }
+      const removedLineNos = [...detachedLineNos].filter((lineNo) =>
+        !currentItems.some((item) => item.lineNo === lineNo));
+      if (removedLineNos.length > 0) changes.removedReceiptItemLineNos = removedLineNos;
       const changedItems = currentItems.filter((item) => !item.orderItemId
         || JSON.stringify(item) !== JSON.stringify(previousById.get(String(item.orderItemId)))).map((item) => {
         if (!item.orderItemId) {
@@ -3447,6 +3475,8 @@ function toHistoricalCourseLine(
   // null 表示快照行对应的订单行已删除，该行不绑定任何 orderItemId。
   fallback?: EnrollmentOrderDetailItem['items'][number] | null,
 ): RegistrationCourseLine {
+  // 快照行对应的订单行已软删 → 标记为死行：显示快照课程名、删除走快照移除通道。
+  const orderItemDetached = fallback == null;
   const periodLabel = getString(fallback, 'periodLabel') || getString(item, 'periodLabel');
   // 订单行中的 0 是有效金额，不能用收据快照中的非零金额覆盖。
   const pickupFeeAmount = presentNumber(fallback, 'pickupFeeAmount') ?? getNumber(item, 'pickupFeeAmount');
@@ -3485,13 +3515,15 @@ function toHistoricalCourseLine(
     // 时保持 undefined，让该行按"无订单行"处理，绝不借用别的行的 ID。
     orderItemId: getString(fallback, 'id') || getString(item, 'orderItemId')
       || getString(item, 'enrollmentOrderItemId') || getString(item, 'id') || undefined,
+    orderItemDetached,
     orderLineNo: getNumber(fallback, 'lineNo') || getNumber(item, 'lineNo') || index + 1,
     courseType: getString(item, 'courseType') || getString(fallback, 'courseType'),
     gradeBand: getString(item, 'gradeBand') || getString(fallback, 'gradeBand'),
     periodKey: `${periodLabel || 'General'}::Standard`,
     coursePriceOptionId: (getString(fallback, 'coursePriceOptionId') || getString(item, 'coursePriceOptionId')) as EntityId | '',
     courseProductId: getString(fallback, 'courseProductId') || getString(item, 'courseProductId') || undefined,
-    courseProductName: getString(item, 'courseProductName') || undefined,
+    // 老快照行只有 courseName 文本；死行用它做课程名占位展示。
+    courseProductName: getString(item, 'courseProductName') || getString(item, 'courseName') || undefined,
     groupProjectId: (getString(fallback, 'groupProjectId') || getString(item, 'groupProjectId') || undefined) as EntityId | undefined,
     groupRegistrationPlanId: (getString(fallback, 'groupRegistrationPlanId') || getString(item, 'groupRegistrationPlanId') || undefined) as EntityId | undefined,
     groupCourseModelV2: Boolean(getString(fallback, 'groupProjectId') || getString(item, 'groupProjectId')),
@@ -3710,10 +3742,18 @@ function addCourseLine() {
   courseLines.value.push(createCourseLine());
 }
 
+/**
+ * 课程行移除入口。按行身份分派：
+ * 1. 编辑模式 + 活行（orderItemId 属于订单未删行）→ 后端删除接口（级联取消排课）。
+ * 2. 死快照行 / 未保存新行 → 客户端直接删行，保存时从收据快照移除（removedReceiptItemLineNos）。
+ * 3. 只剩一行 → 不删行，清空本行全部字段；编辑模式下保留 orderItemId/行号，
+ *    重新选课保存即走"换课"更正路径。
+ */
 async function handleCourseRowRemove(index: number) {
   const line = courseLines.value[index];
   if (!line) return;
-  if (editingCorrection.value && line.orderItemId) {
+  // 编辑模式下的活行走后端删除；死行（订单行已软删）不能调后端，走客户端删行。
+  if (editingCorrection.value && line.orderItemId && !line.orderItemDetached) {
     await deleteSavedCourseLine(line);
     return;
   }
@@ -3721,7 +3761,15 @@ async function handleCourseRowRemove(index: number) {
     removeCourseLine(index);
     return;
   }
-  if (!line) return;
+  clearOnlyCourseLine(line);
+}
+
+/**
+ * 收据只剩一行时清空该行的课程内容而不删行。
+ * 编辑模式下保留行身份（orderItemId/orderLineNo/orderItemDetached）：
+ * 清空后重新选课保存即走更正换课流程；新建模式则重置为全新空行。
+ */
+function clearOnlyCourseLine(line: RegistrationCourseLine) {
   const hasDiscount = discounts.value.some((discount) =>
     discount.courseRowKey === line.rowKey && numeric(discount.amount) > 0);
   const hasPayment = payments.value.some((payment) =>
@@ -3738,7 +3786,15 @@ async function handleCourseRowRemove(index: number) {
   }
 
   const rowKey = line.rowKey;
-  Object.assign(line, createCourseLine(), { rowKey });
+  const identity = editingCorrection.value
+    ? {
+        rowKey,
+        orderItemId: line.orderItemId,
+        orderItemDetached: line.orderItemDetached,
+        orderLineNo: line.orderLineNo,
+      }
+    : { rowKey };
+  Object.assign(line, createCourseLine(), identity);
   discounts.value.forEach((discount) => {
     if (discount.courseRowKey === rowKey) {
       discount.presetId = '__custom__';
@@ -3825,16 +3881,19 @@ function removeCourseLine(index: number) {
   }
   const line = courseLines.value[index];
   if (!line) return;
-  const hasDiscount = discounts.value.some((discount) =>
-    discount.courseRowKey === line.rowKey && numeric(discount.amount) > 0);
-  const hasPayment = payments.value.some((payment) =>
-    numeric(payment.courseAllocations?.[line.rowKey]) > 0);
-  const hasParticipantBilling = participantBillings.value.some((billing) =>
-    billing.discounts.some((discount) => discount.courseRowKey === line.rowKey && numeric(discount.amount) > 0)
-    || billing.payments.some((payment) => numeric(payment.courseAllocations?.[line.rowKey]) > 0));
-  if (hasDiscount || hasPayment || hasParticipantBilling) {
-    ElMessage.warning('Move this course’s discount and payment allocations before removing it.');
-    return;
+  // 死快照行的订单行早已软删，快照上的折扣/付款分摊只是展示数据，删除不受分摊约束。
+  if (!line.orderItemDetached) {
+    const hasDiscount = discounts.value.some((discount) =>
+      discount.courseRowKey === line.rowKey && numeric(discount.amount) > 0);
+    const hasPayment = payments.value.some((payment) =>
+      numeric(payment.courseAllocations?.[line.rowKey]) > 0);
+    const hasParticipantBilling = participantBillings.value.some((billing) =>
+      billing.discounts.some((discount) => discount.courseRowKey === line.rowKey && numeric(discount.amount) > 0)
+      || billing.payments.some((payment) => numeric(payment.courseAllocations?.[line.rowKey]) > 0));
+    if (hasDiscount || hasPayment || hasParticipantBilling) {
+      ElMessage.warning('Move this course’s discount and payment allocations before removing it.');
+      return;
+    }
   }
   const nextCourse = courseLines.value.find((candidate) => candidate.rowKey !== line.rowKey);
   payments.value.forEach((payment) => {
@@ -5342,6 +5401,11 @@ function courseLineHint(line: RegistrationCourseLine) {
 }
 
 function productSelectPlaceholder(line: RegistrationCourseLine) {
+  // 死快照行：订单行已删，课程下拉只显示快照课程名供对照，不作为可保存的选中值。
+  if (line.orderItemDetached) {
+    const snapshotName = line.courseProductName || line.registerClass || line.detail;
+    return snapshotName ? `${snapshotName} (removed from order)` : 'Removed from order';
+  }
   return productOptionsForLine(line).length > 0 ? 'Course name' : 'No active course';
 }
 

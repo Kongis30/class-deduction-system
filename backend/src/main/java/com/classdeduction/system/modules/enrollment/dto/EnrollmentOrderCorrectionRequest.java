@@ -118,6 +118,14 @@ public class EnrollmentOrderCorrectionRequest {
     @Schema(description = "Editable course lines from the original receipt")
     private List<RegistrationIntakeRequest.CourseItemPayload> items;
 
+    /**
+     * 死快照行的行号：对应订单行已软删，但收据快照仍保留该行。
+     * 按行号把这些行从收据快照 items 中移除；订单金额与排课不受影响
+     * （订单行软删时已经处理过）。
+     */
+    @Schema(description = "Line numbers of receipt snapshot rows whose order item was already soft-deleted")
+    private List<Integer> removedReceiptItemLineNos;
+
     @Schema(description = "Editable payment lines. Existing payment rows are updated in place.")
     private List<RegistrationIntakeRequest.PaymentPayload> payments;
 

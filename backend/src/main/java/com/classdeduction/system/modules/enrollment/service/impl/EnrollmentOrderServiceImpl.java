@@ -3448,7 +3448,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             payload.put("handledByName", order.getHandledByName());
             payload.put("registrationRemark", order.getRemark());
             if (request.getItems() != null) {
-                mergeCorrectedReceiptItems(payload, request.getItems());
+                mergeCorrectedReceiptItems(payload, request.getItems(), request.getRemovedReceiptItemLineNos());
             }
             if (request.getExtraFees() != null) {
                 payload.put("extraFees", request.getExtraFees());
@@ -3496,7 +3496,20 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     /** 更正请求只带变化的课程行，保留同收据内其他课程快照及其展示字段。 */
     private void mergeCorrectedReceiptItems(Map<String, Object> receiptPayload,
                                             List<RegistrationIntakeRequest.CourseItemPayload> edits) {
+        mergeCorrectedReceiptItems(receiptPayload, edits, null);
+    }
+
+    /**
+     * 同 {@link #mergeCorrectedReceiptItems(Map, List)}，另支持按行号移除死快照行：
+     * 这些行的订单行已软删（软删时金额与排课已处理），从收据快照中删行只是
+     * 让收据展示与订单实际保持一致。
+     */
+    private void mergeCorrectedReceiptItems(Map<String, Object> receiptPayload,
+                                            List<RegistrationIntakeRequest.CourseItemPayload> edits,
+                                            List<Integer> removedReceiptItemLineNos) {
         List<?> savedRows = receiptPayload.get("items") instanceof List<?> rows ? rows : List.of();
+        Set<Integer> removedLineNos = removedReceiptItemLineNos == null
+                ? Collections.emptySet() : new HashSet<>(removedReceiptItemLineNos);
         Map<Long, RegistrationIntakeRequest.CourseItemPayload> editsById = edits.stream()
                 .filter(Objects::nonNull)
                 .filter(item -> item.getOrderItemId() != null)
@@ -3512,6 +3525,11 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         for (Object row : savedRows) {
             if (!(row instanceof Map<?, ?> saved)) {
                 mergedRows.add(row);
+                continue;
+            }
+            Integer rowLineNo = wholeNumber(saved.get("lineNo"));
+            // 死快照行按行号移除；老快照行缺 lineNo 时保留，避免误删无法定位的行。
+            if (rowLineNo != null && removedLineNos.contains(rowLineNo)) {
                 continue;
             }
             Long itemId = null;

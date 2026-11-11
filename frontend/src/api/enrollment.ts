@@ -86,6 +86,11 @@ export function updateCoursePackageStartingHours(id: EntityId, startingHours: nu
 export interface EnrollmentOrderCorrectionPayload {
   expectedVersion?: number;
   correctionReason?: string;
+  /**
+   * 死快照行（订单行已软删但收据快照仍保留）的行号列表。
+   * 后端按行号把这些行从收据快照中移除；订单金额不受影响。
+   */
+  removedReceiptItemLineNos?: number[];
   participants?: RegistrationStudentPayload[];
   participantBillings?: RegistrationParticipantBillingPayload[];
   studentName?: string;
