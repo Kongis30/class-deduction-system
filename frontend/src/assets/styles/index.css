@@ -1701,9 +1701,8 @@ html.mobile-layout {
 }
 }
 
-/* Mobile saved receipt: keep payment labels beside their underlined values and
-   turn the wide three-column course table into readable stacked cards. */
-@media screen and (max-width: 920px) {
+/* 平板强制 Mobile 时媒体查询不命中，改为跟随 html.mobile-layout 类 */
+html.mobile-layout {
   .registration-page[data-mobile-step="readonly"] .payment-line {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);

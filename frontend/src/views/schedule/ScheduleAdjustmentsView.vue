@@ -506,6 +506,7 @@
           <el-date-picker
             v-model="classAdjustForm.plannedStartAt"
             type="datetime"
+            readonly
             value-format="YYYY-MM-DDTHH:mm:ss"
             format="YYYY-MM-DD HH:mm"
             placeholder="Select start time"
@@ -516,6 +517,7 @@
           <el-date-picker
             v-model="classAdjustForm.plannedEndAt"
             type="datetime"
+            readonly
             value-format="YYYY-MM-DDTHH:mm:ss"
             format="YYYY-MM-DD HH:mm"
             placeholder="Select end time"
@@ -572,6 +574,7 @@
           <el-date-picker
             v-model="confirmForm.actualStartAt"
             type="datetime"
+            readonly
             value-format="YYYY-MM-DDTHH:mm:ss"
             format="YYYY-MM-DD HH:mm"
             placeholder="Defaults to planned start"
