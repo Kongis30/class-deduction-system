@@ -9288,946 +9288,948 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   }
 }
 
-@media screen and (max-width: 920px) {
-  .registration-page {
-    padding-bottom: calc(158px + env(safe-area-inset-bottom));
-  }
-
-  .registration-page[data-mobile-step="1"] [data-mobile-steps]:not([data-mobile-steps~="1"]),
-  .registration-page[data-mobile-step="2"] [data-mobile-steps]:not([data-mobile-steps~="2"]),
-  .registration-page[data-mobile-step="3"] [data-mobile-steps]:not([data-mobile-steps~="3"]),
-  .registration-page[data-mobile-step="4"] [data-mobile-steps]:not([data-mobile-steps~="4"]),
-  .registration-page[data-mobile-step="5"] [data-mobile-steps]:not([data-mobile-steps~="5"]) {
-    display: none !important;
-  }
-
-  .registration-desk p {
-    display: none;
-  }
-
-  .mobile-registration-progress {
-    display: grid;
-    gap: 8px;
-    padding: 14px 16px;
-    border: 1px solid #d8e7ff;
-    border-radius: 14px;
-    background: #fff;
-    box-shadow: 0 6px 18px rgb(15 23 42 / 6%);
-  }
-
-  .mobile-registration-progress__track {
-    height: 4px;
-    overflow: hidden;
-    border-radius: 99px;
-    background: #e8eef6;
-  }
-
-  .mobile-registration-progress__track span {
-    display: block;
-    height: 100%;
-    border-radius: inherit;
-    background: #3478d4;
-    transition: width 180ms ease;
-  }
-
-  .mobile-registration-progress__copy {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 10px;
-  }
-
-  .mobile-registration-progress__copy span {
-    color: #63728a;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: .06em;
-  }
-
-  .mobile-registration-progress__copy strong {
-    color: #18345a;
-    font-size: 20px;
-    line-height: 1.2;
-  }
-
-  .mobile-registration-progress p {
-    margin: 0;
-    color: #667085;
-    font-size: 14px;
-    line-height: 1.45;
-  }
-
-  .paper-form {
-    min-height: 0;
-    padding: 18px 14px;
-    border: 1px solid #e5eaf1;
-    border-radius: 14px;
-    box-shadow: 0 6px 20px rgb(15 23 42 / 6%);
-  }
-
-  .form-header,
-  .contact-block,
-  .student-lines,
-  .course-table-wrap,
-  .policies {
-    margin-bottom: 14px;
-  }
-
-  .contact-block {
-    display: grid;
-    gap: 8px;
-    padding: 12px;
-    border-radius: 10px;
-    background: #f6f8fb;
-  }
-
-  .contact-block > strong,
-  .contact-block .phone-line,
-  .contact-block .campus-line {
-    font-size: 14px;
-    line-height: 1.45;
-  }
-
-  .contact-block .campus-line input,
-  .service-charge-toggle input {
-    width: 20px;
-    height: 20px;
-    flex: 0 0 20px;
-  }
-
-  .student-lines .full-line,
-  .student-lines .two-col-line {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 10px;
-  }
-
-  .student-lines .full-line > span,
-  .student-lines .two-col-line label > span:first-child {
-    font-size: 14px;
-    font-weight: 600;
-  }
-
-  .student-name-fields {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-    width: 100%;
-  }
-
-  .registration-student-picker__heading {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 4px 8px;
-  }
-
-  .registration-student-picker__heading > span:not(.student-credit-balance) {
-    grid-column: 1 / -1;
-    font-size: 13px;
-    line-height: 1.4;
-  }
-
-  .mobile-registration-review {
-    display: grid;
-    gap: 10px;
-    margin: 12px 0 18px;
-    padding: 14px;
-    border: 1px solid #dbe5f1;
-    border-radius: 12px;
-    background: #f8fafc;
-  }
-
-  .mobile-registration-review header,
-  .mobile-registration-review article,
-  .mobile-registration-review footer {
-    display: grid;
-    gap: 5px;
-  }
-
-  .mobile-registration-review header span,
-  .mobile-registration-review article span,
-  .mobile-registration-review small {
-    color: #667085;
-    font-size: 13px;
-    line-height: 1.4;
-  }
-
-  .mobile-registration-review header strong {
-    font-size: 18px;
-  }
-
-  .mobile-registration-review article {
-    grid-template-columns: minmax(0, 1fr) auto;
-    padding-top: 9px;
-    border-top: 1px solid #e1e7ef;
-  }
-
-  .mobile-registration-review article > div {
-    display: grid;
-    gap: 3px;
-  }
-
-  .mobile-registration-review footer {
-    padding-top: 8px;
-    border-top: 1px solid #d8e0ea;
-  }
-
-  .mobile-registration-review footer span {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    font-size: 14px;
-  }
-
-  .mobile-registration-actions {
-    position: fixed;
-    z-index: 850;
-    right: 0;
-    bottom: calc(60px + env(safe-area-inset-bottom));
-    left: 0;
-    display: grid;
-    gap: 8px;
-    padding: 10px 12px;
-    border-top: 1px solid #e5eaf1;
-    background: rgb(255 255 255 / 97%);
-    box-shadow: 0 -8px 24px rgb(16 42 67 / 8%);
-    backdrop-filter: blur(14px);
-  }
-
-  .mobile-registration-actions__amounts {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
-
-  .mobile-registration-actions__amounts span {
-    display: grid;
-    gap: 1px;
-  }
-
-  .mobile-registration-actions__amounts small {
-    color: #667085;
-    font-size: 12px;
-  }
-
-  .mobile-registration-actions__amounts strong {
-    color: #182b49;
-    font-size: 16px;
-  }
-
-  .mobile-registration-actions__balance.is-due strong {
-    color: #b54708;
-  }
-
-  .mobile-registration-actions__balance.is-paid strong {
-    color: #067647;
-  }
-
-  .mobile-registration-actions__buttons {
-    display: flex;
-    gap: 8px;
-  }
-
-  .mobile-registration-actions__buttons > .el-button {
-    flex: 1 1 0;
-    min-width: 0;
-    min-height: 46px;
-    margin: 0;
-    font-size: 15px;
-  }
-
-  .mobile-registration-actions__buttons > .el-button:only-child {
-    width: 100%;
-  }
+html.mobile-layout & {
+.registration-page {
+  padding-bottom: calc(158px + env(safe-area-inset-bottom));
 }
 
-@media screen and (max-width: 920px) {
-  .registration-page {
-    gap: 4px;
-    padding-top: 6px;
-    padding-bottom: 12px;
-  }
-
-  .mobile-registration-progress {
-    gap: 5px;
-    padding: 4px 14px 8px;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    box-shadow: none;
-  }
-
-  .mobile-registration-progress__copy strong {
-    font-size: 17px;
-  }
-
-  .registration-student-picker {
-    box-sizing: border-box;
-    width: calc(100% - 28px);
-    min-width: 0;
-    gap: 8px;
-    margin: 0 14px;
-    padding: 6px 0 12px;
-    border: 0;
-    border-bottom: 1px solid #dce4ee;
-    border-radius: 0;
-    background: transparent;
-    box-shadow: none;
-  }
-
-  .registration-student-picker__heading {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-  }
-
-  .registration-student-picker__heading > strong {
-    overflow: hidden;
-    color: #263a53;
-    font-size: 13px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .registration-student-picker__hint {
-    display: none;
-  }
-
-  .student-credit-balance {
-    flex: 0 0 auto;
-    margin-left: auto;
-    padding: 0;
-    border: 0;
-    background: transparent;
-  }
-
-  .student-credit-balance small {
-    font-size: 9px !important;
-  }
-
-  .student-credit-balance strong {
-    font-size: 13px !important;
-  }
-
-  .registration-student-picker__select {
-    min-height: 44px;
-  }
-
-  .registration-page[data-mobile-step="1"] .paper-form,
-  .registration-page[data-mobile-step="2"] .paper-form,
-  .registration-page[data-mobile-step="3"] .paper-form,
-  .registration-page[data-mobile-step="4"] .paper-form {
-    width: calc(100% - 28px);
-    max-width: none;
-    min-height: 0;
-    margin: 0 14px;
-    padding: 0;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    box-shadow: none;
-  }
-
-  .registration-page .paper-form {
-    overflow: visible;
-  }
-
-  .registration-page[data-mobile-step="1"] .contact-block {
-    gap: 4px;
-    margin: 0 0 10px;
-    padding: 2px 0 10px;
-    border-bottom: 1px solid #dce4ee;
-    border-radius: 0;
-    background: transparent;
-  }
-
-  .registration-page[data-mobile-step="1"] .contact-block > strong,
-  .registration-page[data-mobile-step="1"] .contact-block .phone-line {
-    display: none;
-  }
-
-  .registration-page[data-mobile-step="1"] .contact-block .campus-line {
-    min-height: 36px;
-    padding: 2px 0;
-    color: #24364d;
-    font-size: 14px;
-  }
-
-  .registration-page[data-mobile-step="1"] .contact-block .campus-line input {
-    width: 20px;
-    height: 20px;
-    flex: 0 0 20px;
-    margin: 0 2px 0 0;
-  }
-
-  .registration-page[data-mobile-step="1"] .student-lines {
-    margin: 0;
-    padding: 2px 0 8px;
-    font-size: 15px;
-  }
-
-  .registration-page[data-mobile-step="1"] .student-lines .full-line,
-  .registration-page[data-mobile-step="1"] .student-lines .two-col-line {
-    gap: 10px;
-  }
-
-  .registration-page[data-mobile-step="1"] .student-lines .full-line {
-    padding-bottom: 10px;
-    border-bottom: 1px solid #dce4ee;
-  }
-
-  .registration-page[data-mobile-step="1"] .student-lines .full-line > span,
-  .registration-page[data-mobile-step="1"] .student-lines .two-col-line label > span:first-child {
-    color: #53657c;
-    font-size: 12px;
-    font-weight: 700;
-    line-height: 1.3;
-  }
-
-  .registration-page[data-mobile-step="1"] .student-lines .two-col-line {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-    margin-top: 10px;
-  }
-
-  .registration-page[data-mobile-step="1"] .student-lines .two-col-line label {
-    display: grid;
-    align-content: start;
-    gap: 5px;
-    min-height: 0;
-  }
-
-  .registration-page[data-mobile-step="1"] .student-name-fields {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-  }
-
-  .registration-page[data-mobile-step="1"] .student-lines .student-details-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-  }
-
-  .registration-page[data-mobile-step="1"] .student-lines :deep(.el-input__wrapper),
-  .registration-page[data-mobile-step="1"] .student-lines :deep(.el-date-editor .el-input__wrapper) {
-    min-height: 44px;
-    padding: 0 10px;
-    border: 1px solid #cfd8e4;
-    border-radius: 8px;
-    background: #fff;
-    box-shadow: none;
-  }
-
-  .registration-page[data-mobile-step="1"] .student-lines :deep(.el-input__inner) {
-    min-height: 42px;
-    font-size: 16px;
-  }
-
-  .registration-page[data-mobile-step="1"] .student-credit-inline {
-    display: none;
-  }
-
-  .registration-page[data-mobile-step="2"] .course-table-wrap {
-    margin: 0;
-    overflow: visible;
-  }
-
-  .registration-page[data-mobile-step="2"] .course-table {
-    display: block;
-    border: 0;
-    font-size: 14px;
-  }
-
-  .registration-page[data-mobile-step="2"] .course-table thead {
-    display: none;
-  }
-
-  .registration-page[data-mobile-step="2"] .course-table tbody,
-  .registration-page[data-mobile-step="2"] .course-table .course-entry-row {
-    display: block;
-    width: 100%;
-  }
-
-  .registration-page[data-mobile-step="2"] .course-table .course-entry-row {
-    padding: 8px 0 12px;
-    border-bottom: 1px solid #dce4ee;
-  }
-
-  .registration-page[data-mobile-step="2"] .course-table .course-entry-row td {
-    display: grid;
-    grid-template-columns: 96px minmax(0, 1fr);
-    align-items: start;
-    gap: 8px;
-    width: 100% !important;
-    height: auto;
-    min-height: 0;
-    padding: 6px 0;
-    border: 0;
-  }
-
-  .registration-page[data-mobile-step="2"] .course-table .course-entry-row td::before {
-    color: #53657c;
-    font-size: 12px;
-    font-weight: 700;
-    line-height: 1.4;
-  }
-
-  .registration-page[data-mobile-step="2"] .course-table .course-entry-row td:nth-child(1)::before {
-    content: 'Course';
-  }
-
-  .registration-page[data-mobile-step="2"] .course-table .course-entry-row td:nth-child(2)::before {
-    content: 'Program & details';
-  }
-
-  .registration-page[data-mobile-step="2"] .course-table .course-entry-row td:nth-child(3)::before {
-    content: 'Price';
-  }
-
-  .registration-page[data-mobile-step="2"] .course-table .course-class-cell,
-  .registration-page[data-mobile-step="2"] .course-table .course-detail-cell,
-  .registration-page[data-mobile-step="2"] .course-table .group-v2-registration,
-  .registration-page[data-mobile-step="2"] .course-table .detail-row,
-  .registration-page[data-mobile-step="2"] .course-table .teacher-class-line {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-    min-width: 0;
-  }
-
-  .registration-page[data-mobile-step="2"] .course-table .course-picker-control {
-    width: 100%;
-  }
-
-  .registration-page[data-mobile-step="2"] .course-table .course-control {
-    gap: 4px;
-    width: 100%;
-  }
-
-  .registration-page[data-mobile-step="2"] .course-table .course-control > span {
-    font-size: 11px;
-  }
-
-  .registration-page[data-mobile-step="2"] .course-table :deep(.table-select .el-select__wrapper),
-  .registration-page[data-mobile-step="2"] .course-table :deep(.table-price .el-input__wrapper),
-  .registration-page[data-mobile-step="2"] .course-table :deep(.el-date-editor .el-input__wrapper) {
-    min-height: 44px;
-    border: 1px solid #cfd8e4;
-    border-radius: 8px;
-    background: #fff;
-    box-shadow: none;
-  }
-
-  .registration-page[data-mobile-step="2"] .course-table .price-cell {
-    display: grid;
-    grid-template-columns: 96px minmax(0, 1fr);
-    white-space: normal;
-  }
-
-  .registration-page[data-mobile-step="2"] .course-table .price-cell .money-amount-input,
-  .registration-page[data-mobile-step="2"] .course-table .price-cell .table-price {
-    width: 100%;
-    max-width: 100%;
-  }
-
-  .registration-page[data-mobile-step="2"] .one-on-one-registration-alert {
-    margin-bottom: 10px;
-  }
-
-  .registration-page[data-mobile-step="3"] .intake-adjustment-panel,
-  .registration-page[data-mobile-step="4"] .intake-adjustment-panel {
-    gap: 14px;
-    margin: 0;
-    padding: 0;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-  }
-
-  .registration-page[data-mobile-step="4"] .payment-line {
-    display: none;
-  }
-
-  .registration-page[data-mobile-step="3"] .adjustment-column,
-  .registration-page[data-mobile-step="4"] .adjustment-column {
-    gap: 8px;
-    padding: 0;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-  }
-
-  .registration-page[data-mobile-step="3"] .adjustment-column--fees .adjustment-heading > span {
-    display: none;
-  }
-
-  .registration-page[data-mobile-step="3"] .course-adjustment-card,
-  .registration-page[data-mobile-step="4"] .course-adjustment-card {
-    gap: 8px;
-    padding: 10px 0;
-    border: 0;
-    border-top: 1px solid #dce4ee;
-    border-radius: 0;
-    background: transparent;
-  }
-
-  .registration-page[data-mobile-step="3"] .course-adjustment-card__header,
-  .registration-page[data-mobile-step="3"] .course-adjustment-card__footer,
-  .registration-page[data-mobile-step="4"] .course-adjustment-card__header,
-  .registration-page[data-mobile-step="4"] .course-adjustment-card__footer {
-    gap: 8px;
-    padding: 0;
-  }
-
-  .registration-page[data-mobile-step="3"] .course-adjustment-card__title strong,
-  .registration-page[data-mobile-step="4"] .course-adjustment-card__title strong {
-    font-size: 13px;
-  }
-
-  .registration-page[data-mobile-step="4"] .adjustment-column--payments {
-    gap: 10px;
-  }
-
-  .registration-page[data-mobile-step="4"] .adjustment-heading {
-    align-items: center;
-    padding-bottom: 8px;
-  }
-
-  .registration-page[data-mobile-step="4"] .adjustment-heading strong {
-    font-size: 16px;
-  }
-
-  .registration-page[data-mobile-step="4"] .adjustment-heading span {
-    font-size: 12px;
-  }
-
-  .registration-page[data-mobile-step="4"] .course-adjustment-card--payment {
-    gap: 12px;
-    padding: 12px;
-    border: 1px solid #d7e1ed;
-    border-radius: 10px;
-    background: #fff;
-    box-shadow: 0 2px 8px rgb(23 43 77 / 5%);
-  }
-
-  .registration-page[data-mobile-step="4"] .course-adjustment-card__header {
-    align-items: center;
-    padding-bottom: 10px;
-    border-bottom-color: #e6edf4;
-  }
-
-  .registration-page[data-mobile-step="4"] .course-adjustment-card__title strong {
-    font-size: 15px;
-    line-height: 20px;
-    white-space: normal;
-  }
-
-  .registration-page[data-mobile-step="4"] .course-adjustment-card__context {
-    padding: 4px 8px;
-    border-radius: 6px;
-    background: #f1f6fc;
-    color: #48627f;
-    font-size: 12px;
-    white-space: nowrap;
-  }
-
-  .registration-page[data-mobile-step="4"] .course-payment-entry {
-    padding: 10px;
-    border-color: #e0e7ef;
-    border-radius: 8px;
-    background: #f9fbfd;
-  }
-
-  .registration-page[data-mobile-step="4"] .course-payment-entry__fields {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 28px;
-    align-items: end;
-    gap: 10px 8px;
-  }
-
-  .registration-page[data-mobile-step="4"] .course-payment-entry__number {
-    padding-bottom: 2px;
-    color: #34465b;
-    font-size: 13px;
-  }
-
-  .registration-page[data-mobile-step="4"] .payment-field-label {
-    display: block;
-    color: #66778b;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 15px;
-  }
-
-  .registration-page[data-mobile-step="4"] .course-payment-field :deep(.el-select),
-  .registration-page[data-mobile-step="4"] .course-payment-field :deep(.el-date-editor),
-  .registration-page[data-mobile-step="4"] .payment-amount-field .money-amount-input {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .registration-page[data-mobile-step="4"] .course-payment-field--date {
-    grid-column: 1 / 3;
-  }
-
-  .registration-page[data-mobile-step="4"] .course-payment-entry__fields > .remove-adjustment-row {
-    grid-column: 3;
-    grid-row: 2 / span 2;
-    align-self: center;
-  }
-
-  .registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-select__wrapper),
-  .registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-input__wrapper),
-  .registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-date-editor .el-input__wrapper) {
-    min-height: 42px;
-    padding: 0 10px;
-    border: 1px solid #d2dce8;
-    border-radius: 7px;
-    background: #fff;
-    box-shadow: none;
-  }
-
-  .registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-input__inner),
-  .registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-select__selected-item),
-  .registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-select__placeholder) {
-    font-size: 14px;
-  }
-
-  .registration-page[data-mobile-step="4"] .course-payment-entry .payment-amount-field {
-    gap: 4px;
-  }
-
-  .registration-page[data-mobile-step="4"] .course-payment-entry .payment-amount-field .el-input__wrapper {
-    min-height: 42px;
-  }
-
-  .registration-page[data-mobile-step="4"] .course-adjustment-card__footer {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 6px 10px;
-    padding-top: 10px;
-    border-top: 1px solid #e6edf4;
-    color: #53657c;
-    font-size: 12px;
-  }
-
-  .registration-page[data-mobile-step="4"] .course-adjustment-card__footer > .el-button {
-    grid-column: 1 / -1;
-    justify-self: start;
-    min-height: 34px;
-    margin: 0;
-    padding: 0 8px;
-    font-size: 14px;
-  }
-
-  .registration-page[data-mobile-step="4"] .course-adjustment-card__footer > strong {
-    grid-column: 2;
-    grid-row: 1;
-    justify-self: end;
-    color: #20344f;
-    font-size: 13px;
-    white-space: nowrap;
-  }
-
-  .registration-page[data-mobile-step="4"] .course-adjustment-card__empty {
-    margin: 0;
-    padding: 12px;
-    border-radius: 8px;
-    background: #f8fafc;
-    color: #667085;
-    font-size: 13px;
-  }
-
-  .registration-page[data-mobile-step="3"] .adjustment-column :deep(.el-input__wrapper),
-  .registration-page[data-mobile-step="3"] .adjustment-column :deep(.el-select__wrapper),
-  .registration-page[data-mobile-step="4"] .adjustment-column :deep(.el-input__wrapper),
-  .registration-page[data-mobile-step="4"] .adjustment-column :deep(.el-select__wrapper) {
-    min-height: 44px;
-  }
-
-  .registration-page[data-mobile-step="5"] .paper-form {
-    min-height: 0;
-    padding: 12px 10px;
-    border-radius: 12px;
-    font-size: 13px;
-  }
-
-  .registration-page[data-mobile-step="5"] .contact-block {
-    padding: 10px;
-  }
-
-  .registration-page[data-mobile-step="5"] .form-header {
-    min-height: 60px;
-  }
-
-  .registration-page[data-mobile-step="5"] .form-logo {
-    width: 46px;
-    height: 46px;
-  }
-
-  .registration-page[data-mobile-step="5"] .ein-toggle {
-    top: 72px;
-    right: 12px;
-  }
-
-  .mobile-registration-review {
-    margin: 10px 0 14px;
-    gap: 7px;
-    padding: 10px;
-    border: 1px solid #dbe5f1;
-    border-radius: 10px;
-    background: #f8fafc;
-  }
-
-  .registration-page[data-mobile-step="5"] .course-table-wrap {
-    margin: 8px 0 12px;
-    overflow: visible;
-  }
-
-  .registration-page[data-mobile-step="5"] .course-table {
-    display: block;
-    width: 100%;
-    border: 0;
-    font-size: 13px;
-  }
-
-  .registration-page[data-mobile-step="5"] .course-table thead {
-    display: none;
-  }
-
-  .registration-page[data-mobile-step="5"] .course-table tbody,
-  .registration-page[data-mobile-step="5"] .course-table .course-entry-row {
-    display: block;
-    width: 100%;
-  }
-
-  .registration-page[data-mobile-step="5"] .course-table .course-entry-row {
-    margin-bottom: 8px;
-    padding: 8px;
-    border: 1px solid #dce5ef;
-    border-radius: 9px;
-    background: #fff;
-  }
-
-  .registration-page[data-mobile-step="5"] .course-table .course-entry-row td {
-    display: grid;
-    grid-template-columns: 82px minmax(0, 1fr);
-    align-items: start;
-    gap: 6px;
-    width: 100% !important;
-    height: auto;
-    min-height: 0;
-    padding: 5px 0;
-    border: 0;
-  }
-
-  .registration-page[data-mobile-step="5"] .course-table .course-entry-row td::before {
-    color: #61738a;
-    font-size: 11px;
-    font-weight: 650;
-    line-height: 1.4;
-  }
-
-  .registration-page[data-mobile-step="5"] .course-table .course-entry-row td:nth-child(1)::before { content: 'Course'; }
-  .registration-page[data-mobile-step="5"] .course-table .course-entry-row td:nth-child(2)::before { content: 'Program & details'; }
-  .registration-page[data-mobile-step="5"] .course-table .course-entry-row td:nth-child(3)::before { content: 'Price'; }
-
-  .registration-page[data-mobile-step="5"] .course-table .course-class-cell,
-  .registration-page[data-mobile-step="5"] .course-table .course-detail-cell,
-  .registration-page[data-mobile-step="5"] .course-table .group-v2-registration,
-  .registration-page[data-mobile-step="5"] .course-table .detail-row,
-  .registration-page[data-mobile-step="5"] .course-table .teacher-class-line {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 7px;
-    min-width: 0;
-  }
-
-  .registration-page[data-mobile-step="5"] .course-table .group-v2-registration .detail-row--group,
-  .registration-page[data-mobile-step="5"] .course-table .group-v2-registration .detail-row:not(.detail-row--group) {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .registration-page[data-mobile-step="5"] .course-table .group-v2-registration__full-row {
-    grid-column: 1 / -1;
-  }
-
-  .registration-page[data-mobile-step="5"] .course-table .course-picker-control,
-  .registration-page[data-mobile-step="5"] .course-table .course-control {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .registration-page[data-mobile-step="5"] .course-table .course-control > span {
-    font-size: 10px;
-    line-height: 14px;
-  }
-
-  .registration-page[data-mobile-step="5"] .course-table :deep(.table-select .el-select__wrapper),
-  .registration-page[data-mobile-step="5"] .course-table :deep(.table-price .el-input__wrapper),
-  .registration-page[data-mobile-step="5"] .course-table :deep(.el-date-editor .el-input__wrapper) {
-    min-height: 40px;
-    padding: 0 8px;
-    border: 1px solid #d2dce8;
-    border-radius: 7px;
-    background: #fff;
-    box-shadow: none;
-  }
-
-  .registration-page[data-mobile-step="5"] .course-table .registration-class-option {
-    min-width: 0;
-    flex-wrap: wrap;
-  }
-
-  .registration-page[data-mobile-step="5"] .course-table .registration-class-select-row {
-    min-width: 0;
-    flex-wrap: wrap;
-  }
-
-  .registration-page[data-mobile-step="5"] .course-table .price-cell {
-    display: grid;
-    grid-template-columns: 82px minmax(0, 1fr);
-    white-space: normal;
-  }
-
-  .registration-page[data-mobile-step="5"] .course-table .price-cell .money-amount-input,
-  .registration-page[data-mobile-step="5"] .course-table .price-cell .table-price {
-    width: 100%;
-    max-width: 100%;
-  }
-
-  .registration-page[data-mobile-step="5"] .mobile-registration-review header {
-    gap: 2px;
-  }
-
-  .registration-page[data-mobile-step="5"] .mobile-registration-review header span,
-  .registration-page[data-mobile-step="5"] .mobile-registration-review small {
-    font-size: 11px;
-  }
-
-  .registration-page[data-mobile-step="5"] .mobile-registration-review header strong {
-    font-size: 16px;
-    line-height: 20px;
-  }
-
-  .registration-page[data-mobile-step="5"] .mobile-registration-review article {
-    gap: 8px;
-    padding-top: 7px;
-  }
-
-  .registration-page[data-mobile-step="5"] .mobile-registration-review article > div > strong {
-    font-size: 13px;
-    line-height: 18px;
-  }
-
-  .registration-page[data-mobile-step="5"] .mobile-registration-review article > strong {
-    font-size: 13px;
-  }
-
-  .registration-page[data-mobile-step="5"] .mobile-registration-review footer {
-    display: none;
-  }
+.registration-page[data-mobile-step="1"] [data-mobile-steps]:not([data-mobile-steps~="1"]),
+.registration-page[data-mobile-step="2"] [data-mobile-steps]:not([data-mobile-steps~="2"]),
+.registration-page[data-mobile-step="3"] [data-mobile-steps]:not([data-mobile-steps~="3"]),
+.registration-page[data-mobile-step="4"] [data-mobile-steps]:not([data-mobile-steps~="4"]),
+.registration-page[data-mobile-step="5"] [data-mobile-steps]:not([data-mobile-steps~="5"]) {
+  display: none !important;
+}
+
+.registration-desk p {
+  display: none;
+}
+
+.mobile-registration-progress {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid #d8e7ff;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 6px 18px rgb(15 23 42 / 6%);
+}
+
+.mobile-registration-progress__track {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #e8eef6;
+}
+
+.mobile-registration-progress__track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #3478d4;
+  transition: width 180ms ease;
+}
+
+.mobile-registration-progress__copy {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mobile-registration-progress__copy span {
+  color: #63728a;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .06em;
+}
+
+.mobile-registration-progress__copy strong {
+  color: #18345a;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.mobile-registration-progress p {
+  margin: 0;
+  color: #667085;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.paper-form {
+  min-height: 0;
+  padding: 18px 14px;
+  border: 1px solid #e5eaf1;
+  border-radius: 14px;
+  box-shadow: 0 6px 20px rgb(15 23 42 / 6%);
+}
+
+.form-header,
+.contact-block,
+.student-lines,
+.course-table-wrap,
+.policies {
+  margin-bottom: 14px;
+}
+
+.contact-block {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #f6f8fb;
+}
+
+.contact-block > strong,
+.contact-block .phone-line,
+.contact-block .campus-line {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.contact-block .campus-line input,
+.service-charge-toggle input {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+}
+
+.student-lines .full-line,
+.student-lines .two-col-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.student-lines .full-line > span,
+.student-lines .two-col-line label > span:first-child {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.student-name-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  width: 100%;
+}
+
+.registration-student-picker__heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+}
+
+.registration-student-picker__heading > span:not(.student-credit-balance) {
+  grid-column: 1 / -1;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.mobile-registration-review {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 18px;
+  padding: 14px;
+  border: 1px solid #dbe5f1;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.mobile-registration-review header,
+.mobile-registration-review article,
+.mobile-registration-review footer {
+  display: grid;
+  gap: 5px;
+}
+
+.mobile-registration-review header span,
+.mobile-registration-review article span,
+.mobile-registration-review small {
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.mobile-registration-review header strong {
+  font-size: 18px;
+}
+
+.mobile-registration-review article {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-top: 9px;
+  border-top: 1px solid #e1e7ef;
+}
+
+.mobile-registration-review article > div {
+  display: grid;
+  gap: 3px;
+}
+
+.mobile-registration-review footer {
+  padding-top: 8px;
+  border-top: 1px solid #d8e0ea;
+}
+
+.mobile-registration-review footer span {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.mobile-registration-actions {
+  position: fixed;
+  z-index: 850;
+  right: 0;
+  bottom: calc(60px + env(safe-area-inset-bottom));
+  left: 0;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid #e5eaf1;
+  background: rgb(255 255 255 / 97%);
+  box-shadow: 0 -8px 24px rgb(16 42 67 / 8%);
+  backdrop-filter: blur(14px);
+}
+
+.mobile-registration-actions__amounts {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mobile-registration-actions__amounts span {
+  display: grid;
+  gap: 1px;
+}
+
+.mobile-registration-actions__amounts small {
+  color: #667085;
+  font-size: 12px;
+}
+
+.mobile-registration-actions__amounts strong {
+  color: #182b49;
+  font-size: 16px;
+}
+
+.mobile-registration-actions__balance.is-due strong {
+  color: #b54708;
+}
+
+.mobile-registration-actions__balance.is-paid strong {
+  color: #067647;
+}
+
+.mobile-registration-actions__buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.mobile-registration-actions__buttons > .el-button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 46px;
+  margin: 0;
+  font-size: 15px;
+}
+
+.mobile-registration-actions__buttons > .el-button:only-child {
+  width: 100%;
+}
+
+}
+
+html.mobile-layout & {
+.registration-page {
+  gap: 4px;
+  padding-top: 6px;
+  padding-bottom: 12px;
+}
+
+.mobile-registration-progress {
+  gap: 5px;
+  padding: 4px 14px 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.mobile-registration-progress__copy strong {
+  font-size: 17px;
+}
+
+.registration-student-picker {
+  box-sizing: border-box;
+  width: calc(100% - 28px);
+  min-width: 0;
+  gap: 8px;
+  margin: 0 14px;
+  padding: 6px 0 12px;
+  border: 0;
+  border-bottom: 1px solid #dce4ee;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.registration-student-picker__heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.registration-student-picker__heading > strong {
+  overflow: hidden;
+  color: #263a53;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.registration-student-picker__hint {
+  display: none;
+}
+
+.student-credit-balance {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.student-credit-balance small {
+  font-size: 9px !important;
+}
+
+.student-credit-balance strong {
+  font-size: 13px !important;
+}
+
+.registration-student-picker__select {
+  min-height: 44px;
+}
+
+.registration-page[data-mobile-step="1"] .paper-form,
+.registration-page[data-mobile-step="2"] .paper-form,
+.registration-page[data-mobile-step="3"] .paper-form,
+.registration-page[data-mobile-step="4"] .paper-form {
+  width: calc(100% - 28px);
+  max-width: none;
+  min-height: 0;
+  margin: 0 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.registration-page .paper-form {
+  overflow: visible;
+}
+
+.registration-page[data-mobile-step="1"] .contact-block {
+  gap: 4px;
+  margin: 0 0 10px;
+  padding: 2px 0 10px;
+  border-bottom: 1px solid #dce4ee;
+  border-radius: 0;
+  background: transparent;
+}
+
+.registration-page[data-mobile-step="1"] .contact-block > strong,
+.registration-page[data-mobile-step="1"] .contact-block .phone-line {
+  display: none;
+}
+
+.registration-page[data-mobile-step="1"] .contact-block .campus-line {
+  min-height: 36px;
+  padding: 2px 0;
+  color: #24364d;
+  font-size: 14px;
+}
+
+.registration-page[data-mobile-step="1"] .contact-block .campus-line input {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  margin: 0 2px 0 0;
+}
+
+.registration-page[data-mobile-step="1"] .student-lines {
+  margin: 0;
+  padding: 2px 0 8px;
+  font-size: 15px;
+}
+
+.registration-page[data-mobile-step="1"] .student-lines .full-line,
+.registration-page[data-mobile-step="1"] .student-lines .two-col-line {
+  gap: 10px;
+}
+
+.registration-page[data-mobile-step="1"] .student-lines .full-line {
+  padding-bottom: 10px;
+  border-bottom: 1px solid #dce4ee;
+}
+
+.registration-page[data-mobile-step="1"] .student-lines .full-line > span,
+.registration-page[data-mobile-step="1"] .student-lines .two-col-line label > span:first-child {
+  color: #53657c;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.registration-page[data-mobile-step="1"] .student-lines .two-col-line {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.registration-page[data-mobile-step="1"] .student-lines .two-col-line label {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-height: 0;
+}
+
+.registration-page[data-mobile-step="1"] .student-name-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.registration-page[data-mobile-step="1"] .student-lines .student-details-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.registration-page[data-mobile-step="1"] .student-lines :deep(.el-input__wrapper),
+.registration-page[data-mobile-step="1"] .student-lines :deep(.el-date-editor .el-input__wrapper) {
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid #cfd8e4;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.registration-page[data-mobile-step="1"] .student-lines :deep(.el-input__inner) {
+  min-height: 42px;
+  font-size: 16px;
+}
+
+.registration-page[data-mobile-step="1"] .student-credit-inline {
+  display: none;
+}
+
+.registration-page[data-mobile-step="2"] .course-table-wrap {
+  margin: 0;
+  overflow: visible;
+}
+
+.registration-page[data-mobile-step="2"] .course-table {
+  display: block;
+  border: 0;
+  font-size: 14px;
+}
+
+.registration-page[data-mobile-step="2"] .course-table thead {
+  display: none;
+}
+
+.registration-page[data-mobile-step="2"] .course-table tbody,
+.registration-page[data-mobile-step="2"] .course-table .course-entry-row {
+  display: block;
+  width: 100%;
+}
+
+.registration-page[data-mobile-step="2"] .course-table .course-entry-row {
+  padding: 8px 0 12px;
+  border-bottom: 1px solid #dce4ee;
+}
+
+.registration-page[data-mobile-step="2"] .course-table .course-entry-row td {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  width: 100% !important;
+  height: auto;
+  min-height: 0;
+  padding: 6px 0;
+  border: 0;
+}
+
+.registration-page[data-mobile-step="2"] .course-table .course-entry-row td::before {
+  color: #53657c;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.registration-page[data-mobile-step="2"] .course-table .course-entry-row td:nth-child(1)::before {
+  content: 'Course';
+}
+
+.registration-page[data-mobile-step="2"] .course-table .course-entry-row td:nth-child(2)::before {
+  content: 'Program & details';
+}
+
+.registration-page[data-mobile-step="2"] .course-table .course-entry-row td:nth-child(3)::before {
+  content: 'Price';
+}
+
+.registration-page[data-mobile-step="2"] .course-table .course-class-cell,
+.registration-page[data-mobile-step="2"] .course-table .course-detail-cell,
+.registration-page[data-mobile-step="2"] .course-table .group-v2-registration,
+.registration-page[data-mobile-step="2"] .course-table .detail-row,
+.registration-page[data-mobile-step="2"] .course-table .teacher-class-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+
+.registration-page[data-mobile-step="2"] .course-table .course-picker-control {
+  width: 100%;
+}
+
+.registration-page[data-mobile-step="2"] .course-table .course-control {
+  gap: 4px;
+  width: 100%;
+}
+
+.registration-page[data-mobile-step="2"] .course-table .course-control > span {
+  font-size: 11px;
+}
+
+.registration-page[data-mobile-step="2"] .course-table :deep(.table-select .el-select__wrapper),
+.registration-page[data-mobile-step="2"] .course-table :deep(.table-price .el-input__wrapper),
+.registration-page[data-mobile-step="2"] .course-table :deep(.el-date-editor .el-input__wrapper) {
+  min-height: 44px;
+  border: 1px solid #cfd8e4;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.registration-page[data-mobile-step="2"] .course-table .price-cell {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  white-space: normal;
+}
+
+.registration-page[data-mobile-step="2"] .course-table .price-cell .money-amount-input,
+.registration-page[data-mobile-step="2"] .course-table .price-cell .table-price {
+  width: 100%;
+  max-width: 100%;
+}
+
+.registration-page[data-mobile-step="2"] .one-on-one-registration-alert {
+  margin-bottom: 10px;
+}
+
+.registration-page[data-mobile-step="3"] .intake-adjustment-panel,
+.registration-page[data-mobile-step="4"] .intake-adjustment-panel {
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.registration-page[data-mobile-step="4"] .payment-line {
+  display: none;
+}
+
+.registration-page[data-mobile-step="3"] .adjustment-column,
+.registration-page[data-mobile-step="4"] .adjustment-column {
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.registration-page[data-mobile-step="3"] .adjustment-column--fees .adjustment-heading > span {
+  display: none;
+}
+
+.registration-page[data-mobile-step="3"] .course-adjustment-card,
+.registration-page[data-mobile-step="4"] .course-adjustment-card {
+  gap: 8px;
+  padding: 10px 0;
+  border: 0;
+  border-top: 1px solid #dce4ee;
+  border-radius: 0;
+  background: transparent;
+}
+
+.registration-page[data-mobile-step="3"] .course-adjustment-card__header,
+.registration-page[data-mobile-step="3"] .course-adjustment-card__footer,
+.registration-page[data-mobile-step="4"] .course-adjustment-card__header,
+.registration-page[data-mobile-step="4"] .course-adjustment-card__footer {
+  gap: 8px;
+  padding: 0;
+}
+
+.registration-page[data-mobile-step="3"] .course-adjustment-card__title strong,
+.registration-page[data-mobile-step="4"] .course-adjustment-card__title strong {
+  font-size: 13px;
+}
+
+.registration-page[data-mobile-step="4"] .adjustment-column--payments {
+  gap: 10px;
+}
+
+.registration-page[data-mobile-step="4"] .adjustment-heading {
+  align-items: center;
+  padding-bottom: 8px;
+}
+
+.registration-page[data-mobile-step="4"] .adjustment-heading strong {
+  font-size: 16px;
+}
+
+.registration-page[data-mobile-step="4"] .adjustment-heading span {
+  font-size: 12px;
+}
+
+.registration-page[data-mobile-step="4"] .course-adjustment-card--payment {
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #d7e1ed;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgb(23 43 77 / 5%);
+}
+
+.registration-page[data-mobile-step="4"] .course-adjustment-card__header {
+  align-items: center;
+  padding-bottom: 10px;
+  border-bottom-color: #e6edf4;
+}
+
+.registration-page[data-mobile-step="4"] .course-adjustment-card__title strong {
+  font-size: 15px;
+  line-height: 20px;
+  white-space: normal;
+}
+
+.registration-page[data-mobile-step="4"] .course-adjustment-card__context {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #f1f6fc;
+  color: #48627f;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.registration-page[data-mobile-step="4"] .course-payment-entry {
+  padding: 10px;
+  border-color: #e0e7ef;
+  border-radius: 8px;
+  background: #f9fbfd;
+}
+
+.registration-page[data-mobile-step="4"] .course-payment-entry__fields {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 28px;
+  align-items: end;
+  gap: 10px 8px;
+}
+
+.registration-page[data-mobile-step="4"] .course-payment-entry__number {
+  padding-bottom: 2px;
+  color: #34465b;
+  font-size: 13px;
+}
+
+.registration-page[data-mobile-step="4"] .payment-field-label {
+  display: block;
+  color: #66778b;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 15px;
+}
+
+.registration-page[data-mobile-step="4"] .course-payment-field :deep(.el-select),
+.registration-page[data-mobile-step="4"] .course-payment-field :deep(.el-date-editor),
+.registration-page[data-mobile-step="4"] .payment-amount-field .money-amount-input {
+  width: 100%;
+  min-width: 0;
+}
+
+.registration-page[data-mobile-step="4"] .course-payment-field--date {
+  grid-column: 1 / 3;
+}
+
+.registration-page[data-mobile-step="4"] .course-payment-entry__fields > .remove-adjustment-row {
+  grid-column: 3;
+  grid-row: 2 / span 2;
+  align-self: center;
+}
+
+.registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-select__wrapper),
+.registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-input__wrapper),
+.registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-date-editor .el-input__wrapper) {
+  min-height: 42px;
+  padding: 0 10px;
+  border: 1px solid #d2dce8;
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-input__inner),
+.registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-select__selected-item),
+.registration-page[data-mobile-step="4"] .course-payment-entry :deep(.el-select__placeholder) {
+  font-size: 14px;
+}
+
+.registration-page[data-mobile-step="4"] .course-payment-entry .payment-amount-field {
+  gap: 4px;
+}
+
+.registration-page[data-mobile-step="4"] .course-payment-entry .payment-amount-field .el-input__wrapper {
+  min-height: 42px;
+}
+
+.registration-page[data-mobile-step="4"] .course-adjustment-card__footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e6edf4;
+  color: #53657c;
+  font-size: 12px;
+}
+
+.registration-page[data-mobile-step="4"] .course-adjustment-card__footer > .el-button {
+  grid-column: 1 / -1;
+  justify-self: start;
+  min-height: 34px;
+  margin: 0;
+  padding: 0 8px;
+  font-size: 14px;
+}
+
+.registration-page[data-mobile-step="4"] .course-adjustment-card__footer > strong {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  color: #20344f;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.registration-page[data-mobile-step="4"] .course-adjustment-card__empty {
+  margin: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #667085;
+  font-size: 13px;
+}
+
+.registration-page[data-mobile-step="3"] .adjustment-column :deep(.el-input__wrapper),
+.registration-page[data-mobile-step="3"] .adjustment-column :deep(.el-select__wrapper),
+.registration-page[data-mobile-step="4"] .adjustment-column :deep(.el-input__wrapper),
+.registration-page[data-mobile-step="4"] .adjustment-column :deep(.el-select__wrapper) {
+  min-height: 44px;
+}
+
+.registration-page[data-mobile-step="5"] .paper-form {
+  min-height: 0;
+  padding: 12px 10px;
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.registration-page[data-mobile-step="5"] .contact-block {
+  padding: 10px;
+}
+
+.registration-page[data-mobile-step="5"] .form-header {
+  min-height: 60px;
+}
+
+.registration-page[data-mobile-step="5"] .form-logo {
+  width: 46px;
+  height: 46px;
+}
+
+.registration-page[data-mobile-step="5"] .ein-toggle {
+  top: 72px;
+  right: 12px;
+}
+
+.mobile-registration-review {
+  margin: 10px 0 14px;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid #dbe5f1;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.registration-page[data-mobile-step="5"] .course-table-wrap {
+  margin: 8px 0 12px;
+  overflow: visible;
+}
+
+.registration-page[data-mobile-step="5"] .course-table {
+  display: block;
+  width: 100%;
+  border: 0;
+  font-size: 13px;
+}
+
+.registration-page[data-mobile-step="5"] .course-table thead {
+  display: none;
+}
+
+.registration-page[data-mobile-step="5"] .course-table tbody,
+.registration-page[data-mobile-step="5"] .course-table .course-entry-row {
+  display: block;
+  width: 100%;
+}
+
+.registration-page[data-mobile-step="5"] .course-table .course-entry-row {
+  margin-bottom: 8px;
+  padding: 8px;
+  border: 1px solid #dce5ef;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.registration-page[data-mobile-step="5"] .course-table .course-entry-row td {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
+  width: 100% !important;
+  height: auto;
+  min-height: 0;
+  padding: 5px 0;
+  border: 0;
+}
+
+.registration-page[data-mobile-step="5"] .course-table .course-entry-row td::before {
+  color: #61738a;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.registration-page[data-mobile-step="5"] .course-table .course-entry-row td:nth-child(1)::before { content: 'Course'; }
+.registration-page[data-mobile-step="5"] .course-table .course-entry-row td:nth-child(2)::before { content: 'Program & details'; }
+.registration-page[data-mobile-step="5"] .course-table .course-entry-row td:nth-child(3)::before { content: 'Price'; }
+
+.registration-page[data-mobile-step="5"] .course-table .course-class-cell,
+.registration-page[data-mobile-step="5"] .course-table .course-detail-cell,
+.registration-page[data-mobile-step="5"] .course-table .group-v2-registration,
+.registration-page[data-mobile-step="5"] .course-table .detail-row,
+.registration-page[data-mobile-step="5"] .course-table .teacher-class-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+  min-width: 0;
+}
+
+.registration-page[data-mobile-step="5"] .course-table .group-v2-registration .detail-row--group,
+.registration-page[data-mobile-step="5"] .course-table .group-v2-registration .detail-row:not(.detail-row--group) {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.registration-page[data-mobile-step="5"] .course-table .group-v2-registration__full-row {
+  grid-column: 1 / -1;
+}
+
+.registration-page[data-mobile-step="5"] .course-table .course-picker-control,
+.registration-page[data-mobile-step="5"] .course-table .course-control {
+  width: 100%;
+  min-width: 0;
+}
+
+.registration-page[data-mobile-step="5"] .course-table .course-control > span {
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.registration-page[data-mobile-step="5"] .course-table :deep(.table-select .el-select__wrapper),
+.registration-page[data-mobile-step="5"] .course-table :deep(.table-price .el-input__wrapper),
+.registration-page[data-mobile-step="5"] .course-table :deep(.el-date-editor .el-input__wrapper) {
+  min-height: 40px;
+  padding: 0 8px;
+  border: 1px solid #d2dce8;
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.registration-page[data-mobile-step="5"] .course-table .registration-class-option {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.registration-page[data-mobile-step="5"] .course-table .registration-class-select-row {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.registration-page[data-mobile-step="5"] .course-table .price-cell {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  white-space: normal;
+}
+
+.registration-page[data-mobile-step="5"] .course-table .price-cell .money-amount-input,
+.registration-page[data-mobile-step="5"] .course-table .price-cell .table-price {
+  width: 100%;
+  max-width: 100%;
+}
+
+.registration-page[data-mobile-step="5"] .mobile-registration-review header {
+  gap: 2px;
+}
+
+.registration-page[data-mobile-step="5"] .mobile-registration-review header span,
+.registration-page[data-mobile-step="5"] .mobile-registration-review small {
+  font-size: 11px;
+}
+
+.registration-page[data-mobile-step="5"] .mobile-registration-review header strong {
+  font-size: 16px;
+  line-height: 20px;
+}
+
+.registration-page[data-mobile-step="5"] .mobile-registration-review article {
+  gap: 8px;
+  padding-top: 7px;
+}
+
+.registration-page[data-mobile-step="5"] .mobile-registration-review article > div > strong {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.registration-page[data-mobile-step="5"] .mobile-registration-review article > strong {
+  font-size: 13px;
+}
+
+.registration-page[data-mobile-step="5"] .mobile-registration-review footer {
+  display: none;
+}
+
 }
 
 @media screen and (max-width: 430px) {
