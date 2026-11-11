@@ -2287,7 +2287,7 @@ function formatHours(value: number) {
   color: #18b58a;
 }
 
-@media (max-width: 920px) {
+html.mobile-layout & {
   .pricing-mode-tabs {
     gap: 4px;
     padding: 4px;

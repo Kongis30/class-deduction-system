@@ -1372,7 +1372,7 @@ async function handleTestEmail() {
   line-height: 1.5;
 }
 
-@media (max-width: 920px) {
+html.mobile-layout & {
   .config-grid { grid-template-columns: minmax(0, 1fr); }
   .config-col--side { min-width: 0; }
 }

@@ -387,7 +387,7 @@ onMounted(loadBalances);
   width: 100%;
 }
 
-@media (max-width: 920px) {
+html.mobile-layout & {
   .data-summary-page { height: 100%; min-height: 0; flex: 1 1 0; overflow: hidden; }
   .data-summary-page .workbook-toolbar { flex: 0 0 auto; gap: 6px; padding: 6px 8px; }
   .data-summary-page .workbook-scroll { display: block; min-height: 0; flex: 1 1 0; overflow: auto; border: 1px solid #9eafa7; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }

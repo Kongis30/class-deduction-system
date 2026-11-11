@@ -949,7 +949,7 @@ function formatMoney(value?: number) {
   }
 }
 
-@media (max-width: 920px) {
+html.mobile-layout & {
   .receipt-records-page { gap: 8px; padding-bottom: calc(78px + env(safe-area-inset-bottom)); }
   .receipt-records-page > .table-page-header { display: none; }
   .mobile-receipt-toolbar { display: flex; align-items: stretch; gap: 8px; }

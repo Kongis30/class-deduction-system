@@ -1384,7 +1384,7 @@ button.student-conflict-card:hover {
   display: none;
 }
 
-@media (max-width: 920px) {
+html.mobile-layout & {
   .student-calendar {
     height: auto;
     min-height: 0;

@@ -68,10 +68,16 @@ export const useAppStore = defineStore('app', {
       this.applyLayoutMode(preference === 'mobile'
         || (preference === 'auto' && this.detectedMobileViewport));
     },
+    // 把布局模式同步到 CSS：平板等宽屏设备强制 Mobile 时，@media (max-width: 920px)
+    // 不会命中，导致移动端 DOM 配桌面端样式的杂交布局。html.mobile-layout 类让
+    // 移动端样式跟随 JS 状态（含 Settings 手动切换）而非屏宽；手机端两者本就同时成立。
     applyLayoutMode(isMobile: boolean) {
       const wasMobile = this.isMobileViewport;
       const enteringMobile = isMobile && !this.isMobileViewport;
       this.isMobileViewport = isMobile;
+      if (typeof document !== 'undefined') {
+        document.documentElement.classList.toggle('mobile-layout', isMobile);
+      }
       if (enteringMobile) {
         this.desktopSidebarCollapsed = this.sidebarCollapsed;
         this.sidebarCollapsed = true;

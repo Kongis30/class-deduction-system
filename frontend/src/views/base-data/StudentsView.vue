@@ -2069,7 +2069,7 @@ onBeforeUnmount(() => {
   color: var(--el-color-danger);
 }
 
-@media (max-width: 920px) {
+html.mobile-layout & {
   .people-table-zoom-scroll {
     max-height: max(260px, calc(100dvh - 340px));
     overflow-x: hidden;
@@ -2334,7 +2334,7 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(3, 1fr);
 }
 
-@media (max-width: 920px) {
+html.mobile-layout & {
   .student-orders-mobile { display: grid; gap: 10px; }
   .student-orders-mobile__empty { padding: 20px 10px; border: 1px dashed #dbe4ee; border-radius: 8px; color: #909399; font-size: 12px; text-align: center; }
   .student-order-card { display: grid; gap: 10px; padding: 12px; border: 1px solid #dfe7f0; border-radius: 10px; background: #f9fbfd; }

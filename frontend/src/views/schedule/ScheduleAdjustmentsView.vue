@@ -2436,7 +2436,7 @@ onMounted(async () => {
   line-height: 1.5;
 }
 
-@media (max-width: 920px) {
+html.mobile-layout & {
   .adj-page {
     height: auto;
     min-height: calc(100dvh - 150px);

@@ -1347,7 +1347,7 @@ loadData();
   padding: 12px 20px;
 }
 
-@media (max-width: 920px) {
+html.mobile-layout & {
   .product-toolbar { align-items: stretch; flex-direction: column; }
   .product-toolbar__filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(132px, 160px); }
   .product-toolbar__filters > * { min-width: 0; width: 100% !important; }

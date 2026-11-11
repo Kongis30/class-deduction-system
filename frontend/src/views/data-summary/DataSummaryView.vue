@@ -3443,7 +3443,7 @@ th.workbook-column--studentName {
   display: none;
 }
 
-@media (max-width: 920px) {
+html.mobile-layout & {
   :global(.app-shell--mobile.app-shell--data-summary) {
     height: 100dvh;
     min-height: 0;

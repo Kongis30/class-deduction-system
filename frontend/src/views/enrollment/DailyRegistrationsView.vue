@@ -551,7 +551,7 @@ function rowKey(row: DailyRegistrationRow) {
   .daily-sheet__scroll--compact { max-height: 220px; }
 }
 
-@media (max-width: 920px) {
+html.mobile-layout & {
   .daily-workbook-page { display: flex; height: 100%; min-height: 0; flex: 1 1 0; flex-direction: column; overflow: hidden; }
   .daily-workbook-page .workbook-toolbar { flex: 0 0 auto; padding: 6px 8px; }
   .daily-workbook-layout { flex: 1 1 0; gap: 8px; overflow: auto; padding-bottom: 8px; }

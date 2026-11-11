@@ -994,7 +994,7 @@ onBeforeUnmount(() => {
 .transport-page .transport-detail-table .workbook-data-row:hover td { background: #fff; }
 .transport-page .transport-detail-table td:last-child { white-space: normal; line-height: 1.4; }
 .transport-empty { margin-top: 12px; padding: 40px; border: 1px solid #b8c5cb; border-radius: 6px; color: #52636c; text-align: center; }
-@media (max-width: 920px) {
+html.mobile-layout & {
   .transport-page { display: flex; height: 100%; min-height: 0; flex: 1 1 0; flex-direction: column; overflow: hidden; }
   .transport-page .workbook-toolbar { flex: 0 0 auto; gap: 6px; padding: 6px 8px; }
   .transport-scroll { min-height: 0; flex: 1 1 0; overflow: auto; padding-bottom: 8px; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
