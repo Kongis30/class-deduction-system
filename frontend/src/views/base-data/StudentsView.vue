@@ -267,7 +267,7 @@
 
         <h4 class="student-form__section-title">Guardian contact</h4>
         <div class="student-form__row student-form__row--three">
-          <el-form-item label="Guardian name" prop="guardianName" class="student-form__third">
+          <el-form-item label="Guardian name" class="student-form__third">
             <el-input v-model="studentForm.guardianName" placeholder="Primary guardian" />
           </el-form-item>
           <el-form-item label="Relation" class="student-form__third">
@@ -1310,7 +1310,6 @@ const studentForm = reactive<StudentSavePayload>({
 
 const studentFormRules = {
   studentName: [{ required: true, message: 'Name is required' }],
-  guardianName: [{ required: true, message: 'Guardian name is required' }],
   guardianPhone: [{ required: true, message: 'Phone is required' }],
 };
 
