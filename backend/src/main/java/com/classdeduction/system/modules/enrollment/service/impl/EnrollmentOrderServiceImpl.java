@@ -1611,7 +1611,14 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                     new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
                             .eq(EnrollmentOrderParticipantEntity::getEnrollmentOrderId, order.getId())
                             .eq(EnrollmentOrderParticipantEntity::getIsDeleted, 0));
-            if (participants == null || participants <= 1) {
+            // 本次更正会新增课程行（含死快照行换课）时跳过前置补齐：
+            // 死行删除后的订单常处于"历史付款无归属 + 订单超收"中间态，
+            // 前置 replay 会按超收单行规则把全部未分摊付款塞进当时唯一的活行，
+            // 换课建好新行后订单不再超收，后置 replay 校验就会因分摊超出课程容量而失败。
+            // 新增行的更正交由后置 replay（moneyChanged 分支）以最终行集合统一分配。
+            boolean addingCourseRows = request.getItems() != null && request.getItems().stream()
+                    .anyMatch(item -> item != null && item.getOrderItemId() == null);
+            if ((participants == null || participants <= 1) && !addingCourseRows) {
                 // 先按更正前订单补齐缺失的付款归属，再修改价格；同一事务失败时全部回滚。
                 paymentAllocationService.replayAllocations(order);
             }

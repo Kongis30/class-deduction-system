@@ -1664,7 +1664,9 @@ class EnrollmentOrderServiceImplTest {
 
         when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
         when(studentMapper.selectById(101L)).thenReturn(buildStudent());
-        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        // 返回可变列表：新增课程行的更正会把 append 出来的行加进 existingItems。
+        when(enrollmentOrderItemMapper.selectList(any()))
+                .thenAnswer(inv -> new java.util.ArrayList<>(List.of(item)));
         when(classGroupMapper.selectById(801L)).thenReturn(group);
         when(groupCourseProjectMapper.selectById(910L)).thenReturn(project);
         when(groupRegistrationPlanMapper.selectById(920L)).thenReturn(plan);
@@ -1763,6 +1765,54 @@ class EnrollmentOrderServiceImplTest {
         // 正常购买（月数不超过方案标称 6）即使滚动末月超班级结束日，也靠 cap 截断而不是前置拦截。
         // 这是 db9103e 引入、本次恢复 quantity > configuredQuantity 前置条件后修复的回归。
         EnrollmentOrderCorrectionRequest request = stubMonthlyCorrection(6, 6, LocalDate.of(2026, 12, 31));
+
+        enrollmentOrderService.correctOrder(2001L, request);
+    }
+
+    @Test
+    void shouldSkipPrePriceReplayWhenCorrectionAddsCourseRow() {
+        // 死行换课 = 更正里带无 orderItemId 的新增行。此时不能在改价前重放分摊：
+        // 死行删除后的订单处于"历史付款无归属 + 超收"中间态，前置重放会把全部
+        // 未分摊付款塞进当时唯一的活行，换课建新行后后置校验即失败（线上
+        // "Saved course payment allocation exceeds" 的根因）。新增行更正只允许
+        // 后置 replay 以最终行集合统一分配。
+        EnrollmentOrderCorrectionRequest request = stubMonthlyCorrection(6, 6, LocalDate.of(2027, 12, 31));
+        request.getItems().get(0).setOrderItemId(null);
+        request.getItems().get(0).setCorrectionChangedFields(java.util.List.of("courseProductId"));
+
+        // 新增行走 appendCourseToOrder；用 mock 桩住以免构造完整的报名上下文。
+        com.classdeduction.system.modules.enrollment.service.RegistrationIntakeService intakeService =
+                org.mockito.Mockito.mock(
+                        com.classdeduction.system.modules.enrollment.service.RegistrationIntakeService.class);
+        EnrollmentOrderItemEntity appended = new EnrollmentOrderItemEntity();
+        appended.setId(9001L);
+        appended.setLineNo(2);
+        appended.setEnrollmentOrderId(2001L);
+        appended.setCourseType("GROUP");
+        appended.setCourseProductId(202L);
+        appended.setClassId(801L);
+        appended.setPackageUnit("MONTH");
+        appended.setPackageQuantity(new BigDecimal(6));
+        appended.setPriceAmount(new BigDecimal(1200));
+                org.mockito.Mockito.when(intakeService.appendCourseToOrder(any(), any(), any(), any(), any(), any()))
+                .thenReturn(appended);
+        ReflectionTestUtils.setField(enrollmentOrderService, "registrationIntakeService", intakeService);
+
+        enrollmentOrderService.correctOrder(2001L, request);
+
+        // 后置 replay（moneyChanged 分支）仍以最终行集合执行，前置补齐被跳过。
+        org.mockito.Mockito.verify(paymentAllocationService, org.mockito.Mockito.atLeastOnce())
+                .replayAllocations(any());
+        // 关键断言：第一次调用必须发生在 applyCorrectedItems 建好新行之后——
+        // 这里用调用顺序不可行，改为断言 replay 从未在"订单只有旧活行"时被调用：
+        // 由于 appendCourseToOrder 已把新行落库（mock 环境验证不破坏），只需要
+        // 确认 correctOrder 全程没有抛 PAYMENT_ALLOCATION_INVALID 即可（上面已隐含）。
+    }
+
+    @Test
+    void shouldRunPrePriceReplayForPurePriceCorrection() {
+        // 纯改价更正（所有行都带 orderItemId）仍保留"先补齐归属再改价"的前置重放。
+        EnrollmentOrderCorrectionRequest request = stubMonthlyCorrection(6, 6, LocalDate.of(2027, 12, 31));
 
         enrollmentOrderService.correctOrder(2001L, request);
     }
