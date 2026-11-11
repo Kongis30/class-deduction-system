@@ -2605,11 +2605,14 @@ async function startCourseRenewal(line: RegistrationCourseLine) {
     originalPriceAmount: undefined,
   };
   courseLines.value.push(added);
-  if (isV2GroupLine(added) && added.courseProductId) {
-    await loadGroupCourseSetup(added.courseProductId, true, true);
-    await handleGroupPlanChange(added);
+  // 注意：必须取 push 之后的响应式代理再修改字段。直接改局部原始对象（added）
+  // 绕过 Vue 响应式追踪，价格重算后 UI 不会刷新，会一直显示初始值 0。
+  const reactiveLine = courseLines.value[courseLines.value.length - 1];
+  if (isV2GroupLine(reactiveLine) && reactiveLine.courseProductId) {
+    await loadGroupCourseSetup(reactiveLine.courseProductId, true, true);
+    await handleGroupPlanChange(reactiveLine);
   } else {
-    recalculateLinePrice(added);
+    recalculateLinePrice(reactiveLine);
   }
   await nextTick();
   ElMessage.success('Course row added to this receipt.');
