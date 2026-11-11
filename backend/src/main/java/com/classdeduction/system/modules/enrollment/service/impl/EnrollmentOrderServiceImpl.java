@@ -1508,13 +1508,6 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             throw new BusinessException("ORDER_CANCELLED_NOT_EDITABLE",
                     "Cancelled orders cannot be edited.");
         }
-        if (operator != null && (request.getPayments() != null
-                || participantPaymentsChanged(order.getId(), request.getParticipantBillings())
-                || correctedPaymentAllocationsChanged(request))
-                && !StringUtils.hasText(request.getCorrectionReason())) {
-            throw new BusinessException("CORRECTION_PAYMENT_REASON_REQUIRED",
-                    "Enter a reason for correcting the original payment details.");
-        }
         String beforeSnapshot = correctionLogMapper == null ? null : correctionAuditSnapshot(order);
 
         List<EnrollmentOrderItemEntity> lockedItems = List.of();
@@ -1696,10 +1689,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             log.setBizType("ENROLLMENT_ORDER");
             log.setBizId(order.getId());
             log.setOperationCode("EDIT_RECEIPT");
-            String reason = request.getCorrectionReason();
-            log.setOperationDesc(StringUtils.hasText(reason)
-                    ? "Correct original registration receipt: " + reason.trim().substring(0, Math.min(190, reason.trim().length()))
-                    : "Correct original registration receipt");
+            log.setOperationDesc("Correct original registration receipt");
             Map<String, Object> requestAudit = new LinkedHashMap<>();
             requestAudit.put("before", beforeSnapshot);
             requestAudit.put("changes", request);
@@ -1717,35 +1707,6 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         state.put("payments", listPaymentsByOrderId(order.getId()));
         state.put("receipts", listReceiptsByOrderIds(List.of(order.getId())));
         return jsonHelper.toJson(state);
-    }
-
-    private boolean participantPaymentsChanged(Long orderId,
-                                               List<RegistrationIntakeRequest.ParticipantBillingPayload> billings) {
-        if (billings == null || billings.isEmpty()) return false;
-        Map<Long, PaymentRecordEntity> existing = listPaymentsByOrderId(orderId).stream()
-                .filter(payment -> "PAYMENT".equals(payment.getPaymentType()))
-                .filter(payment -> !"VOIDED".equals(payment.getPaymentStatus()))
-                .collect(Collectors.toMap(PaymentRecordEntity::getId, Function.identity()));
-        for (RegistrationIntakeRequest.ParticipantBillingPayload billing : billings) {
-            if (billing == null || billing.getPayments() == null) continue;
-            for (RegistrationIntakeRequest.PaymentPayload payload : billing.getPayments()) {
-                if (payload == null) return true;
-                PaymentRecordEntity previous = existing.get(payload.getPaymentId());
-                if (previous == null
-                        || !Objects.equals(previous.getPaymentMethod(), payload.getPaymentMethod())
-                        || !sameQuantity(previous.getAmount(), payload.getAmount())
-                        || !Objects.equals(previous.getPaidAt(), payload.getPaidAt())
-                        || !Objects.equals(normalizedPaymentRemark(previous.getRemark()),
-                        normalizedPaymentRemark(payload.getRemark()))) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private String normalizedPaymentRemark(String remark) {
-        return remark == null ? "" : remark.trim();
     }
 
     private boolean correctedPaymentAmountsChanged(Long orderId, EnrollmentOrderCorrectionRequest request) {

@@ -22,9 +22,6 @@ public class EnrollmentOrderCorrectionRequest {
     @Schema(description = "Version of the order when the correction form was opened")
     private Integer expectedVersion;
 
-    @Schema(description = "Why an existing payment record is being corrected")
-    private String correctionReason;
-
     @Schema(description = "Student display name")
     private String studentName;
 
