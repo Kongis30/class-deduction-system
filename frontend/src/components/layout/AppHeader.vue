@@ -53,51 +53,39 @@
                 <span v-if="item.description" class="app-header__tool-item-description">{{ item.description }}</span>
               </el-dropdown-item>
             </template>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
 
-      <!-- 移动端没有侧栏 Settings 入口，并入 Back office 下拉 -->
-      <el-dropdown
-        v-if="appStore.isMobileViewport"
-        trigger="click"
-        :teleported="true"
-        popper-class="app-header__display-settings-menu"
-      >
-        <el-button class="app-header__display-settings" aria-label="Display settings">
-          <el-icon><Setting /></el-icon>
-        </el-button>
-        <template #dropdown>
-          <div class="app-header__settings-panel">
-            <div class="app-header__settings-heading">
-              <strong>Display settings</strong>
-              <span>Choose the layout and text size for this device.</span>
+            <!-- 移动端没有侧栏 Settings 入口，显示设置并入 Back office 下拉 -->
+            <div v-if="appStore.isMobileViewport" class="app-header__tool-group">
+              <el-icon><Setting /></el-icon>
+              <span>Display settings</span>
             </div>
-            <div class="app-header__settings-section">
-              <strong>Layout</strong>
-              <el-radio-group
-                :model-value="appStore.layoutPreference"
-                class="app-header__settings-options"
-                @update:model-value="appStore.setLayoutPreference"
-              >
-                <el-radio-button value="auto">Auto</el-radio-button>
-                <el-radio-button value="mobile">Mobile</el-radio-button>
-                <el-radio-button value="desktop">Desktop</el-radio-button>
-              </el-radio-group>
+            <div v-if="appStore.isMobileViewport" class="app-header__settings-panel">
+              <div class="app-header__settings-section">
+                <strong>Layout</strong>
+                <el-radio-group
+                  :model-value="appStore.layoutPreference"
+                  class="app-header__settings-options"
+                  @update:model-value="appStore.setLayoutPreference"
+                >
+                  <el-radio-button value="auto">Auto</el-radio-button>
+                  <el-radio-button value="mobile">Mobile</el-radio-button>
+                  <el-radio-button value="desktop">Desktop</el-radio-button>
+                </el-radio-group>
+              </div>
+              <div class="app-header__settings-section">
+                <strong>Text size</strong>
+                <el-radio-group
+                  :model-value="appStore.fontSize"
+                  class="app-header__settings-options"
+                  @update:model-value="appStore.setFontSize"
+                >
+                  <el-radio-button value="small">Small</el-radio-button>
+                  <el-radio-button value="medium">Default</el-radio-button>
+                  <el-radio-button value="large">Large</el-radio-button>
+                </el-radio-group>
+              </div>
             </div>
-            <div class="app-header__settings-section">
-              <strong>Text size</strong>
-              <el-radio-group
-                :model-value="appStore.fontSize"
-                class="app-header__settings-options"
-                @update:model-value="appStore.setFontSize"
-              >
-                <el-radio-button value="small">Small</el-radio-button>
-                <el-radio-button value="medium">Default</el-radio-button>
-                <el-radio-button value="large">Large</el-radio-button>
-              </el-radio-group>
-            </div>
-          </div>
+          </el-dropdown-menu>
         </template>
       </el-dropdown>
 
@@ -387,45 +375,11 @@ function resetPasswordForm() {
   color: var(--el-color-danger);
 }
 
-/* ─── 移动端 Display settings 入口 ─────────────────── */
-.app-header__display-settings {
-  min-width: 38px;
-  height: 34px;
-  padding: 0 9px;
-  border-color: #d8e1e8;
-  color: #334155;
-  font-size: 0;
-}
-
-.app-header__display-settings .el-icon {
-  font-size: 16px;
-}
-
-:global(.app-header__display-settings-menu) {
-  max-width: calc(100vw - 24px);
-}
-
+/* ─── 移动端 Display settings（并入 Back office 下拉） ── */
 .app-header__settings-panel {
   display: grid;
-  gap: 14px;
-  min-width: 264px;
-  padding: 14px;
-}
-
-.app-header__settings-heading {
-  display: grid;
-  gap: 3px;
-}
-
-.app-header__settings-heading strong {
-  color: #102a43;
-  font-size: 14px;
-}
-
-.app-header__settings-heading span {
-  color: #64748b;
-  font-size: 12px;
-  line-height: 1.45;
+  gap: 12px;
+  padding: 4px 14px 10px;
 }
 
 .app-header__settings-section {
