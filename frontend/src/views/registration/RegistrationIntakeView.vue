@@ -3444,7 +3444,8 @@ function mapHistoricalParticipantBillingCourseReferences() {
 function toHistoricalCourseLine(
   item: Record<string, unknown> | EnrollmentOrderDetailItem['items'][number],
   index: number,
-  fallback?: EnrollmentOrderDetailItem['items'][number],
+  // null 表示快照行对应的订单行已删除，该行不绑定任何 orderItemId。
+  fallback?: EnrollmentOrderDetailItem['items'][number] | null,
 ): RegistrationCourseLine {
   const periodLabel = getString(fallback, 'periodLabel') || getString(item, 'periodLabel');
   // 订单行中的 0 是有效金额，不能用收据快照中的非零金额覆盖。
@@ -3480,7 +3481,10 @@ function toHistoricalCourseLine(
     rowKey: `history-course-${index}-${getString(item, 'id') || getString(item, 'orderItemId') || getString(fallback, 'id') || 'noid'}`,
     // 订单明细是业务主数据；收据 payload 是历史快照，内部 JSON 的 Snowflake ID
     // 可能已经被原生 JSON.parse 转成不精确的 number，因此 ID 优先取订单明细。
-    orderItemId: getString(fallback, 'id') || getString(item, 'orderItemId') || getString(item, 'id') || undefined,
+    // 快照老格式行可能只带 enrollmentOrderItemId；fallback 为 null（订单行已删除）
+    // 时保持 undefined，让该行按"无订单行"处理，绝不借用别的行的 ID。
+    orderItemId: getString(fallback, 'id') || getString(item, 'orderItemId')
+      || getString(item, 'enrollmentOrderItemId') || getString(item, 'id') || undefined,
     orderLineNo: getNumber(fallback, 'lineNo') || getNumber(item, 'lineNo') || index + 1,
     courseType: getString(item, 'courseType') || getString(fallback, 'courseType'),
     gradeBand: getString(item, 'gradeBand') || getString(fallback, 'gradeBand'),
@@ -3549,12 +3553,26 @@ function findOrderItemFallback(
   item: Record<string, unknown> | EnrollmentOrderDetailItem['items'][number],
   orderItems: EnrollmentOrderDetailItem['items'],
   index: number,
-) {
-  const orderItemId = getString(item, 'orderItemId') || getString(item, 'id');
+): EnrollmentOrderDetailItem['items'][number] | null {
+  // 老快照行可能只带 enrollmentOrderItemId 而没有 orderItemId/id，优先按它精确匹配。
+  const orderItemId = getString(item, 'orderItemId') || getString(item, 'id')
+    || getString(item, 'enrollmentOrderItemId');
   const lineNo = getNumber(item, 'lineNo');
-  return orderItems.find((candidate) => String(candidate.id) === orderItemId)
-    || orderItems.find((candidate) => candidate.lineNo === lineNo)
-    || orderItems[index];
+  const exact = orderItems.find((candidate) => String(candidate.id) === orderItemId);
+  if (exact) return exact;
+  // 行号仅在快照自己声明了 lineNo 时才可信；快照缺 lineNo 时不能拿 undefined 去匹配。
+  const declaredLineNo = lineNo == null ? undefined : lineNo;
+  if (declaredLineNo != null) {
+    const byLineNo = orderItems.find((candidate) => candidate.lineNo === declaredLineNo);
+    if (byLineNo) return byLineNo;
+  }
+  // 索引兜底只在快照行自己没有声明任何 ID/行号线索时才安全（新旧行数一致、按位对齐）。
+  // 快照声明过 ID 或 lineNo 但匹配不到（对应订单行已删除）时，绝不能把索引兜底的
+  // 订单行绑给它——否则多行快照会共用别人的 orderItemId，Edit Receipt 保存时
+  // 误报 "Original course rows cannot be removed or replaced"。
+  const hasIdentityClue = Boolean(orderItemId) || declaredLineNo != null;
+  if (hasIdentityClue) return null;
+  return index < orderItems.length ? orderItems[index] : null;
 }
 
 /**
