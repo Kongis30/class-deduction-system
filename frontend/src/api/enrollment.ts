@@ -91,6 +91,11 @@ export interface EnrollmentOrderCorrectionPayload {
    * 后端按行号把这些行从收据快照中移除；订单金额不受影响。
    */
   removedReceiptItemLineNos?: number[];
+  /**
+   * 死快照行的原订单行 ID（字符串）：老快照行可能缺 lineNo，按行号定位不到时
+   * 后端用快照行的 orderItemId/enrollmentOrderItemId 字符串匹配移除。
+   */
+  removedReceiptItemOrderItemIds?: string[];
   participants?: RegistrationStudentPayload[];
   participantBillings?: RegistrationParticipantBillingPayload[];
   studentName?: string;

@@ -1793,6 +1793,13 @@ const editingCorrection = ref(false);
 const savingCorrection = ref(false);
 const deletingCourseRowKey = ref<string | null>(null);
 const correctionBaseline = ref<EnrollmentOrderCorrectionPayload | null>(null);
+
+/**
+ * 死快照行基线：编辑打开时（startCorrection）记录死行的行号与原订单行 ID。
+ * 死行的 orderItemId 不进更正 payload（避免被当成"原订单行"参与替换校验），
+ * 因此基线与移除信号都从这里取，而不是从 payload items 反推。
+ */
+const detachedBaselineItems = ref<Array<{ lineNo?: number; orderItemId: string }>>([]);
 const correctionSetupLoading = ref(false);
 const lastAttendanceSelection = new WeakMap<RegistrationCourseLine, RegistrationCourseLine['attendanceOption']>();
 const historicalOrder = ref<EnrollmentOrderDetailItem | null>(null);
@@ -2557,10 +2564,14 @@ async function startCorrection() {
         .map((line) => loadGroupClassDates(line, true)));
     }
     correctionBaseline.value = structuredClone(buildCurrentCorrectionPayload());
+    detachedBaselineItems.value = courseLines.value
+      .filter((line) => line.orderItemDetached && line.orderItemId)
+      .map((line) => ({ lineNo: line.orderLineNo, orderItemId: String(line.orderItemId) }));
     courseLines.value.forEach((line) => lastAttendanceSelection.set(line, line.attendanceOption));
   } catch (error) {
     editingCorrection.value = false;
     correctionBaseline.value = null;
+    detachedBaselineItems.value = [];
     ElMessage.error(extractErrorMessage(error));
   } finally {
     correctionSetupLoading.value = false;
@@ -2570,6 +2581,7 @@ async function startCorrection() {
 function cancelCorrection() {
   editingCorrection.value = false;
   correctionBaseline.value = null;
+  detachedBaselineItems.value = [];
   void loadHistoricalOrder();
 }
 
@@ -2690,6 +2702,7 @@ async function saveCorrection() {
     ElMessage.success('Receipt details updated.');
     editingCorrection.value = false;
     correctionBaseline.value = null;
+    detachedBaselineItems.value = [];
     await loadHistoricalOrder();
     return historicalOrder.value !== null;
   } catch (error) {
@@ -2749,22 +2762,6 @@ function correctionImpactSummary(changes: EnrollmentOrderCorrectionPayload): str
   return impact;
 }
 
-/**
- * 找出基线里"死快照行"的行号：行带 orderItemId 但订单活行集合中不存在该 ID。
- * 这些行允许被删除/换课，提交时通过 removedReceiptItemLineNos 通知后端清理快照。
- */
-function detachedCourseLineNos(
-  baselineItems: EnrollmentOrderCorrectionPayload['items'] = [],
-): number[] {
-  const activeOrderItemIds = new Set(
-    (historicalOrder.value?.items ?? []).map((item) => String(item.id)),
-  );
-  return baselineItems
-    .filter((item) => item.orderItemId && !activeOrderItemIds.has(String(item.orderItemId)))
-    .map((item) => item.lineNo)
-    .filter((lineNo): lineNo is number => Number.isInteger(lineNo));
-}
-
 // 更正只提交相对打开页面时实际改变的字段，避免历史订单被当前方案和付款草稿重放。
 function changedCorrectionPayload(current: EnrollmentOrderCorrectionPayload): EnrollmentOrderCorrectionPayload | null {
   const original = correctionBaseline.value;
@@ -2777,10 +2774,14 @@ function changedCorrectionPayload(current: EnrollmentOrderCorrectionPayload): En
       const currentItems = current.items ?? [];
       const previousById = new Map(previousItems.map((item) => [String(item.orderItemId), item]));
       if (JSON.stringify(currentItems) === JSON.stringify(previousItems)) continue;
-      // 基线里的死行（订单行已软删）允许删除：它们本来就不在活订单中，
-      // 删除只影响收据快照展示，提交时以 removedReceiptItemLineNos 通知后端。
-      const detachedLineNos = new Set(detachedCourseLineNos(previousItems));
-      const previousProtectedItems = previousItems.filter((item) => !detachedLineNos.has(item.lineNo));
+      // 死行处理：基线（startCorrection 时记录）中的死行允许被删除或换课，
+      // 它们的原订单行 ID 不进更正 payload。行被删掉、或死行被换课（当前行
+      // 不再携带原 orderItemId）时，都从收据快照移除对应老快照行。老快照行
+      // 可能缺 lineNo（只有 enrollmentOrderItemId 的旧格式行），因此同时传
+      // 行号与原订单行 ID 两路移除信号。
+      const detachedBaseline = detachedBaselineItems.value;
+      const previousProtectedItems = previousItems.filter((item) =>
+        !detachedBaseline.some((detached) => detached.lineNo === item.lineNo));
       const currentIds = currentItems.filter((item) => item.orderItemId).map((item) => String(item.orderItemId));
       if (currentIds.length !== previousProtectedItems.length
           || new Set(currentIds).size !== currentIds.length
@@ -2788,12 +2789,34 @@ function changedCorrectionPayload(current: EnrollmentOrderCorrectionPayload): En
         ElMessage.warning('Original course rows cannot be removed or replaced in Edit Receipt.');
         return null;
       }
-      const removedLineNos = [...detachedLineNos].filter((lineNo) =>
-        !currentItems.some((item) => item.lineNo === lineNo));
+      const detachedLineNos = new Set(detachedBaseline
+        .map((item) => item.lineNo).filter((lineNo): lineNo is number => lineNo != null));
+      const removedLineNos = [...detachedLineNos].filter((lineNo) => {
+        const current = currentItems.find((item) => item.lineNo === lineNo);
+        return !current || !current.orderItemId;
+      });
+      const removedOrderItemIds = detachedBaseline
+        .filter((item) => !currentIds.includes(item.orderItemId))
+        .map((item) => item.orderItemId);
       if (removedLineNos.length > 0) changes.removedReceiptItemLineNos = removedLineNos;
-      const changedItems = currentItems.filter((item) => !item.orderItemId
-        || JSON.stringify(item) !== JSON.stringify(previousById.get(String(item.orderItemId)))).map((item) => {
+      if (removedOrderItemIds.length > 0) changes.removedReceiptItemOrderItemIds = removedOrderItemIds;
+      const detachedLineNoSet = detachedLineNos;
+      const changedItems = currentItems.filter((item) => {
         if (!item.orderItemId) {
+          // 死行未变化时不提交（否则会被后端当成新增课程重复下单）：
+          // 与基线同 lineNo 的死行比较除 orderItemId 外的全部字段。
+          const before = previousItems.find((prev) => prev.lineNo === item.lineNo
+            && detachedLineNoSet.has(prev.lineNo as number));
+          if (!before) return true;
+          const { orderItemId: _beforeId, ...restBefore } = before;
+          const { orderItemId: _currentId, ...restCurrent } = item;
+          return JSON.stringify(restCurrent) !== JSON.stringify(restBefore);
+        }
+        return JSON.stringify(item) !== JSON.stringify(previousById.get(String(item.orderItemId)));
+      }).map((item) => {
+        if (!item.orderItemId) {
+          // 死行换课（后端按新增课程处理）与真正新增行一样全字段提交；
+          // 死行未变化不会走到这里。
           return { ...item, correctionChangedFields: Object.keys(item) };
         }
         const before = previousById.get(String(item.orderItemId));
@@ -3850,6 +3873,7 @@ async function deleteSavedCourseLine(line: RegistrationCourseLine) {
     await deleteEnrollmentOrderItem(orderId, line.orderItemId);
     editingCorrection.value = false;
     correctionBaseline.value = null;
+    detachedBaselineItems.value = [];
     if (removesWholeReceipt) {
       ElMessage.success('The receipt was deleted.');
       await router.replace({ name: 'registration' });
@@ -6465,7 +6489,9 @@ function buildPayload(): RegistrationIntakePayload {
     currencyCode: 'USD',
     creditTopUpAmount: creditTopUpAmount.value > 0 ? roundMoney(creditTopUpAmount.value) : undefined,
     items: isCreditTopUpOnly.value ? [] : courseLines.value.map((line, index) => ({
-      orderItemId: line.orderItemId,
+      // 死快照行的 orderItemId 对应的订单行已软删，不能作为"原订单行"提交，
+      // 否则更正校验会把它算成被替换的原行而误报；清空后按新行/快照移除处理。
+      orderItemId: line.orderItemDetached ? undefined : line.orderItemId,
       renewalSourceOrderItemId: line.renewalSourceOrderItemId,
       lineNo: editingCorrection.value ? line.orderLineNo ?? index + 1 : index + 1,
       registerClass: line.registerClass,

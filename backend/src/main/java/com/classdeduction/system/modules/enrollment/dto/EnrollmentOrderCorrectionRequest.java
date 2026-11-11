@@ -126,6 +126,14 @@ public class EnrollmentOrderCorrectionRequest {
     @Schema(description = "Line numbers of receipt snapshot rows whose order item was already soft-deleted")
     private List<Integer> removedReceiptItemLineNos;
 
+    /**
+     * 死快照行的原订单行 ID：老快照行可能缺 lineNo，无法按行号定位。
+     * 按快照行的 orderItemId / enrollmentOrderItemId 匹配移除（字符串比较，
+     * 兼容快照 JSON 中 Snowflake ID 精度丢失）。
+     */
+    @Schema(description = "Original order item IDs of detached receipt snapshot rows to remove from the snapshot")
+    private List<String> removedReceiptItemOrderItemIds;
+
     @Schema(description = "Editable payment lines. Existing payment rows are updated in place.")
     private List<RegistrationIntakeRequest.PaymentPayload> payments;
 
