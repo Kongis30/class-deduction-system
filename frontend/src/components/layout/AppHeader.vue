@@ -24,45 +24,6 @@
     <div class="app-header__right">
       <PageUsageGuide />
 
-      <!-- 移动端没有侧栏 Settings 按钮，这里补一个显示设置入口 -->
-      <el-popover v-if="appStore.isMobileViewport" placement="bottom-end" :width="280" trigger="click" popper-class="app-header__settings-popper">
-        <template #reference>
-          <el-button class="app-header__settings-trigger" aria-label="Open settings">
-            <el-icon><Setting /></el-icon>
-          </el-button>
-        </template>
-        <div class="app-header__settings-panel">
-          <div class="app-header__settings-heading">
-            <strong>Display settings</strong>
-            <span>Choose the layout and text size for this device.</span>
-          </div>
-          <div class="app-header__settings-section">
-            <strong>Layout</strong>
-            <el-radio-group
-              :model-value="appStore.layoutPreference"
-              class="app-header__settings-options"
-              @update:model-value="appStore.setLayoutPreference"
-            >
-              <el-radio-button value="auto">Auto</el-radio-button>
-              <el-radio-button value="mobile">Mobile</el-radio-button>
-              <el-radio-button value="desktop">Desktop</el-radio-button>
-            </el-radio-group>
-          </div>
-          <div class="app-header__settings-section">
-            <strong>Text size</strong>
-            <el-radio-group
-              :model-value="appStore.fontSize"
-              class="app-header__settings-options"
-              @update:model-value="appStore.setFontSize"
-            >
-              <el-radio-button value="small">Small</el-radio-button>
-              <el-radio-button value="medium">Default</el-radio-button>
-              <el-radio-button value="large">Large</el-radio-button>
-            </el-radio-group>
-          </div>
-        </div>
-      </el-popover>
-
       <el-dropdown
         v-if="adminToolGroups.length"
         trigger="click"
@@ -93,6 +54,50 @@
               </el-dropdown-item>
             </template>
           </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+
+      <!-- 移动端没有侧栏 Settings 入口，并入 Back office 下拉 -->
+      <el-dropdown
+        v-if="appStore.isMobileViewport"
+        trigger="click"
+        :teleported="true"
+        popper-class="app-header__display-settings-menu"
+      >
+        <el-button class="app-header__display-settings" aria-label="Display settings">
+          <el-icon><Setting /></el-icon>
+        </el-button>
+        <template #dropdown>
+          <div class="app-header__settings-panel">
+            <div class="app-header__settings-heading">
+              <strong>Display settings</strong>
+              <span>Choose the layout and text size for this device.</span>
+            </div>
+            <div class="app-header__settings-section">
+              <strong>Layout</strong>
+              <el-radio-group
+                :model-value="appStore.layoutPreference"
+                class="app-header__settings-options"
+                @update:model-value="appStore.setLayoutPreference"
+              >
+                <el-radio-button value="auto">Auto</el-radio-button>
+                <el-radio-button value="mobile">Mobile</el-radio-button>
+                <el-radio-button value="desktop">Desktop</el-radio-button>
+              </el-radio-group>
+            </div>
+            <div class="app-header__settings-section">
+              <strong>Text size</strong>
+              <el-radio-group
+                :model-value="appStore.fontSize"
+                class="app-header__settings-options"
+                @update:model-value="appStore.setFontSize"
+              >
+                <el-radio-button value="small">Small</el-radio-button>
+                <el-radio-button value="medium">Default</el-radio-button>
+                <el-radio-button value="large">Large</el-radio-button>
+              </el-radio-group>
+            </div>
+          </div>
         </template>
       </el-dropdown>
 
@@ -382,22 +387,29 @@ function resetPasswordForm() {
   color: var(--el-color-danger);
 }
 
-/* ─── 移动端 Settings 入口 ─────────────────────────── */
-.app-header__settings-trigger {
+/* ─── 移动端 Display settings 入口 ─────────────────── */
+.app-header__display-settings {
   min-width: 38px;
   height: 34px;
   padding: 0 9px;
   border-color: #d8e1e8;
   color: #334155;
+  font-size: 0;
 }
 
-:global(.app-header__settings-popper) {
+.app-header__display-settings .el-icon {
+  font-size: 16px;
+}
+
+:global(.app-header__display-settings-menu) {
   max-width: calc(100vw - 24px);
 }
 
 .app-header__settings-panel {
   display: grid;
   gap: 14px;
+  min-width: 264px;
+  padding: 14px;
 }
 
 .app-header__settings-heading {
