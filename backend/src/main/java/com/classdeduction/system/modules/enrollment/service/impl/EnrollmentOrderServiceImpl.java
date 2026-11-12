@@ -4718,7 +4718,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 ? jsonHelper.fromJson(participant.getDiscountDetail(), new TypeReference<List<Map<String, Object>>>() {})
                 : Collections.emptyList();
         boolean hasCourseAssignments = discounts != null && discounts.stream().filter(Objects::nonNull)
-                .anyMatch(line -> line.get("orderItemId") != null || line.get("orderItemLineNo") != null || line.get("lineNo") != null);
+                .anyMatch(line -> line.get("orderItemId") != null || line.get("enrollmentOrderItemId") != null
+                        || line.get("orderItemLineNo") != null || line.get("lineNo") != null);
         if (hasCourseAssignments) {
             return discounts.stream().filter(Objects::nonNull)
                     .filter(line -> belongsToOrderItem(line, item))
@@ -6267,6 +6268,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
     private boolean belongsToOrderItem(Map<?, ?> line, EnrollmentOrderItemEntity target) {
         return Objects.equals(String.valueOf(line.get("orderItemId")), String.valueOf(target.getId()))
+                // 老快照行只有 enrollmentOrderItemId（早期格式），删除课程行时按它兜底匹配，
+                // 避免快照行残留成"死行"（订单行已删、快照行还在）。
+                || Objects.equals(String.valueOf(line.get("enrollmentOrderItemId")), String.valueOf(target.getId()))
                 || target.getLineNo() != null && Objects.equals(
                         String.valueOf(line.get("orderItemLineNo")), String.valueOf(target.getLineNo()))
                 || target.getLineNo() != null && Objects.equals(
