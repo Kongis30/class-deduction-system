@@ -1118,7 +1118,7 @@
                         />
                       </label>
                       <el-button
-                        v-if="!editingCorrection && activePaymentLines.length > 1 && canEditCoursePaymentDetails(payment, line.rowKey)"
+                        v-if="canRemoveCoursePayment(payment, line.rowKey)"
                         class="remove-adjustment-row"
                         text
                         type="danger"
@@ -2846,10 +2846,8 @@ function changedCorrectionPayload(current: EnrollmentOrderCorrectionPayload): En
       continue;
     }
     if (key === 'payments' && JSON.stringify(current.payments) !== JSON.stringify(original.payments)) {
-      if (!preservesOriginalCorrectionPayments(current.payments ?? [], original.payments ?? [])) {
-        ElMessage.warning('Existing payments cannot be removed or replaced. Use the refund workflow for returned money.');
-        return null;
-      }
+      // Edit Receipt 允许任意修改历史报名信息：付款可以新增、改金额、改日期、也可以删除。
+      // 删除的付款由后端软删并重算已收金额。
       changes.payments = annotateCorrectionPayments(current.payments ?? [], original.payments ?? []);
       continue;
     }
@@ -2859,13 +2857,6 @@ function changedCorrectionPayload(current: EnrollmentOrderCorrectionPayload): En
       if (currentBillings.length !== previousBillings.length
           || currentBillings.some((billing) => !previousBillings.some((before) => before.participantIndex === billing.participantIndex))) {
         ElMessage.warning('Participants cannot be added or removed in Edit Receipt.');
-        return null;
-      }
-      if (currentBillings.some((billing) => {
-        const before = previousBillings.find((item) => item.participantIndex === billing.participantIndex);
-        return !preservesOriginalCorrectionPayments(billing.payments ?? [], before?.payments ?? []);
-      })) {
-        ElMessage.warning('Existing payments cannot be removed or replaced. Use the refund workflow for returned money.');
         return null;
       }
       changes.participantBillings = currentBillings.map((billing) => {
@@ -2899,14 +2890,6 @@ function changedCorrectionPayload(current: EnrollmentOrderCorrectionPayload): En
   }
   if (Object.keys(changes).length === 1) ElMessage.info('No changes to save.');
   return Object.keys(changes).length > 1 ? changes : null;
-}
-
-function preservesOriginalCorrectionPayments(current: RegistrationPaymentPayload[], previous: RegistrationPaymentPayload[]) {
-  const previousIds = previous.map((payment) => String(payment.paymentId));
-  const currentIds = current.flatMap((payment) => payment.paymentId == null ? [] : [String(payment.paymentId)]);
-  return currentIds.length === previousIds.length
-    && new Set(currentIds).size === currentIds.length
-    && previousIds.every((paymentId) => currentIds.includes(paymentId));
 }
 
 function annotateCorrectionPayments(current: RegistrationPaymentPayload[], previous: RegistrationPaymentPayload[]) {
@@ -4492,17 +4475,6 @@ function addPaymentLine(courseRowKey?: string) {
   payments.value.push(createPaymentLine(courseRowKey));
 }
 
-function removePaymentLine(index: number) {
-  if (payments.value.length <= 1) return;
-  const editable = payments.value.filter((payment) => !isRefundPayment(payment));
-  const target = editable[index];
-  if (!target) return;
-  const actualIndex = payments.value.indexOf(target);
-  if (actualIndex >= 0) {
-    payments.value.splice(actualIndex, 1);
-  }
-}
-
 function addActivePaymentLine(courseRowKey?: string) {
   if (courseLines.value.length > 1
       && activePaymentLines.value.some((payment) =>
@@ -4521,7 +4493,6 @@ function addActivePaymentLine(courseRowKey?: string) {
 }
 
 function removeActivePaymentLine(payment: PaymentLine) {
-  if (editingCorrection.value) return;
   const index = activePaymentLines.value.indexOf(payment);
   if (index < 0) return;
   const participantIndex = activeParticipantBilling.value?.participantIndex;
@@ -4529,7 +4500,20 @@ function removeActivePaymentLine(payment: PaymentLine) {
     removeParticipantPayment(participantIndex, index);
     return;
   }
-  removePaymentLine(index);
+  const actualIndex = payments.value.indexOf(payment);
+  if (actualIndex >= 0) {
+    // Edit Receipt 允许把付款行删到零：收据随后按剩余付款重算已收金额。
+    payments.value.splice(actualIndex, 1);
+  }
+}
+
+/**
+ * 付款行的 × 是否可见。
+ * Edit Receipt 允许任意修改历史报名（含已删除已保存的付款），因此更正模式下
+ * 只要有可编辑的付款行就显示删除入口；退款流水不可删除。
+ */
+function canRemoveCoursePayment(payment: PaymentLine, courseRowKey: string) {
+  return canEditCoursePaymentDetails(payment, courseRowKey);
 }
 
 /** 接送开关记录本次课程需求，费用按输入金额计入；同步旧字段以兼容历史收据和后端 DTO。 */
@@ -6428,12 +6412,13 @@ function addParticipantPayment(index: number, courseRowKey?: string) {
 
 function removeParticipantPayment(index: number, lineIndex: number) {
   const billing = participantBillings.value[index - 1];
-  if (!billing || billing.payments.length <= 1) return;
+  if (!billing) return;
   const editable = billing.payments.filter((payment) => !isRefundPayment(payment));
   const target = editable[lineIndex];
   if (!target) return;
   const actualIndex = billing.payments.indexOf(target);
   if (actualIndex >= 0) {
+    // Edit Receipt 允许把付款行删到零。
     billing.payments.splice(actualIndex, 1);
   }
 }

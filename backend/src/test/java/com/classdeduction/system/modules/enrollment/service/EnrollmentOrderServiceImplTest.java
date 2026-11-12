@@ -1810,6 +1810,64 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
+    void shouldSoftDeletePaymentOmittedFromCorrectionAndRecalculateReceived() {
+        // Edit Receipt 允许任意修改历史报名：更正里未出现的已保存付款视为被删除，
+        // 软删付款流水 + 清分摊，订单已收金额按剩余付款重算（这里删光 → 0）。
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setOrderStatus("CONFIRMED");
+        order.setPaymentStatus("PAID");
+        order.setStudentId(101L);
+        order.setSignupDate(LocalDate.of(2026, 9, 14));
+        order.setAmountDue(new BigDecimal("1000.00"));
+        order.setReceivedAmount(new BigDecimal("1000.00"));
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(studentMapper.selectById(101L)).thenReturn(buildStudent());
+        when(enrollmentOrderItemMapper.selectList(any()))
+                .thenAnswer(inv -> new java.util.ArrayList<>(java.util.List.of()));
+        lenient().when(receiptRecordMapper.selectList(any())).thenReturn(java.util.List.of());
+
+        PaymentRecordEntity kept = paymentRecord(5001L, new BigDecimal("400.00"));
+        PaymentRecordEntity removed = paymentRecord(5002L, new BigDecimal("600.00"));
+        when(paymentRecordMapper.selectList(any()))
+                .thenReturn(new java.util.ArrayList<>(java.util.List.of(kept, removed)));
+
+        EnrollmentOrderCorrectionRequest request = new EnrollmentOrderCorrectionRequest();
+        RegistrationIntakeRequest.PaymentPayload keptPayload = new RegistrationIntakeRequest.PaymentPayload();
+        keptPayload.setPaymentId(5001L);
+        keptPayload.setPaymentMethod("ZELLE");
+        keptPayload.setAmount(new BigDecimal("400.00"));
+        keptPayload.setCorrectionChangedFields(java.util.List.of());
+        request.setPayments(java.util.List.of(keptPayload));
+
+        enrollmentOrderService.correctOrder(2001L, request);
+
+        // 未提交的付款被软删：先标记 VOIDED 再逻辑删除。
+        verify(paymentRecordMapper).updateById(removed);
+        assertThat(removed.getPaymentStatus()).isEqualTo("VOIDED");
+        verify(paymentRecordMapper).deleteById(5002L);
+        // 保留下来的付款不被删除。
+        verify(paymentRecordMapper, never()).deleteById(5001L);
+        // 订单已收金额按剩余付款重算。
+        ArgumentCaptor<EnrollmentOrderEntity> orderCaptor = ArgumentCaptor.forClass(EnrollmentOrderEntity.class);
+        verify(enrollmentOrderMapper, org.mockito.Mockito.atLeastOnce()).updateById(orderCaptor.capture());
+        assertThat(orderCaptor.getValue().getReceivedAmount()).isEqualByComparingTo("400.00");
+    }
+
+    private PaymentRecordEntity paymentRecord(Long id, BigDecimal amount) {
+        PaymentRecordEntity payment = new PaymentRecordEntity();
+        payment.setId(id);
+        payment.setEnrollmentOrderId(2001L);
+        payment.setPaymentNo("PMT-" + id);
+        payment.setPaymentMethod("ZELLE");
+        payment.setPaymentType("PAYMENT");
+        payment.setPaymentStatus("PAID");
+        payment.setAmount(amount);
+        payment.setPaidAt(java.time.LocalDateTime.of(2026, 9, 14, 10, 0));
+        return payment;
+    }
+
+    @Test
     void shouldRunPrePriceReplayForPurePriceCorrection() {
         // 纯改价更正（所有行都带 orderItemId）仍保留"先补齐归属再改价"的前置重放。
         EnrollmentOrderCorrectionRequest request = stubMonthlyCorrection(6, 6, LocalDate.of(2027, 12, 31));

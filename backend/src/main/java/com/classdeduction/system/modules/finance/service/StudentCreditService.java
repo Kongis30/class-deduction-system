@@ -34,4 +34,11 @@ public interface StudentCreditService {
 
     void consumeForPayment(Long studentId, BigDecimal amount, Long orderId, Long paymentRecordId,
                            Long handledByUserId, String handledByName, String remark);
+
+    /**
+     * 撤销一笔 Credit 抵扣付款时，把当时扣掉的额度退回学生 Credit。
+     * 删除已保存付款（Edit Receipt 任意修改场景）时由订单服务调用。
+     */
+    void restoreConsumedCredit(Long studentId, BigDecimal amount, Long orderId, Long paymentRecordId,
+                               Long handledByUserId, String handledByName, String remark);
 }

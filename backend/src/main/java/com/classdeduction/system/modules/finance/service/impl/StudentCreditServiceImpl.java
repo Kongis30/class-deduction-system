@@ -24,6 +24,7 @@ public class StudentCreditServiceImpl implements StudentCreditService {
 
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     private static final String CREDIT_USED = "CREDIT_USED";
+    private static final String CREDIT_RESTORED = "CREDIT_RESTORED";
     private static final String TOP_UP_CREDIT = "TOP_UP_CREDIT";
     private static final String TOP_UP_REVERSAL = "TOP_UP_REVERSAL";
 
@@ -146,6 +147,21 @@ public class StudentCreditServiceImpl implements StudentCreditService {
                     "Student Credit balance is not enough for this payment.");
         }
         append(studentId, normalized.negate(), CREDIT_USED, orderId, paymentRecordId,
+                handledByUserId, handledByName, remark);
+    }
+
+    @Override
+    public void restoreConsumedCredit(Long studentId, BigDecimal amount, Long orderId, Long paymentRecordId,
+                                      Long handledByUserId, String handledByName, String remark) {
+        BigDecimal normalized = defaultAmount(amount);
+        if (normalized.compareTo(ZERO) <= 0) {
+            // 删除非 Credit 抵扣付款时无需归还额度，直接跳过。
+            return;
+        }
+        if (studentId == null || ledgerMapper.lockStudent(studentId) == null) {
+            throw new BusinessException("CREDIT_STUDENT_REQUIRED", "The Credit student does not exist.");
+        }
+        append(studentId, normalized, CREDIT_RESTORED, orderId, paymentRecordId,
                 handledByUserId, handledByName, remark);
     }
 

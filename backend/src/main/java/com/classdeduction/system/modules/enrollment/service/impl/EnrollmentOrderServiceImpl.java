@@ -1641,12 +1641,14 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 syncOrderTransportFromCourses(order);
             }
         }
+        boolean paymentRemoved = false;
         if (request.getParticipantBillings() != null && !request.getParticipantBillings().isEmpty()) {
-            reconcileCorrectedParticipantPayments(order, request.getParticipantBillings());
+            paymentRemoved = reconcileCorrectedParticipantPayments(order, request.getParticipantBillings());
         } else if (request.getPayments() != null) {
-            reconcileCorrectedPayments(order, request.getPayments());
+            paymentRemoved = reconcileCorrectedPayments(order, request.getPayments());
         }
-        boolean moneyChanged = itemAmountsChanged || correctedPaymentAmountsChanged(order.getId(), request)
+        boolean moneyChanged = paymentRemoved
+                || itemAmountsChanged || correctedPaymentAmountsChanged(order.getId(), request)
                 || correctedPaymentAllocationsChanged(request)
                 || correctedParticipantDiscountsChanged(order.getId(), request.getParticipantBillings())
                 || request.getExtraFees() != null || request.getExtraFeeAmount() != null
@@ -1945,18 +1947,13 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (changedStudentField(payload, "dropoffAddress")) target.setDropoffAddressSnapshot(student.getDropoffAddress());
     }
 
-    private void reconcileCorrectedParticipantPayments(EnrollmentOrderEntity order,
-                                                       List<RegistrationIntakeRequest.ParticipantBillingPayload> billings) {
+    private boolean reconcileCorrectedParticipantPayments(EnrollmentOrderEntity order,
+                                                          List<RegistrationIntakeRequest.ParticipantBillingPayload> billings) {
         Map<Integer, EnrollmentOrderItemEntity> itemsByLineNo = listOrderItemsByOrderId(order.getId()).stream()
                 .collect(Collectors.toMap(EnrollmentOrderItemEntity::getLineNo, Function.identity(),
                         (first, ignored) -> first));
-        List<PaymentRecordEntity> existing = paymentRecordMapper.selectList(
-                new LambdaQueryWrapper<PaymentRecordEntity>()
-                        .eq(PaymentRecordEntity::getEnrollmentOrderId, order.getId())
-                        .eq(PaymentRecordEntity::getPaymentType, "PAYMENT")
-                        .ne(PaymentRecordEntity::getPaymentStatus, "VOIDED")
-                        .orderByAsc(PaymentRecordEntity::getPaidAt)
-                        .orderByAsc(PaymentRecordEntity::getId));
+        List<PaymentRecordEntity> existing = listActiveCorrectionPayments(order.getId());
+        boolean removed = false;
         for (RegistrationIntakeRequest.ParticipantBillingPayload billing : billings) {
             if (billing == null || billing.getParticipantIndex() == null) continue;
             List<PaymentRecordEntity> participantPayments = existing.stream()
@@ -1965,8 +1962,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                     .toList();
             List<RegistrationIntakeRequest.PaymentPayload> payloads = billing.getPayments() == null
                     ? Collections.emptyList() : billing.getPayments();
-            reconcileCorrectionPaymentRows(order, participantPayments, payloads, billing.getParticipantIndex(), itemsByLineNo);
+            removed |= reconcileCorrectionPaymentRows(order, participantPayments, payloads,
+                    billing.getParticipantIndex(), itemsByLineNo);
         }
+        return removed;
     }
 
     private void applyCorrectedParticipantBillingSnapshots(
@@ -3146,26 +3145,31 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         return value == null ? 0 : value;
     }
 
-    private void reconcileCorrectedPayments(EnrollmentOrderEntity order,
-                                            List<RegistrationIntakeRequest.PaymentPayload> payloads) {
+    private boolean reconcileCorrectedPayments(EnrollmentOrderEntity order,
+                                               List<RegistrationIntakeRequest.PaymentPayload> payloads) {
         Map<Integer, EnrollmentOrderItemEntity> itemsByLineNo = listOrderItemsByOrderId(order.getId()).stream()
                 .collect(Collectors.toMap(EnrollmentOrderItemEntity::getLineNo, item -> item,
                         (left, right) -> left));
-        List<PaymentRecordEntity> existing = paymentRecordMapper.selectList(new LambdaQueryWrapper<PaymentRecordEntity>()
-                .eq(PaymentRecordEntity::getEnrollmentOrderId, order.getId())
+        List<PaymentRecordEntity> existing = listActiveCorrectionPayments(order.getId());
+        return reconcileCorrectionPaymentRows(order, existing, payloads, null, itemsByLineNo);
+    }
+
+    /** 本订单仍有效的正向付款流水（更正按稳定 ID 对应）。 */
+    private List<PaymentRecordEntity> listActiveCorrectionPayments(Long orderId) {
+        return paymentRecordMapper.selectList(new LambdaQueryWrapper<PaymentRecordEntity>()
+                .eq(PaymentRecordEntity::getEnrollmentOrderId, orderId)
                 .eq(PaymentRecordEntity::getPaymentType, "PAYMENT")
                 .ne(PaymentRecordEntity::getPaymentStatus, "VOIDED")
                 .orderByAsc(PaymentRecordEntity::getPaidAt)
                 .orderByAsc(PaymentRecordEntity::getId));
-        reconcileCorrectionPaymentRows(order, existing, payloads, null, itemsByLineNo);
     }
 
     /** 付款按稳定 ID 对应；顺序变化不得把一笔真实付款改写成另一笔。 */
-    private void reconcileCorrectionPaymentRows(EnrollmentOrderEntity order,
-                                                List<PaymentRecordEntity> existing,
-                                                List<RegistrationIntakeRequest.PaymentPayload> payloads,
-                                                Integer participantIndex,
-                                                Map<Integer, EnrollmentOrderItemEntity> itemsByLineNo) {
+    private boolean reconcileCorrectionPaymentRows(EnrollmentOrderEntity order,
+                                                   List<PaymentRecordEntity> existing,
+                                                   List<RegistrationIntakeRequest.PaymentPayload> payloads,
+                                                   Integer participantIndex,
+                                                   Map<Integer, EnrollmentOrderItemEntity> itemsByLineNo) {
         Map<Long, PaymentRecordEntity> existingById = existing.stream()
                 .collect(Collectors.toMap(PaymentRecordEntity::getId, Function.identity()));
         Set<Long> retainedIds = new HashSet<>();
@@ -3210,11 +3214,34 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 paymentAllocationService.replaceExplicitAllocations(payment, order.getId(), allocations);
             }
         }
+        boolean removed = false;
         for (PaymentRecordEntity payment : existing) {
             if (retainedIds.contains(payment.getId())) continue;
-            throw new BusinessException("CORRECTION_PAYMENT_MISSING",
-                    "An existing payment is missing from this correction. Use the refund workflow for returned money.");
+            // Edit Receipt 允许任意修改历史报名信息（含已保存付款）：未出现在本次
+            // 更正里的付款视为被删除，软删付款记录并清掉课程分摊，由金额重算
+            // 同步订单已收金额与付款状态。
+            removeCorrectionPayment(payment);
+            removed = true;
         }
+        return removed;
+    }
+
+    /**
+     * 更正里删除一笔已保存付款：软删付款流水、移除课程分摊。
+     * 保留记录本身而非物理删除，便于审计历史；若原付款用 Credit 抵扣，
+     * 归还当时扣掉的 Credit 额度。
+     */
+    private void removeCorrectionPayment(PaymentRecordEntity payment) {
+        paymentAllocationMapper.delete(new LambdaQueryWrapper<PaymentAllocationEntity>()
+                .eq(PaymentAllocationEntity::getPaymentRecordId, payment.getId()));
+        if (StudentCreditService.PAYMENT_METHOD_CODE.equalsIgnoreCase(payment.getPaymentMethod())) {
+            studentCreditService.restoreConsumedCredit(null, defaultAmount(payment.getAmount()),
+                    payment.getEnrollmentOrderId(), payment.getId(), payment.getHandledByUserId(),
+                    payment.getHandledByName(), "Payment removed by receipt correction");
+        }
+        payment.setPaymentStatus("VOIDED");
+        paymentRecordMapper.updateById(payment);
+        paymentRecordMapper.deleteById(payment.getId());
     }
 
     /** 在当前报名订单中追加付款流水；Edit Receipt 的付款不会另建订单或收据。 */
