@@ -1378,6 +1378,20 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     }
 
     private PaymentRecordVO toPaymentVO(PaymentRecordEntity item) {
+        // 活行分摊 + 软删分摊一起返回：删除课程行时只软删分摊、不改付款金额，
+        // 软删行保留"这笔付款历史上属于哪门课"的行级归属，前端据此认领卡片。
+        Map<Boolean, List<PaymentAllocationEntity>> byDeleted = paymentAllocationMapper
+                .selectAllByOrderIdIncludingDeleted(item.getEnrollmentOrderId()).stream()
+                .filter(allocation -> java.util.Objects.equals(allocation.getPaymentRecordId(), item.getId()))
+                .collect(Collectors.partitioningBy(allocation ->
+                        allocation.getIsDeleted() != null && allocation.getIsDeleted() == 1));
+        List<PaymentRecordVO.CourseAllocationVO> allocations = new ArrayList<>();
+        byDeleted.getOrDefault(false, List.of()).forEach(allocation -> allocations
+                .add(new PaymentRecordVO.CourseAllocationVO(
+                        allocation.getEnrollmentOrderItemId(), allocation.getAmount(), false)));
+        byDeleted.getOrDefault(true, List.of()).forEach(allocation -> allocations
+                .add(new PaymentRecordVO.CourseAllocationVO(
+                        allocation.getEnrollmentOrderItemId(), allocation.getAmount(), true)));
         return PaymentRecordVO.builder()
                 .id(item.getId())
                 .paymentNo(item.getPaymentNo())
@@ -1389,12 +1403,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .paidAt(item.getPaidAt())
                 .handledByName(item.getHandledByName())
                 .remark(item.getRemark())
-                .allocations(paymentAllocationMapper.selectList(new LambdaQueryWrapper<PaymentAllocationEntity>()
-                                .eq(PaymentAllocationEntity::getPaymentRecordId, item.getId()))
-                        .stream()
-                        .map(allocation -> new PaymentRecordVO.CourseAllocationVO(
-                                allocation.getEnrollmentOrderItemId(), allocation.getAmount()))
-                        .toList())
+                .allocations(allocations)
                 .build();
     }
 
@@ -3667,6 +3676,11 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (payments == null) {
             payments = Collections.emptyList();
         }
+        // 分摊归属包含软删行（删除课程行时只软删分摊、不改付款金额），
+        // 让收据快照保留"这笔付款历史上属于哪门课"的行级信息。
+        Map<Long, List<PaymentAllocationEntity>> allocationsByPaymentId = listAllAllocationsIncludingDeleted(orderId)
+                .stream()
+                .collect(Collectors.groupingBy(PaymentAllocationEntity::getPaymentRecordId));
         return payments.stream()
                 .filter(item -> item.getAmount() != null && item.getAmount().compareTo(ZERO_AMOUNT) != 0
                         && !"VOIDED".equals(item.getPaymentStatus()))
@@ -3682,8 +3696,27 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                     payment.put("paidAt", item.getPaidAt());
                     payment.put("handledByName", item.getHandledByName());
                     payment.put("remark", item.getRemark());
+                    List<PaymentAllocationEntity> allocations = allocationsByPaymentId
+                            .getOrDefault(item.getId(), Collections.emptyList());
+                    if (!allocations.isEmpty()) {
+                        List<Map<String, Object>> allocationLines = allocations.stream()
+                                .map(allocation -> {
+                                    Map<String, Object> line = new LinkedHashMap<>();
+                                    line.put("enrollmentOrderItemId", allocation.getEnrollmentOrderItemId());
+                                    line.put("amount", allocation.getAmount());
+                                    line.put("deleted", Boolean.TRUE.equals(
+                                            allocation.getIsDeleted() != null && allocation.getIsDeleted() == 1));
+                                    return line;
+                                }).toList();
+                        payment.put("allocations", allocationLines);
+                    }
                     return payment;
                 }).toList();
+    }
+
+    /** 含软删行的分摊查询：TableLogic 默认过滤 is_deleted=1，收据快照要历史归属。 */
+    private List<PaymentAllocationEntity> listAllAllocationsIncludingDeleted(Long orderId) {
+        return paymentAllocationMapper.selectAllByOrderIdIncludingDeleted(orderId);
     }
 
     /** 混合报名收据的 Credit 充值属于独立订单，但仍需保留在本张收据的展示金额中。 */

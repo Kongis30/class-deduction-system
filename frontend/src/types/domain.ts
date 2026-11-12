@@ -503,6 +503,8 @@ export interface PaymentRecordItem {
   allocations?: Array<{
     enrollmentOrderItemId: EntityId;
     amount: number;
+    /** 软删分摊：付款历史上归属该课程行，但课程行已删除（Edit Receipt 展示用）。 */
+    deleted?: boolean;
   }>;
 }
 

@@ -3341,6 +3341,11 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
       const onlyCourseAllocation = allocatedCourses[0];
       const allocationMatchesPayment = onlyCourseAllocation
         && Math.abs(roundMoney(numeric(payment.amount) - numeric(courseAllocations[onlyCourseAllocation.rowKey]))) <= 0.01;
+      // 软删分摊（deleted=true）是删除课程行留下的历史归属：付款卡片仍然
+      // 挂在死行名下，删死行时随行一起删除，不挪给其他课程。
+      const hasDeletedAllocation = (payment.allocations ?? []).some((allocation) =>
+        allocation.deleted && courseLines.value.some((line) =>
+          String(line.orderItemId) === String(allocation.enrollmentOrderItemId)));
       return {
         rowKey: `payment-${payment.id}`,
         paymentId: payment.id,
@@ -3349,7 +3354,12 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
         paidAt: normalizeDate(payment.paidAt),
         originalPaidAt: payment.paidAt,
         isHistorical: true,
-        courseRowKey: allocatedCourses.length === 1 && allocationMatchesPayment ? onlyCourseAllocation?.rowKey : undefined,
+        courseRowKey: (allocatedCourses.length === 1 && allocationMatchesPayment) || hasDeletedAllocation
+          ? (hasDeletedAllocation
+            ? courseLines.value.find((line) => (payment.allocations ?? []).some((allocation) =>
+                allocation.deleted && String(line.orderItemId) === String(allocation.enrollmentOrderItemId)))?.rowKey
+            : onlyCourseAllocation?.rowKey)
+          : undefined,
         participantIndex: payment.participantIndex,
         handledByName: payment.handledByName,
         remark: payment.remark,
@@ -3894,19 +3904,24 @@ function removeCourseLine(index: number) {
   }
   const line = courseLines.value[index];
   if (!line) return;
-  // 死快照行的订单行早已软删，快照上的折扣/付款分摊只是展示数据，删除不受分摊约束。
-  if (!line.orderItemDetached) {
-    const hasDiscount = discounts.value.some((discount) =>
-      discount.courseRowKey === line.rowKey && numeric(discount.amount) > 0);
-    const hasPayment = payments.value.some((payment) =>
-      numeric(payment.courseAllocations?.[line.rowKey]) > 0);
-    const hasParticipantBilling = participantBillings.value.some((billing) =>
-      billing.discounts.some((discount) => discount.courseRowKey === line.rowKey && numeric(discount.amount) > 0)
-      || billing.payments.some((payment) => numeric(payment.courseAllocations?.[line.rowKey]) > 0));
-    if (hasDiscount || hasPayment || hasParticipantBilling) {
-      ElMessage.warning('Move this course’s discount and payment allocations before removing it.');
-      return;
-    }
+  // 死快照行的订单行早已软删，快照上的折扣/付款分摊只是展示数据：
+  // 删除该行时，归属它的付款卡片和折扣卡片一起删掉（不挪到其他课程），
+  // 保存时由 removedReceiptItemLineNos 把老快照行一并移出收据。
+  if (line.orderItemDetached) {
+    removeDetachedCourseCards(line);
+    courseLines.value.splice(index, 1);
+    return;
+  }
+  const hasDiscount = discounts.value.some((discount) =>
+    discount.courseRowKey === line.rowKey && numeric(discount.amount) > 0);
+  const hasPayment = payments.value.some((payment) =>
+    numeric(payment.courseAllocations?.[line.rowKey]) > 0);
+  const hasParticipantBilling = participantBillings.value.some((billing) =>
+    billing.discounts.some((discount) => discount.courseRowKey === line.rowKey && numeric(discount.amount) > 0)
+    || billing.payments.some((payment) => numeric(payment.courseAllocations?.[line.rowKey]) > 0));
+  if (hasDiscount || hasPayment || hasParticipantBilling) {
+    ElMessage.warning('Move this course’s discount and payment allocations before removing it.');
+    return;
   }
   const nextCourse = courseLines.value.find((candidate) => candidate.rowKey !== line.rowKey);
   payments.value.forEach((payment) => {
@@ -3934,6 +3949,24 @@ function removeCourseLine(index: number) {
     });
   });
   courseLines.value.splice(index, 1);
+}
+
+/**
+ * 删除死快照行时同步删掉归属它的付款/折扣卡片。
+ * 死行的订单行已软删，其付款分摊只剩软删记录（历史归属），在页面上
+ * 表现为付款卡片的 courseAllocations 指向该行；这些卡片随行一起删除，
+ * 不再挪到其他课程，避免"删课程 1 却动到课程 2 信息"的错乱。
+ */
+function removeDetachedCourseCards(line: RegistrationCourseLine) {
+  const ownedByLine = (ownerRowKey: string | undefined, allocations: Record<string, number> | undefined) =>
+    ownerRowKey === line.rowKey || numeric(allocations?.[line.rowKey]) > 0;
+  payments.value = payments.value.filter((payment) => !ownedByLine(payment.courseRowKey, payment.courseAllocations));
+  discounts.value = discounts.value.filter((discount) => discount.courseRowKey !== line.rowKey);
+  participantBillings.value.forEach((billing) => {
+    billing.discounts = billing.discounts.filter((discount) => discount.courseRowKey !== line.rowKey);
+    billing.payments = billing.payments.filter((payment) =>
+      !ownedByLine(payment.courseRowKey, payment.courseAllocations));
+  });
 }
 
 function addCourseServiceFee(line: RegistrationCourseLine) {

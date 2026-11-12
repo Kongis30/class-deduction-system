@@ -26,6 +26,6 @@ public record PaymentRecordVO(
         List<CourseAllocationVO> allocations
 ) {
 
-    public record CourseAllocationVO(Long enrollmentOrderItemId, BigDecimal amount) {
+    public record CourseAllocationVO(Long enrollmentOrderItemId, BigDecimal amount, Boolean deleted) {
     }
 }
