@@ -3533,8 +3533,9 @@ function toHistoricalCourseLine(
     rowKey: `history-course-${index}-${getString(item, 'id') || getString(item, 'orderItemId') || getString(fallback, 'id') || 'noid'}`,
     // 订单明细是业务主数据；收据 payload 是历史快照，内部 JSON 的 Snowflake ID
     // 可能已经被原生 JSON.parse 转成不精确的 number，因此 ID 优先取订单明细。
-    // 快照老格式行可能只带 enrollmentOrderItemId；fallback 为 null（订单行已删除）
-    // 时保持 undefined，让该行按"无订单行"处理，绝不借用别的行的 ID。
+    // 快照老格式行可能只带 enrollmentOrderItemId。死行保留快照里的原订单行 ID
+    // 作"匹配用身份"：软删分摊按 enrollmentOrderItemId 挂回死行、删除死行时
+    // 按 orderItemId 认领卡片都靠它；保存 payload 时死行仍不带 orderItemId。
     orderItemId: getString(fallback, 'id') || getString(item, 'orderItemId')
       || getString(item, 'enrollmentOrderItemId') || getString(item, 'id') || undefined,
     orderItemDetached,
