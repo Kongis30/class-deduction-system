@@ -4331,13 +4331,28 @@ function coursePaymentAllocationTotal(courseRowKey: string) {
   }, 0));
 }
 
+/**
+ * 课程行在本次提交里的行号，必须与 items 提交的 lineNo 完全一致。
+ * 更正模式下沿用原订单的真实行号（orderLineNo），不能用数组下标——订单行号
+ * 可能不连续（历史软删行、老格式行都会留下空档），用下标会让付款分摊/
+ * 折扣指向不存在的行，后端报 "A corrected payment references a course that is not in this order."
+ */
+function submittedCourseLineNo(line: RegistrationCourseLine, index: number) {
+  return editingCorrection.value ? line.orderLineNo ?? index + 1 : index + 1;
+}
+
+function submittedCourseLineNoAtIndex(index: number) {
+  if (index < 0) return undefined;
+  return submittedCourseLineNo(courseLines.value[index], index);
+}
+
 function buildCoursePaymentAllocations(payment: PaymentLine) {
   if (courseLines.value.length === 1) {
-    return [{ orderItemLineNo: 1, amount: roundMoney(payment.amount) }];
+    return [{ orderItemLineNo: submittedCourseLineNo(courseLines.value[0], 0), amount: roundMoney(payment.amount) }];
   }
   return courseLines.value
     .map((line, index) => ({
-      orderItemLineNo: index + 1,
+      orderItemLineNo: submittedCourseLineNo(line, index),
       amount: roundMoney(payment.courseAllocations?.[line.rowKey] ?? 0),
     }))
     .filter((allocation) => allocation.amount > 0);
@@ -6626,7 +6641,7 @@ function buildParticipantDiscountPayload(lines: DiscountLine[]) {
     .map((line) => ({
       label: line.label.trim(),
       amount: roundMoney(line.amount),
-      orderItemLineNo: courseLines.value.findIndex((course) => course.rowKey === line.courseRowKey) + 1,
+      orderItemLineNo: submittedCourseLineNoAtIndex(courseLines.value.findIndex((course) => course.rowKey === line.courseRowKey)),
     }));
 }
 
@@ -6634,11 +6649,12 @@ function buildCourseDiscountPayload() {
   return discounts.value
     .filter((discount) => discount.amount > 0)
     .map((discount) => {
-      const lineNo = courseLines.value.findIndex((line) => line.rowKey === discount.courseRowKey) + 1;
+      const lineNo = submittedCourseLineNoAtIndex(
+        courseLines.value.findIndex((line) => line.rowKey === discount.courseRowKey));
       return {
         label: discount.label.trim(),
         amount: roundMoney(discount.amount),
-        orderItemLineNo: lineNo > 0 ? lineNo : undefined,
+        orderItemLineNo: lineNo,
       };
     });
 }
