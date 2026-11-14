@@ -176,6 +176,25 @@ class TeacherPaymentServiceImplTest {
     }
 
     @Test
+    void unpaidPeriodFiltersLessonTimeWithInclusiveEndDate() {
+        UnpaidLessonQuery query = new UnpaidLessonQuery();
+        query.setTeacherId(701L);
+        query.setStartDate(LocalDate.of(2026, 10, 30));
+        query.setEndDate(LocalDate.of(2026, 11, 12));
+        when(paymentItemMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        teacherPaymentService.queryUnpaidLessons(query);
+
+        verify(lessonRecordMapper).selectList(recordQueryCaptor.capture());
+        var wrapper = recordQueryCaptor.getValue();
+        assertThat(wrapper.getSqlSegment()).contains("actual_start_at", "planned_start_at", "lesson_occurrence")
+                .doesNotContain("confirmed_at >=", "confirmed_at <");
+        assertThat(wrapper.getParamNameValuePairs().values())
+                .contains(LocalDateTime.of(2026, 10, 30, 0, 0), LocalDateTime.of(2026, 11, 13, 0, 0));
+    }
+
+    @Test
     void unpaidLessonsShowClassTimeInsteadOfConfirmationTime() {
         LessonRecordEntity actualLesson = payableRecord();
         actualLesson.setActualUnits(4);

@@ -106,6 +106,11 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         LocalDateTime end = query.getEndDate() != null
                 ? query.getEndDate().plusDays(1).atStartOfDay() : null;
 
+        // 与下面返回的授课时间使用相同的回退顺序；旧课次可能只有 occurrence 的排课时间。
+        String lessonStart = "CASE WHEN actual_start_at IS NOT NULL AND actual_end_at IS NOT NULL "
+                + "THEN actual_start_at WHEN planned_start_at IS NOT NULL AND planned_end_at IS NOT NULL "
+                + "THEN planned_start_at ELSE COALESCE((SELECT o.planned_start_at FROM lesson_occurrence o "
+                + "WHERE o.id = lesson_record.occurrence_id AND o.is_deleted = 0), planned_start_at) END";
         List<LessonRecordEntity> records = lessonRecordMapper.selectList(
                 new LambdaQueryWrapper<LessonRecordEntity>()
                         .eq(query.getTeacherId() != null,
@@ -116,8 +121,8 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                         .notIn(!paidRecordIds.isEmpty(), LessonRecordEntity::getId, paidRecordIds)
                         .notIn(!settledSharedOccurrenceIds.isEmpty(),
                                 LessonRecordEntity::getOccurrenceId, settledSharedOccurrenceIds)
-                        .ge(start != null, LessonRecordEntity::getConfirmedAt, start)
-                        .lt(end != null, LessonRecordEntity::getConfirmedAt, end)
+                        .apply(start != null, "(" + lessonStart + ") >= {0}", start)
+                        .apply(end != null, "(" + lessonStart + ") < {0}", end)
                         .orderByAsc(LessonRecordEntity::getConfirmedAt)
         );
         if (records.isEmpty()) {
@@ -219,7 +224,8 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 lessonStartAt = rec.getPlannedStartAt();
                 lessonEndAt = rec.getPlannedEndAt();
             }
-            if ((lessonStartAt == null || lessonEndAt == null) && occurrence != null) {
+            if ((lessonStartAt == null || lessonEndAt == null) && occurrence != null
+                    && occurrence.getPlannedStartAt() != null) {
                 lessonStartAt = occurrence.getPlannedStartAt();
                 lessonEndAt = occurrence.getPlannedEndAt();
             }
