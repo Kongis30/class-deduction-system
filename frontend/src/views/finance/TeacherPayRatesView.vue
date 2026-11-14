@@ -685,8 +685,9 @@ onMounted(async () => {
 .pr-page {
   display: flex;
   gap: 16px;
-  height: 100%;
-  min-height: 500px;
+  height: calc(100vh - 92px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* ─── Sidebar ────────────────────────────────────────── */
@@ -709,7 +710,9 @@ onMounted(async () => {
 
 .pr-sidebar__list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 4px 0;
 }
 
@@ -752,11 +755,14 @@ onMounted(async () => {
 
 .pr-content {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   border: 1px solid #e8edf2;
   border-radius: 8px;
   background: #fff;
   padding: 16px 20px;
   overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .pr-content__placeholder {
@@ -1049,7 +1055,7 @@ onMounted(async () => {
 }
 
 :global(html.mobile-layout) & {
-  .pr-page { height: calc(100dvh - 176px); min-height: 0; align-items: stretch; gap: 10px; }
+  .pr-page { height: calc(100dvh - 176px); min-height: 0; align-items: stretch; gap: 10px; overflow: visible; }
   .pr-sidebar { height: 100%; min-height: 0; max-height: none; border-color: #d5deea; border-radius: 10px; box-shadow: 0 2px 8px rgb(33 53 77 / 5%); }
   .pr-sidebar--mobile-hidden,
   .pr-content--mobile-hidden { display: none; }
