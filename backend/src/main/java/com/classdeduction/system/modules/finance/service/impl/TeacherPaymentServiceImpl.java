@@ -346,7 +346,6 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         }
 
         validatePayableLessonRecords(records, request.getTeacherId());
-        validatePaymentPeriod(request, records);
 
         // Recheck settlement status immediately before creating any payment rows.
         List<Long> paidIds = paymentItemMapper.selectList(
@@ -366,6 +365,7 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 ? lessonOccurrenceMapper.selectBatchIds(occurrenceIds).stream()
                 .collect(Collectors.toMap(LessonOccurrenceEntity::getId, o -> o))
                 : Collections.emptyMap();
+        validatePaymentPeriod(request, records, occurrenceMap);
         Set<Long> classGroupIds = occurrenceMap.values().stream()
                 .map(LessonOccurrenceEntity::getClassGroupId)
                 .filter(Objects::nonNull)
@@ -802,18 +802,28 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                         .collect(Collectors.toMap(ClassroomEntity::getId, classroom -> classroom, (left, right) -> left));
     }
 
-    private void validatePaymentPeriod(TeacherPaymentCreateRequest request, List<LessonRecordEntity> records) {
+    private void validatePaymentPeriod(TeacherPaymentCreateRequest request, List<LessonRecordEntity> records,
+                                       Map<Long, LessonOccurrenceEntity> occurrences) {
         if (request.getPeriodStart() == null || request.getPeriodEnd() == null) {
             throw new BusinessException("PAYMENT_PERIOD_REQUIRED",
                     "Payment period start and end dates are required.");
         }
         validatePeriod(request.getPeriodStart(), request.getPeriodEnd());
         for (LessonRecordEntity record : records) {
-            if (record.getConfirmedAt() == null
-                    || record.getConfirmedAt().toLocalDate().isBefore(request.getPeriodStart())
-                    || record.getConfirmedAt().toLocalDate().isAfter(request.getPeriodEnd())) {
+            LocalDateTime start = record.getActualStartAt();
+            if (start == null || record.getActualEndAt() == null) {
+                start = record.getPlannedStartAt();
+                if (start == null || record.getPlannedEndAt() == null) {
+                    LessonOccurrenceEntity occurrence = occurrences.get(record.getOccurrenceId());
+                    if (occurrence != null && occurrence.getPlannedStartAt() != null) {
+                        start = occurrence.getPlannedStartAt();
+                    }
+                }
+            }
+            if (start == null || start.toLocalDate().isBefore(request.getPeriodStart())
+                    || start.toLocalDate().isAfter(request.getPeriodEnd())) {
                 throw new BusinessException("LESSON_OUTSIDE_PAYMENT_PERIOD",
-                        "Every selected lesson must be finally confirmed within the payment period.");
+                        "Every selected lesson must take place within the payment period.");
             }
         }
     }

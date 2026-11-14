@@ -46,6 +46,8 @@ import java.util.List;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Map;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -213,6 +215,8 @@ class TeacherPaymentServiceImplTest {
         legacyLesson.setId(1003L);
         legacyLesson.setOccurrenceId(4001L);
         legacyLesson.setActualUnits(4);
+        legacyLesson.setPlannedStartAt(null);
+        legacyLesson.setPlannedEndAt(null);
         LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
         occurrence.setId(4001L);
         occurrence.setPlannedStartAt(LocalDateTime.of(2026, 9, 25, 9, 0));
@@ -234,6 +238,51 @@ class TeacherPaymentServiceImplTest {
         assertThat(lessons.get(1).lessonEndAt()).isEqualTo(plannedLesson.getPlannedEndAt());
         assertThat(lessons.get(2).lessonStartAt()).isEqualTo(occurrence.getPlannedStartAt());
         assertThat(lessons.get(2).lessonEndAt()).isEqualTo(occurrence.getPlannedEndAt());
+    }
+
+    @Test
+    void paymentPeriodUsesLessonDateInsteadOfConfirmationDate() {
+        LessonRecordEntity record = payableRecord();
+        TeacherPaymentCreateRequest request = paymentRequest(record);
+        record.setConfirmedAt(LocalDateTime.of(2026, 8, 10, 12, 0));
+        ReflectionTestUtils.invokeMethod(teacherPaymentService, "validatePaymentPeriod", request, List.of(record), Map.of());
+
+        record.setActualStartAt(LocalDateTime.of(2026, 8, 1, 10, 0));
+        record.setActualEndAt(LocalDateTime.of(2026, 8, 1, 12, 0));
+        assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(teacherPaymentService,
+                "validatePaymentPeriod", request, List.of(record), Map.of()))
+                .isInstanceOf(BusinessException.class).extracting("code").isEqualTo("LESSON_OUTSIDE_PAYMENT_PERIOD");
+    }
+
+    @Test
+    void paymentPeriodUsesLegacyOccurrenceWhenRecordHasNoLessonTime() {
+        LessonRecordEntity record = payableRecord();
+        record.setPlannedStartAt(null);
+        record.setPlannedEndAt(null);
+        record.setOccurrenceId(4001L);
+        LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
+        occurrence.setPlannedStartAt(LocalDateTime.of(2026, 7, 31, 23, 0));
+        ReflectionTestUtils.invokeMethod(teacherPaymentService, "validatePaymentPeriod",
+                paymentRequest(record), List.of(record), Map.of(4001L, occurrence));
+    }
+
+    @Test
+    void paymentPeriodIncludesBothDatesAndRejectsMissingOrOutsideLessonTime() {
+        LessonRecordEntity record = payableRecord();
+        TeacherPaymentCreateRequest request = paymentRequest(record);
+        record.setPlannedStartAt(LocalDateTime.of(2026, 7, 1, 0, 0));
+        ReflectionTestUtils.invokeMethod(teacherPaymentService, "validatePaymentPeriod", request, List.of(record), Map.of());
+        record.setPlannedStartAt(LocalDateTime.of(2026, 7, 31, 23, 59));
+        ReflectionTestUtils.invokeMethod(teacherPaymentService, "validatePaymentPeriod", request, List.of(record), Map.of());
+        record.setPlannedStartAt(LocalDateTime.of(2026, 8, 1, 0, 0));
+        assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(teacherPaymentService, "validatePaymentPeriod",
+                request, List.of(record), Map.of())).isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("LESSON_OUTSIDE_PAYMENT_PERIOD");
+        record.setPlannedStartAt(null);
+        record.setOccurrenceId(4001L);
+        assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(teacherPaymentService, "validatePaymentPeriod",
+                request, List.of(record), Map.of())).isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("LESSON_OUTSIDE_PAYMENT_PERIOD");
     }
 
     @Test
@@ -288,7 +337,7 @@ class TeacherPaymentServiceImplTest {
         request.setPeriodEnd(LocalDate.of(2026, 7, 31));
 
         when(teacherMapper.selectById(701L)).thenReturn(teacher);
-        when(lessonRecordMapper.selectBatchIds(request.getLessonRecordIds())).thenReturn(List.of(record));
+        when(lessonRecordMapper.selectByIdsForUpdate(request.getLessonRecordIds())).thenReturn(List.of(record));
         when(paymentItemMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(lessonOccurrenceMapper.selectBatchIds(any())).thenReturn(Collections.emptyList());
         when(coursePackageMapper.selectBatchIds(any())).thenReturn(List.of(coursePackage));
@@ -334,7 +383,7 @@ class TeacherPaymentServiceImplTest {
         request.setPeriodEnd(LocalDate.of(2026, 7, 31));
 
         when(teacherMapper.selectById(701L)).thenReturn(teacher);
-        when(lessonRecordMapper.selectBatchIds(request.getLessonRecordIds())).thenReturn(List.of(record));
+        when(lessonRecordMapper.selectByIdsForUpdate(request.getLessonRecordIds())).thenReturn(List.of(record));
         when(paymentItemMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(lessonOccurrenceMapper.selectBatchIds(any())).thenReturn(Collections.emptyList());
         when(coursePackageMapper.selectBatchIds(any())).thenReturn(List.of(coursePackage));
@@ -393,7 +442,7 @@ class TeacherPaymentServiceImplTest {
         request.setPeriodEnd(LocalDate.of(2026, 7, 31));
 
         when(teacherMapper.selectById(701L)).thenReturn(teacher);
-        when(lessonRecordMapper.selectBatchIds(request.getLessonRecordIds())).thenReturn(List.of(record));
+        when(lessonRecordMapper.selectByIdsForUpdate(request.getLessonRecordIds())).thenReturn(List.of(record));
         when(paymentItemMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(lessonOccurrenceMapper.selectBatchIds(any())).thenReturn(Collections.emptyList());
         when(coursePackageMapper.selectBatchIds(any())).thenReturn(List.of(coursePackage));
@@ -440,7 +489,7 @@ class TeacherPaymentServiceImplTest {
         request.setPeriodEnd(LocalDate.of(2026, 7, 31));
 
         when(teacherMapper.selectById(701L)).thenReturn(teacher);
-        when(lessonRecordMapper.selectBatchIds(request.getLessonRecordIds())).thenReturn(List.of(record));
+        when(lessonRecordMapper.selectByIdsForUpdate(request.getLessonRecordIds())).thenReturn(List.of(record));
         when(paymentItemMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(lessonOccurrenceMapper.selectBatchIds(any())).thenReturn(Collections.emptyList());
         when(coursePackageMapper.selectBatchIds(any())).thenReturn(List.of(coursePackage));
@@ -581,7 +630,7 @@ class TeacherPaymentServiceImplTest {
         occurrence.setClassGroupId(5001L);
 
         when(teacherMapper.selectById(701L)).thenReturn(teacher);
-        when(lessonRecordMapper.selectBatchIds(request.getLessonRecordIds())).thenReturn(List.of(first, second));
+        when(lessonRecordMapper.selectByIdsForUpdate(request.getLessonRecordIds())).thenReturn(List.of(first, second));
         when(paymentItemMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(lessonOccurrenceMapper.selectBatchIds(any())).thenReturn(List.of(occurrence));
         when(classGroupMapper.selectBatchIds(any())).thenReturn(Collections.emptyList());
@@ -604,7 +653,7 @@ class TeacherPaymentServiceImplTest {
         teacher.setId(701L);
         teacher.setStatus("ACTIVE");
         when(teacherMapper.selectById(701L)).thenReturn(teacher);
-        when(lessonRecordMapper.selectBatchIds(request.getLessonRecordIds())).thenReturn(List.of(record));
+        when(lessonRecordMapper.selectByIdsForUpdate(request.getLessonRecordIds())).thenReturn(List.of(record));
 
         assertThatThrownBy(() -> teacherPaymentService.createPayment(request, 1L))
                 .isInstanceOf(BusinessException.class)
@@ -622,6 +671,8 @@ class TeacherPaymentServiceImplTest {
         record.setConfirmStage("CONFIRMED");
         record.setResultStatus("COMPLETED");
         record.setConfirmedAt(LocalDateTime.of(2026, 7, 15, 12, 0));
+        record.setPlannedStartAt(LocalDateTime.of(2026, 7, 15, 10, 0));
+        record.setPlannedEndAt(LocalDateTime.of(2026, 7, 15, 12, 0));
         return record;
     }
 
@@ -640,7 +691,7 @@ class TeacherPaymentServiceImplTest {
         teacher.setTeacherNo("T701");
         teacher.setStatus("ACTIVE");
         when(teacherMapper.selectById(701L)).thenReturn(teacher);
-        when(lessonRecordMapper.selectBatchIds(request.getLessonRecordIds())).thenReturn(List.of(record));
+        when(lessonRecordMapper.selectByIdsForUpdate(request.getLessonRecordIds())).thenReturn(List.of(record));
         when(paymentItemMapper.selectList(any())).thenReturn(Collections.emptyList());
     }
 }

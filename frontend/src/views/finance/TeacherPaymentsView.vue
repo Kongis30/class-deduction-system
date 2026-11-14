@@ -137,7 +137,7 @@
           :closable="false"
           class="tp-rate-alert"
         >
-          All teachers' lessons are loaded. Choose one teacher from the left list to select lessons and create that teacher's payment.
+          Select lessons to create a separate payment for each teacher.
         </el-alert>
 
         <!-- ─── 2. Unpaid 1:1 Lessons ────────────────── -->
@@ -273,6 +273,7 @@
           <div class="tp-summary">
             <span>
               Selected <strong>{{ selectedIds.length }}</strong> lessons ·
+              Teachers: <strong>{{ selectedTeacherCount }}</strong> ·
               Hours: <strong>{{ selectedTotalHours }}</strong> ·
               Amount: <strong>${{ selectedTotalAmount }}</strong>
             </span>
@@ -705,6 +706,7 @@ const unpaidLoading = ref(false);
 const searched = ref(false);
 const unpaidLessons = ref<UnpaidLessonItem[]>([]);
 const selectedTeacherLoadedPeriod = ref<{ teacherId: string; range: [string, string] } | null>(null);
+const allTeachersLoadedPeriod = ref<[string, string] | null>(null);
 const individualLessonTable = ref<{ clearSelection: () => void }>();
 const groupLessonTable = ref<{ clearSelection: () => void }>();
 const individualSelections = ref<UnpaidLessonItem[]>([]);
@@ -733,8 +735,8 @@ function hasPayRate(row: UnpaidLessonItem) {
 
 function canSelectLesson(row: UnpaidLessonItem) {
   return hasPayRate(row)
-    && selectedTeacherId.value != null
-    && String(row.teacherId) === String(selectedTeacherId.value);
+    && row.teacherId != null
+    && (selectedTeacherId.value == null || String(row.teacherId) === String(selectedTeacherId.value));
 }
 
 // Mobile cards and desktop tables share selections so payment submits the same lesson set.
@@ -788,6 +790,10 @@ const selectedTotalAmount = computed(() => {
   return allRows.reduce((s, r) => s + r.amount, 0).toFixed(2);
 });
 
+const selectedTeacherCount = computed(() =>
+  new Set([...individualSelections.value, ...groupSelections.value].map(row => String(row.teacherId))).size,
+);
+
 async function loadUnpaidLessons() {
   if (!dateRange.value?.[0] || !dateRange.value?.[1]) {
     ElMessage.warning('Select a period before loading unpaid lessons.');
@@ -804,6 +810,7 @@ async function loadUnpaidLessons() {
   clearUnpaidSelections();
   unpaidLessons.value = [];
   selectedTeacherLoadedPeriod.value = null;
+  allTeachersLoadedPeriod.value = null;
   try {
     const res = await fetchUnpaidLessons({
       teacherId: selectedTeacherId.value ?? undefined,
@@ -811,6 +818,7 @@ async function loadUnpaidLessons() {
       endDate: requestedRange[1],
     });
     unpaidLessons.value = res.data.data;
+    allTeachersLoadedPeriod.value = selectedTeacherId.value == null ? requestedRange : null;
     selectedTeacherLoadedPeriod.value = selectedTeacherId.value == null
       ? null
       : { teacherId: String(selectedTeacherId.value), range: requestedRange };
@@ -875,12 +883,13 @@ async function loadSelectedTeacherUnpaidLessons() {
 const creatingPayment = ref(false);
 
 async function handleCreatePayment() {
-  if (!selectedTeacherId.value || selectedIds.value.length === 0) return;
+  if (selectedIds.value.length === 0) return;
 
   const allSelected = [...individualSelections.value, ...groupSelections.value];
   if (allSelected.some(row => !hasPayRate(row))) return;
-  const paymentPeriod = selectedTeacherLoadedPeriod.value?.teacherId === String(selectedTeacherId.value)
-    ? selectedTeacherLoadedPeriod.value.range : selectedTeacherPeriodRange.value;
+  const paymentPeriod = selectedTeacherId.value == null ? allTeachersLoadedPeriod.value
+    : selectedTeacherLoadedPeriod.value?.teacherId === String(selectedTeacherId.value)
+      ? selectedTeacherLoadedPeriod.value.range : null;
   if (!paymentPeriod?.[0] || !paymentPeriod[1]) {
     ElMessage.warning('Load lessons for a teacher period before creating a payment.');
     return;
@@ -888,7 +897,7 @@ async function handleCreatePayment() {
 
   try {
     await ElMessageBox.confirm(
-      `Pay for ${selectedIds.value.length} lesson(s) — total $${selectedTotalAmount.value}?`,
+      `Create payment records for ${selectedTeacherCount.value} teacher(s), ${selectedIds.value.length} lesson(s) — total $${selectedTotalAmount.value}?`,
       'Confirm payment',
       { type: 'info' },
     );
@@ -897,17 +906,39 @@ async function handleCreatePayment() {
   }
 
   creatingPayment.value = true;
+  const groups = new Map<string, { teacherId: EntityId; name: string; ids: EntityId[] }>();
+  for (const row of allSelected) {
+    if (row.teacherId == null) continue;
+    const key = String(row.teacherId);
+    const group = groups.get(key) ?? { teacherId: row.teacherId, name: row.teacherName || key, ids: [] };
+    group.ids.push(row.lessonRecordId);
+    groups.set(key, group);
+  }
+  const failures: string[] = [];
+  let succeeded = 0;
   try {
-    await createPayment({
-      teacherId: selectedTeacherId.value,
-      periodStart: paymentPeriod[0],
-      periodEnd: paymentPeriod[1],
-      lessonRecordIds: selectedIds.value,
-    });
-    ElMessage.success('Payment created.');
-    await Promise.all([loadSelectedTeacherUnpaidLessons(), loadHistory(1)]);
-  } catch (err: any) {
-    ElMessage.error(err?.response?.data?.message ?? 'Failed to create payment.');
+    // 每位老师单独提交，失败时保留其他老师已生成的工资记录。
+    for (const group of groups.values()) {
+      try {
+        await createPayment({ teacherId: group.teacherId, periodStart: paymentPeriod[0],
+          periodEnd: paymentPeriod[1], lessonRecordIds: group.ids });
+        succeeded += 1;
+      } catch (err: any) {
+        failures.push(`${group.name}: ${err?.response?.data?.message ?? 'Failed to create payment.'}`);
+      }
+    }
+    if (selectedTeacherId.value == null) {
+      dateRange.value = [...paymentPeriod];
+      await Promise.all([loadUnpaidLessons(), loadHistory(1)]);
+    } else {
+      await Promise.all([loadSelectedTeacherUnpaidLessons(), loadHistory(1)]);
+    }
+    if (failures.length) {
+      await ElMessageBox.alert(`${succeeded} payment(s) created.\n${failures.join('\n')}`, 'Payment results',
+        { type: 'warning', customStyle: { whiteSpace: 'pre-line' } });
+    } else {
+      ElMessage.success(`${succeeded} payment(s) created.`);
+    }
   } finally {
     creatingPayment.value = false;
   }
