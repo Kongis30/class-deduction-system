@@ -36,6 +36,7 @@ const TeacherPayRatesView = () => import('@/views/finance/TeacherPayRatesView.vu
 const TeacherPaymentsView = () => import('@/views/finance/TeacherPaymentsView.vue');
 const MyPayrollView = () => import('@/views/finance/MyPayrollView.vue');
 const DailyRegistrationsView = () => import('@/views/enrollment/DailyRegistrationsView.vue');
+const MonthlyRevenueView = () => import('@/views/reports/MonthlyRevenueView.vue');
 
 const routes: RouteRecordRaw[] = [
   {
@@ -97,6 +98,16 @@ const routes: RouteRecordRaw[] = [
           title: 'Daily Registrations',
           section: 'Daily Registrations',
           description: 'Review registrations by the time they were saved and trace their history.',
+        },
+      },
+      {
+        path: 'monthly-revenue',
+        name: 'monthly-revenue',
+        component: MonthlyRevenueView,
+        meta: {
+          title: 'Monthly Revenue Breakdown',
+          section: 'Monthly Revenue Breakdown',
+          description: 'Review collected revenue by month, campus, and course product.',
         },
       },
       {
@@ -595,7 +606,9 @@ router.beforeEach((to) => {
   if (isManagerUser(storedUser) && !isAdminUser(storedUser) && managerRestrictedPaths.has(to.path)) {
     return getDefaultLandingPath(storedUser);
   }
-  if (to.path === '/daily-registrations' && isManagerUser(storedUser) && !isAdminUser(storedUser)) {
+  // 每日报名与月度收入包含财务金额，MANAGER 不可访问。
+  if (['/daily-registrations', '/monthly-revenue'].includes(to.path)
+      && isManagerUser(storedUser) && !isAdminUser(storedUser)) {
     return getDefaultLandingPath(storedUser);
   }
   if (to.path === '/admin/config/managers' && !isAdminUser(storedUser)) {

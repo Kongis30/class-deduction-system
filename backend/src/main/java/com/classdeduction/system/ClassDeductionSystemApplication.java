@@ -20,6 +20,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         "com.classdeduction.system.modules.systemconfig.mapper",
         "com.classdeduction.system.modules.finance.mapper",
         "com.classdeduction.system.modules.transport.mapper",
+        "com.classdeduction.system.modules.report.mapper",
 })
 public class ClassDeductionSystemApplication {
 

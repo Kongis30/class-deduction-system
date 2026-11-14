@@ -87,6 +87,14 @@ Shared conventions:
 - `GET /api/v1/data-summary` (MANAGER receives a response without monetary fields)
 - `GET /api/v1/data-summary/refund-candidates?orderId=&orderItemId=&studentId=&participantIndex=` (ADMIN/STAFF only)
 
+#### Monthly revenue report
+
+- `GET /api/v1/reports/monthly-revenue?fromMonth=yyyy-MM&toMonth=yyyy-MM` (ADMIN/STAFF only; MANAGER is rejected). Months default to the last six months ending with the current month, and the range may not exceed 36 months.
+- Revenue is the net of `payment_record` rows: `REFUND` rows already carry negative amounts and are counted in the month they were paid, so a refund reduces the month it happened instead of the original payment month. `VOIDED` and soft-deleted rows are excluded.
+- Attribution: month from `paid_at` (falling back to `created_at`) in `America/New_York`, campus from the receipt's `enrollment_order`, and product from `payment_allocation` → `enrollment_order_item.course_product_id`. Reporting granularity is the course product.
+- Response shape: `{ months: [{key, label}], sections: [{key, title, oneOnOne, rows: [{productId, productName, amounts[]}]}], unassignedPaymentCount }`. `amounts` aligns with `months`, one section per campus in `campus.display_order`, plus a trailing `1on1` section.
+- Legacy payments with no `payment_allocation` are split across the order's course lines by `price_amount` weight. Payments whose order no longer has any course line are reported as `Unassigned product` so the column totals still equal the payment ledger; `unassignedPaymentCount` reports how many.
+
 #### Course-level discounts and payments
 
 - `POST /api/v1/registration/intake` accepts `items[].discountAmount` and `discounts[].orderItemLineNo` so each discount can be tied to a course line. Each initial `payments[]` entry can include `allocations[]` with `orderItemLineNo` and `amount`; allocations must total that payment amount.

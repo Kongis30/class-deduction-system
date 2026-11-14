@@ -24,7 +24,7 @@
           'app-shell__content--calendar': route.name === 'calendar',
           'app-shell__content--registration': route.name === 'registration',
           'app-shell__content--one-on-one': appStore.isMobileViewport && route.name === 'one-on-one-deduction',
-          'app-shell__content--mobile-workbook': appStore.isMobileViewport && ['pickup-dropoff-list', 'student-credit', 'daily-registrations'].includes(String(route.name)),
+          'app-shell__content--mobile-workbook': appStore.isMobileViewport && ['pickup-dropoff-list', 'student-credit', 'daily-registrations', 'monthly-revenue'].includes(String(route.name)),
           'app-shell__content--course-packages': appStore.isMobileViewport && route.name === 'course-packages',
           'app-shell__content--enrollment': appStore.isMobileViewport && route.name === 'enrollment-orders',
         }"

@@ -44,6 +44,12 @@ export const dailyMenus: AppMenuItem[] = [
     icon: 'DataAnalysis',
     path: '/daily-registrations',
   },
+  {
+    key: 'monthly-revenue',
+    title: 'Monthly Revenue Breakdown',
+    icon: 'Money',
+    path: '/monthly-revenue',
+  },
 ];
 
 export const adminGuideMenu: AppMenuItem = {
@@ -179,8 +185,8 @@ export function getMenusForUser(user: AuthUser | null): AppMenuItem[] {
     case 'STUDENT':
       return getStudentMenus();
     default:
-      return dailyMenus.filter(menu =>
-        menu.key !== 'daily-registrations' || !isManagerUser(user) || isAdminUser(user)
-      );
+      // 每日报名与月度收入都包含财务金额，仅对 MANAGER 隐藏（ADMIN 除外）。
+      return dailyMenus.filter(menu => !['daily-registrations', 'monthly-revenue'].includes(menu.key)
+        || !isManagerUser(user) || isAdminUser(user));
   }
 }
