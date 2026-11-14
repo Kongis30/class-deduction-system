@@ -128,10 +128,14 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         for (LessonOccurrenceVO lesson : lessonDetails) {
             List<PrivateLessonGroupMemberEntity> groupMembers = members.getOrDefault(lesson.privateLessonGroupId(), List.of());
             List<String> names = new ArrayList<>();
+            List<DailyPrivateLessonsVO.Participant> participants = new ArrayList<>();
             if (groupMembers.isEmpty()) {
                 if ("CONFIRMED".equals(lesson.confirmStage()) && "FORMAL_LEAVE".equals(lesson.resultStatus())) continue;
                 if (lesson.studentId() != null) students.add(lesson.studentId());
-                if (StringUtils.hasText(lesson.studentName())) names.add(lesson.studentName());
+                if (StringUtils.hasText(lesson.studentName())) {
+                    names.add(lesson.studentName());
+                    participants.add(new DailyPrivateLessonsVO.Participant(lesson.studentId(), lesson.packageId(), lesson.studentName()));
+                }
             } else {
                 for (PrivateLessonGroupMemberEntity member : groupMembers) {
                     LessonRecordEntity record = records.byPackage().getOrDefault(member.getPackageId(), Collections.emptyMap()).get(lesson.id());
@@ -139,12 +143,15 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                             && "FORMAL_LEAVE".equals(record.getResultStatus())) continue;
                     if (member.getStudentId() != null) students.add(member.getStudentId());
                     StudentEntity student = memberStudents.get(member.getStudentId());
-                    if (student != null && StringUtils.hasText(student.getStudentName())) names.add(student.getStudentName());
+                    if (student != null && StringUtils.hasText(student.getStudentName())) {
+                        names.add(student.getStudentName());
+                        participants.add(new DailyPrivateLessonsVO.Participant(member.getStudentId(), member.getPackageId(), student.getStudentName()));
+                    }
                 }
                 if (names.isEmpty()) continue;
             }
             lessons.add(new DailyPrivateLessonsVO.Lesson(lesson.id(), lesson.plannedStartAt(), lesson.plannedEndAt(),
-                    names, lesson.subjectName(), lesson.packageName(), lesson.plannedTeacherName(), lesson.plannedClassroomName()));
+                    names, participants, lesson.subjectName(), lesson.packageName(), lesson.plannedTeacherName(), lesson.plannedClassroomName()));
         }
         return new DailyPrivateLessonsVO(lessons, students.size());
     }

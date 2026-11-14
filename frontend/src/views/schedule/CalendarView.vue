@@ -10,21 +10,21 @@
 
     <div v-if="canViewAllCalendars" class="calendar-tabs-toolbar">
       <el-tabs v-model="activeTab" class="calendar-tabs">
-        <el-tab-pane name="teacher">
+        <el-tab-pane name="teacher" lazy>
           <template #label>
             <span class="calendar-tab-label calendar-tab-label--desktop">Teacher Calendar</span>
             <span class="calendar-tab-label calendar-tab-label--mobile">Teachers</span>
           </template>
           <TeacherScheduleView />
         </el-tab-pane>
-        <el-tab-pane name="student">
+        <el-tab-pane name="student" lazy>
           <template #label>
             <span class="calendar-tab-label calendar-tab-label--desktop">Student Calendar</span>
             <span class="calendar-tab-label calendar-tab-label--mobile">Students</span>
           </template>
           <StudentScheduleView ref="studentCalendarRef" />
         </el-tab-pane>
-        <el-tab-pane name="room">
+        <el-tab-pane name="room" lazy>
           <template #label>
             <span class="calendar-tab-label calendar-tab-label--desktop">Room Calendar</span>
             <span class="calendar-tab-label calendar-tab-label--mobile">Rooms</span>

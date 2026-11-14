@@ -184,6 +184,7 @@ export interface DailyPrivateLesson {
   plannedStartAt: string;
   plannedEndAt: string;
   participantNames: string[];
+  participants?: { studentId: EntityId | null; packageId: EntityId | null; studentName: string }[];
   subjectName?: string;
   packageName?: string;
   plannedTeacherName?: string;

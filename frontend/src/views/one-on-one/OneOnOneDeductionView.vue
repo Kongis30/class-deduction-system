@@ -1370,7 +1370,9 @@ function selectRouteDeductionTarget() {
   if (focus !== 'deduction' || typeof studentId !== 'string' || typeof packageId !== 'string') return;
 
   const candidate = menuPackageCandidates.value.find(({ student, pkg }) =>
-    String(student.studentId) === studentId && String(pkg.packageId) === packageId);
+    (String(student.studentId) === studentId && String(pkg.packageId) === packageId)
+    || (pkg.participants ?? []).some(participant =>
+      String(participant.studentId) === studentId && String(participant.packageId) === packageId));
   if (!candidate) {
     ElMessage.warning('The selected student course is not available in the deduction list.');
     return;

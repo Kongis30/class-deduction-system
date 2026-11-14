@@ -23,6 +23,10 @@
         </div>
       </details>
 
+      <el-alert v-if="classroomLoadError" type="error" :closable="false" :title="classroomLoadError">
+        <el-button text type="primary" @click="loadClassrooms">Retry</el-button>
+      </el-alert>
+
       <div class="classroom-calendar__body">
         <!-- Left: Classroom list -->
         <aside class="classroom-list-panel">
@@ -398,7 +402,6 @@ import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '@/stores/app';
 import dayjs from 'dayjs';
 import { scheduleOccurrenceTimeRange } from '@/utils/schedule-time';
-import { extractErrorMessage } from '@/api/http';
 import { showScheduleError } from '@/utils/schedule-conflict-feedback';
 import { fetchAllClassrooms } from '@/api/base-data';
 import {
@@ -694,7 +697,7 @@ async function loadPendingAssignments() {
     }
     pendingClassroomSelections.value = nextSelections;
   } catch (error) {
-    pendingError.value = `Failed to load pending assignments: ${extractErrorMessage(error)}`;
+    pendingError.value = 'Couldn’t load room assignments. Please try again.';
     ElMessage.error(pendingError.value);
   } finally {
     pendingLoading.value = false;
@@ -938,7 +941,7 @@ async function loadData() {
     occupancyItems.value = res.data.data.records;
   } catch (error) {
     if (requestId !== occupancyRequestSeq) return;
-    occupancyError.value = `Failed to load occupancy data: ${extractErrorMessage(error)}`;
+    occupancyError.value = 'Couldn’t load room schedule. Please try again.';
     ElMessage.error(occupancyError.value);
     occupancyItems.value = [];
   } finally {
@@ -982,25 +985,28 @@ function planningStatusLabel(status: string) {
 }
 
 // ─── Init ──────────────────────────────────────
-onMounted(async () => {
+onMounted(() => { void loadClassrooms(); });
+
+// 教室列表加载失败时保留可重试的页面状态。
+async function loadClassrooms() {
   classroomsLoading.value = true;
   classroomLoadError.value = '';
   try {
     const res = await fetchAllClassrooms();
-    classrooms.value = (res.data.data ?? []).map(c => ({
+    if (!Array.isArray(res.data.data)) throw new Error('Invalid classroom list response');
+    classrooms.value = res.data.data.map(c => ({
       id: String(c.id),
       roomName: c.roomName,
       campus: c.campus,
       campusId: c.campusId,
     }));
     selectInitialClassroom();
-  } catch (error) {
-    classroomLoadError.value = `Failed to load classrooms: ${extractErrorMessage(error)}`;
-    ElMessage.error(classroomLoadError.value);
+  } catch {
+    classroomLoadError.value = 'Couldn’t load classrooms. Please try again.';
   } finally {
     classroomsLoading.value = false;
   }
-});
+}
 
 function selectInitialClassroom() {
   const queryId = resolveQueryId(route.query.classroomId);

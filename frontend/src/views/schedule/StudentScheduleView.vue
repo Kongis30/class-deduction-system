@@ -16,6 +16,10 @@
             <div v-if="studentsLoading" class="student-list-panel__empty">
               Loading students...
             </div>
+            <div v-else-if="studentsError" class="student-list-panel__empty">
+              Couldn’t load students. Please try again.
+              <el-button text type="primary" @click="loadScheduleStudents">Retry</el-button>
+            </div>
             <div v-else-if="filteredStudentGroups.length === 0" class="student-list-panel__empty">
               {{ students.length === 0 ? 'No active 1-on-1 students' : 'No students found' }}
             </div>
@@ -77,7 +81,11 @@
             </button>
             <div v-if="mobileRosterOpen" class="calendar-mobile-roster__panel">
               <div v-loading="studentsLoading" class="calendar-mobile-roster__groups">
-                <div v-if="!studentsLoading && filteredStudentGroups.length === 0" class="student-list-panel__empty">
+                <div v-if="!studentsLoading && studentsError" class="student-list-panel__empty">
+                  Couldn’t load students. Please try again.
+                  <el-button text type="primary" @click="loadScheduleStudents">Retry</el-button>
+                </div>
+                <div v-else-if="!studentsLoading && filteredStudentGroups.length === 0" class="student-list-panel__empty">
                   {{ students.length === 0 ? 'No active 1-on-1 students' : 'No students found' }}
                 </div>
                 <section v-for="product in filteredStudentGroups" :key="product.key" class="student-product-group">
@@ -335,7 +343,23 @@
           <template #default="{ row }">{{ dayjs(row.plannedStartAt).format('h:mm A') }} – {{ dayjs(row.plannedEndAt).format('h:mm A') }}</template>
         </el-table-column>
         <el-table-column label="Student" min-width="150">
-          <template #default="{ row }">{{ row.participantNames.join(', ') || '—' }}</template>
+          <template #default="{ row }">
+            <template v-if="row.participants?.length">
+              <template v-for="(student, index) in row.participants" :key="`${student.studentId}-${student.packageId}`">
+                <span v-if="index">, </span>
+                <el-dropdown trigger="click" @command="(command: string) => goToDailyStudent(command, student)">
+                  <button type="button" class="daily-lessons__student">{{ student.studentName }}</button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="lessons" :disabled="!student.studentId || !student.packageId">1-on-1 Lessons</el-dropdown-item>
+                      <el-dropdown-item command="schedule" :disabled="!student.studentId || !student.packageId">Schedule</el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </template>
+            </template>
+            <template v-else>{{ row.participantNames.join(', ') || '—' }}</template>
+          </template>
         </el-table-column>
         <el-table-column label="Lesson" min-width="140">
           <template #default="{ row }">{{ row.subjectName || row.packageName || '—' }}</template>
@@ -423,6 +447,7 @@
 import { ArrowDown, ArrowLeft, ArrowRight, Calendar, Check, Loading, Search } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import dayjs from 'dayjs';
 import { fetchCoursePackages, fetchMyCoursePackages } from '@/api/enrollment';
 import {
@@ -436,11 +461,12 @@ import type { CoursePackageItem, EntityId, LessonOccurrenceItem } from '@/types/
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
 import { useAuthStore } from '@/stores/auth';
-import { isStudentUser } from '@/types/auth';
+import { isAdminOrStaffUser, isManagerUser, isStudentUser } from '@/types/auth';
 import { findScheduleConflictGroups } from '@/utils/schedule-conflicts';
 import { useAppStore } from '@/stores/app';
 
 const authStore = useAuthStore();
+const router = useRouter();
 const appStore = useAppStore();
 const isStudent = computed(() => isStudentUser(authStore.currentUser));
 const canViewDailyPrivateLessons = computed(() => isAdminOrStaffUser(authStore.currentUser) || isManagerUser(authStore.currentUser));
@@ -480,6 +506,7 @@ async function loadDailyPrivateLessons() {
       .map((lesson) => ({
         ...lesson,
         participantNames: [...lesson.participantNames].sort(nameOrder.compare),
+        participants: lesson.participants?.slice().sort((a, b) => nameOrder.compare(a.studentName, b.studentName)),
       }))
       .sort((left, right) => {
         const byStart = left.plannedStartAt.localeCompare(right.plannedStartAt);
@@ -496,8 +523,19 @@ async function loadDailyPrivateLessons() {
   }
 }
 
+// 保留学生和课包的对应关系，多人课中每个姓名都独立跳转。
+function goToDailyStudent(command: string, student: NonNullable<DailyPrivateLesson['participants']>[number]) {
+  if (student.studentId == null || student.packageId == null) return;
+  void router.push({
+    name: command === 'lessons' ? 'one-on-one-deduction' : 'recurring-schedule',
+    query: { ...(command === 'lessons' ? { focus: 'deduction' } : {}),
+      studentId: String(student.studentId), packageId: String(student.packageId) },
+  });
+}
+
 const loading = ref(false);
 const studentsLoading = ref(false);
+const studentsError = ref(false);
 const students = ref<StudentRosterItem[]>([]);
 const searchText = ref('');
 const selectedStudentId = ref<EntityId | null>(null);
@@ -887,7 +925,7 @@ function lessonCourseLabel(lesson: LessonOccurrenceItem) {
 }
 
 // ─── Init ──────────────────────────────────────
-onMounted(async () => {
+onMounted(() => {
   if (isStudent.value) {
     // Student user: auto-select their own profile
     const studentId = authStore.currentUser?.studentId;
@@ -899,10 +937,16 @@ onMounted(async () => {
     }
     return;
   }
-  // 后端单次 JOIN 查询有有效 1-on-1 课包的学生，避免按学生逐个请求课包。
+  void loadScheduleStudents();
+});
+
+// 学生列表失败时保留重试入口，避免把加载失败误显示成空名单。
+async function loadScheduleStudents() {
   studentsLoading.value = true;
+  studentsError.value = false;
   try {
     const res = await fetchOneOnOneScheduleStudents();
+    if (!Array.isArray(res.data.data)) throw new Error('Invalid student list response');
     students.value = res.data.data.map(({ id, studentName, studentGrade, courseGrades }) => ({
       id,
       studentName,
@@ -910,11 +954,11 @@ onMounted(async () => {
       courseGrades: courseGrades ?? [],
     }));
   } catch {
-    ElMessage.error('Failed to load student list.');
+    studentsError.value = true;
   } finally {
     studentsLoading.value = false;
   }
-});
+}
 </script>
 
 <style scoped>
@@ -931,6 +975,8 @@ onMounted(async () => {
 }
 .daily-lessons__controls { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; color: #475569; font-size: 14px; }
 .daily-lessons__note { margin: 10px 0; color: #718096; font-size: 12px; }
+.daily-lessons__student { padding: 2px 0; border: 0; background: transparent; color: #337ecc; cursor: pointer; font: inherit; text-align: left; }
+.daily-lessons__student:hover { text-decoration: underline; }
 .student-calendar {
   border: 1px solid #e8edf2;
   border-radius: 8px;
