@@ -12,7 +12,8 @@ import java.util.List;
  * 收入报表聚合查询。
  *
  * <p>口径为 payment_record 的实际流水：退款流水金额本身为负数，直接累加即为净收入；
- * VOIDED（已撤销）与软删除流水不计入。</p>
+ * VOIDED（已撤销）与软删除流水不计入。已软删除的报名订单整单排除，
+ * 与 Data Summary 的收入口径保持一致（订单删除后不再计为收入）。</p>
  */
 @Mapper
 public interface RevenueReportMapper {
@@ -27,7 +28,7 @@ public interface RevenueReportMapper {
             FROM payment_allocation a
             JOIN payment_record p
               ON p.id = a.payment_record_id AND p.is_deleted = 0 AND p.payment_status <> 'VOIDED'
-            LEFT JOIN enrollment_order o ON o.id = a.enrollment_order_id
+            JOIN enrollment_order o ON o.id = a.enrollment_order_id AND o.is_deleted = 0
             LEFT JOIN enrollment_order_item i ON i.id = a.enrollment_order_item_id
             WHERE a.is_deleted = 0
               AND COALESCE(p.paid_at, p.created_at) >= #{fromAt}
@@ -49,7 +50,7 @@ public interface RevenueReportMapper {
                    o.campus_id AS campus_id,
                    o.campus_name_snapshot AS campus_name_snapshot
             FROM payment_record p
-            LEFT JOIN enrollment_order o ON o.id = p.enrollment_order_id
+            JOIN enrollment_order o ON o.id = p.enrollment_order_id AND o.is_deleted = 0
             WHERE p.is_deleted = 0
               AND p.payment_status <> 'VOIDED'
               AND COALESCE(p.paid_at, p.created_at) >= #{fromAt}
